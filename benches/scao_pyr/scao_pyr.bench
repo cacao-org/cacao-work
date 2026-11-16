@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Single-Stage SCAO Pyramid WFS + H-Band Science Optical Bench (scao_pyr.bench)
+#
+# Optical Signal Flow (DAG):
+#   outarraypha + csim_pup -> [bench] -> b_tel -> [dm.dm0] -> b_corr
+#     -> [splitter.dichroic]
+#          |-- refl (Vis < 1.00 um) -> b_vis -> [pyrwfs.wfs] -> csim_wfs
+#          +-- trans (NIR > 1.00 um) -> b_nir -> [fpcam.sci] -> csim_fpcam, csim_fplong
+
+[bench]
+name       = "scao_pyr_8m"
+nwf        = 128
+pup_diam   = 0.9375
+cobs       = 0.30
+nspider    = 4
+spider_w   = 0.012
+spider_deg = 45.0
+tel_diam_m = 8.2
+star_mag   = 6.0
+star_teff  = 5778.0
+tput_tel   = 0.75
+master_hz  = 1000.0
+in_wf      = "outarraypha"
+in_pup     = "csim_pup"
+out_beam   = "b_tel"
+wf_unit    = 1
+ref_lambda = 0.50
+turb_gain  = 1.0
+
+[dm.dm0]
+in           = "b_tel"
+out          = "b_corr"
+in_cmd       = "dm00disp"
+out_opd      = "csim_dm00_opd"
+nact_x       = 12
+nact_y       = 12
+if_coupling  = 0.22
+tput         = 0.98
+max_stroke   = 10.0
+dac_bits     = 16
+dyn_mode     = 1
+tau_us       = 100.0
+delay_frames = 0.5
+
+[splitter.dichroic]
+in         = "b_corr"
+mode       = "dichroic_lp"
+lambda_cut = 1.00
+roll_um    = 0.03
+eff_refl   = 0.95
+eff_trans  = 0.95
+out_refl   = "b_vis"
+out_trans  = "b_nir"
+
+[pyrwfs.wfs]
+in            = "b_vis"
+out_cam       = "csim_wfs"
+ncam          = 64
+lambda_um     = 0.75
+bw_frac       = 0.20
+qe            = 0.85
+use_beam_flux = 1
+navg          = 1
+mod_rad       = 3.0
+mod_npts      = 16
+ron_e         = 0.2
+out_dtype     = "float32"
+
+[fpcam.sci]
+in            = "b_nir"
+out_cam       = "csim_fpcam"
+out_long      = "csim_fplong"
+ncam          = 128
+prop_mode     = "mft"
+lambda_um     = 1.65
+bw_frac       = 0.18
+nlambda       = 1
+qe            = 0.85
+pixscale_ld   = 3.0
+use_beam_flux = 1
+navg          = 10
+ron_e         = 0.5
+out_dtype     = "float32"

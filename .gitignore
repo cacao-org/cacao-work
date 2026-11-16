@@ -1,0 +1,15 @@
+.pytest_cache/
+__pycache__/
+*.py[cod]
+_work/
+_logs/
+*.fits
+*.shm
+milkscriptcmd.log
+.coverage
+htmlcov/
+*-rootdir/
+*-rundir/
+logdir*/
+fps.*.confdir/
+fps.*.datadir/

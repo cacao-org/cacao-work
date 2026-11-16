@@ -1,0 +1,9 @@
+[project]
+name = "cacao-work"
+version = "0.1.0"
+description = "Integrated end-to-end AO testing harness for milk, cacao, cacaosim, and milkatmturb"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
