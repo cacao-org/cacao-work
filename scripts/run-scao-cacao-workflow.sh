@@ -160,7 +160,7 @@ if os.path.exists(vars_file):
             rate_val = v
     if m_lat:
         v = float(m_lat.group(1))
-        if math.isfinite(v) and 0.3 <= v <= 5.0:
+        if math.isfinite(v) and 0.5 <= v <= 3.0:
             lat_val = v
 
 with open(vars_file, "w", encoding="utf-8") as fh:

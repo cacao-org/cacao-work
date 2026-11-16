@@ -72,12 +72,19 @@ Runs the full sequence via `cacaosim-bench deploy` and
 
 ```bash
 source env.sh
-./scripts/run-scao-headless.sh --mode fused --rate 400 --eval-frames 120
+./scripts/run-scao-headless.sh --mode fused --rate 400 --eval-frames 240 --save-rm _work/scao_pyr_rm
+./scripts/run-scao-headless.sh --mode fused --rate 400 --eval-frames 240 --load-rm _work/scao_pyr_rm
 ./scripts/run-scao-headless.sh --mode modular --rate 400 --eval-frames 100
 ```
 
+Passing `--save-rm <dir>` exports the calibrated Pyramid WFS response matrix (`zpokeC.fits`,
+`zrespC.fits`, `HpokeC.fits`, `HrespC.fits`, standard CACAO `RMmodesDM.fits` / `RMmodesWFS.fits` /
+`zrespM.fits` aliases, DM/WFS sensitivity maps and masks, `wfsref.fits`, `CMmodes*.fits`, and
+`rm_meta.env`) so subsequent reruns with `--load-rm <dir>` skip Hadamard poking and recompute the
+SVD control matrix directly.
+
 You can also drive [`cacaoloop-scao-pyr.milk`](benches/scao_pyr/cacaoloop-scao-pyr.milk) directly
-inside any initialized sandbox (use `-h1` or `-hm` for usage):
+inside any initialized sandbox (use `-h1` or `-hm` for usage, including `save-rm` and `load-rm`):
 
 ```bash
 ./benches/scao_pyr/cacaoloop-scao-pyr.milk -hm

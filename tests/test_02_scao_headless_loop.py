@@ -116,3 +116,101 @@ cacaosim-bench teardown --workdir "{csim_dir}" --no-view >/dev/null
     assert "Loop scao_pyr (aol1): loopON=OFF" in res.stdout
     assert list(shm_dir.glob("aol1_*")) == []
     assert list(shm_dir.glob("*.fps.shm")) == []
+
+
+def test_scao_save_and_reload_rm(
+    repo_root: Path,
+    shm_sandbox: tuple[Path, Path, dict[str, str]],
+) -> None:
+    """Verify saving calibrated RM and rerunning closed-loop from saved RM."""
+    shm_dir, work_dir, env = shm_sandbox
+    rm_dir = work_dir / "saved_rm"
+    work_run1 = work_dir / "run1"
+    work_run2 = work_dir / "run2"
+    metrics1 = work_dir / "metrics_cal.json"
+    metrics2 = work_dir / "metrics_rerun.json"
+
+    res1 = subprocess.run(
+        [
+            str(repo_root / "scripts" / "run-scao-headless.sh"),
+            "--mode",
+            "fused",
+            "--rate",
+            "400",
+            "--eval-frames",
+            "200",
+            "--shm-dir",
+            str(shm_dir),
+            "--workdir",
+            str(work_run1),
+            "--save-rm",
+            str(rm_dir),
+            "--metrics-out",
+            str(metrics1),
+        ],
+        cwd=repo_root,
+        env=env,
+        timeout=150,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res1.returncode == 0, f"stderr:\n{res1.stderr}\nstdout:\n{res1.stdout}"
+
+    for fname in (
+        "zpokeC.fits",
+        "zrespC.fits",
+        "RMmodesDM.fits",
+        "RMmodesWFS.fits",
+        "zrespM.fits",
+        "dmmask.fits",
+        "wfsmask.fits",
+        "wfsref.fits",
+        "CMmodesDM.fits",
+        "CMmodesWFS.fits",
+        "rm_meta.env",
+    ):
+        assert (rm_dir / fname).exists(), f"missing saved RM artifact {fname}"
+
+    data1 = json.loads(metrics1.read_text(encoding="utf-8"))
+    assert data1["calib"]["source"] == "calibrated"
+    assert data1["calib"]["n_rm_modes"] > 0
+    assert data1["calib"]["n_cm_modes"] > 0
+
+    res2 = subprocess.run(
+        [
+            str(repo_root / "scripts" / "run-scao-headless.sh"),
+            "--mode",
+            "fused",
+            "--rate",
+            "400",
+            "--svdlim",
+            "0.06",
+            "--eval-frames",
+            "200",
+            "--shm-dir",
+            str(shm_dir),
+            "--workdir",
+            str(work_run2),
+            "--load-rm",
+            str(rm_dir),
+            "--metrics-out",
+            str(metrics2),
+        ],
+        cwd=repo_root,
+        env=env,
+        timeout=120,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res2.returncode == 0, f"stderr:\n{res2.stderr}\nstdout:\n{res2.stdout}"
+
+    data2 = json.loads(metrics2.read_text(encoding="utf-8"))
+    assert data2["calib"]["source"] == "load-rm"
+    dl2, ol2, cl2 = data2["dl"], data2["ol"], data2["cl"]
+    assert dl2["strehl_peak"] > 0.85, data2
+    assert cl2["strehl_peak"] > ol2["strehl_peak"] * 2.0, data2
+    assert cl2["wfs_rms"] < ol2["wfs_rms"] * 0.98, data2
+    assert cl2["mval_rms"] < ol2["mval_rms"] * 0.85, data2
+    assert list(shm_dir.glob("*.fps.shm")) == []

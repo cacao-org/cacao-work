@@ -8,6 +8,7 @@
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
+CALLER_PWD="${PWD}"
 LOOPNAME="${CACAO_LOOPNAME:-scao_pyr}"
 N="${CACAO_LOOPNUMBER:-1}"
 PFX="aol${N}_"
@@ -35,7 +36,9 @@ ${SCRIPT_NAME} - ${DESC_SHORT}
 
 Usage:
   ${SCRIPT_NAME} deploy [--restart] [--init-only]
-  ${SCRIPT_NAME} calibrate [--nframes N] [--nbloop N] [--svdlim F]
+  ${SCRIPT_NAME} calibrate [--nframes N] [--nbloop N] [--svdlim F] [--save-rm DIR] [--load-rm DIR]
+  ${SCRIPT_NAME} save-rm <dir>
+  ${SCRIPT_NAME} load-rm <dir> [--svdlim F] [--takeref] [--nframes N]
   ${SCRIPT_NAME} takeref [nframes]
   ${SCRIPT_NAME} close [gain]
   ${SCRIPT_NAME} open
@@ -49,6 +52,9 @@ Options:
   --nframes N            Frames averaged per WFS reference (default: 60)
   --nbloop N             Hadamard RM outer cycles (default: 2)
   --svdlim F             SVD pseudo-inverse cutoff (default: ${SVDLIM})
+  --save-rm DIR          Save calibrated RM, masks, WFS ref, and CM to DIR
+  --load-rm DIR          Load saved RM from DIR instead of poking Hadamard modes
+  --takeref              Acquire a fresh live WFS reference during load-rm
   --purge-dm             Also remove dm${DM}disp master stream during teardown
   -h, --help, -hm        Show this help message and exit
   -h1, --help-oneline    Print one-line description and exit
@@ -154,9 +160,9 @@ do_takeref() {
     @calc "@S:${PFX}wfsrefc = s.${tmp_shm}"
     milk-stream-rm -q --ignore-missing "${tmp_shm}" >/dev/null 2>&1 || true
     printf '%s\n' "${FPSPIPE_ROOTDIR}/conf/wfsref.fits" > "../conf/shmim.wfsref.name.txt"
-    cp -f "../conf/wfsref.fits" "../conf/shmim.wfsref.fits"
+    ln -sfn "${FPSPIPE_ROOTDIR}/conf/wfsref.fits" "../conf/shmim.wfsref.fits"
     printf '%s\n' "${FPSPIPE_ROOTDIR}/conf/wfsref.fits" > "../conf/shmim.wfsrefc.name.txt"
-    cp -f "../conf/wfsref.fits" "../conf/shmim.wfsrefc.fits"
+    ln -sfn "${FPSPIPE_ROOTDIR}/conf/wfsref.fits" "../conf/shmim.wfsrefc.fits"
 }
 
 cmd_deploy() {
@@ -298,7 +304,7 @@ measlinresp-${N}.ampl                 = 0.01
 measlinresp-${N}.timing.WFSfrequ      = ${RATE}
 measlinresp-${N}.timing.hardwlatfr    = ${LAT_FR}
 measlinresp-${N}.timing.NBave         = 2
-measlinresp-${N}.timing.NBexcl        = 1
+measlinresp-${N}.timing.NBexcl        = 2
 measlinresp-${N}.timing.NBinnerCycle  = 1
 measlinresp-${N}.procinfo.loopcntMax  = 2
 
@@ -316,7 +322,7 @@ mctrlstats-${N}.AOloopindex           = ${N}
 EOF
 
     milk-stream-wait -q -t 15 "${WFS_STREAM}:${WFSX}x${WFSY}"
-    milk-stream-link -q --no-conf --expect-size "${WFSX}x${WFSY}" "${WFS_STREAM}=${PFX}wfsim"
+    milk-stream-link -q --no-conf --allow-missing "${WFS_STREAM}=${PFX}wfsim"
     __fpspipe_track_stream "${PFX}wfsim"
 
     if (( init_only )); then
@@ -342,6 +348,157 @@ EOF
     fpspipe.commit
 }
 
+resolve_caller_path() {
+    local p="$1"
+    if [[ "${p}" == /* ]]; then
+        realpath -m "${p}"
+    else
+        realpath -m "${CALLER_PWD}/${p}"
+    fi
+}
+
+write_rm_meta() {
+    local fps_hz="$1" lat_fr="$2" svdlim="$3"
+    cat > "../conf/rm_meta.env" <<EOF
+export RM_LOOPNAME="${LOOPNAME}"
+export RM_DMX="${DMX}"
+export RM_DMY="${DMY}"
+export RM_WFSX="${WFSX}"
+export RM_WFSY="${WFSY}"
+export RM_WFSFRATE="${fps_hz}"
+export RM_LATENCYHARDWFR="${lat_fr}"
+export RM_SVDLIM="${svdlim}"
+EOF
+}
+
+build_and_load_cm() {
+    local svdlim="$1" lat_fr="$2"
+    milk-fps-set -q \
+        "compstrCM-${N}.svdlim=${svdlim}" \
+        "compstrCM-${N}.RMmodesDM=../conf/zpokeC.fits" \
+        "compstrCM-${N}.RMmodesWFS=../conf/zrespC.fits" \
+        "compstrCM-${N}.dmmask=../conf/dmmask.fits" \
+        "compstrCM-${N}.wfsmask=../conf/wfsmask.fits" \
+        "compstrCM-${N}.CMmodesDM=../conf/CMmodesDM.fits" \
+        "compstrCM-${N}.CMmodesWFS=../conf/CMmodesWFS.fits"
+    milk-fps-runstart -q "compstrCM-${N}"
+    milk-fps-wait -q -t 30 "compstrCM-${N}"
+
+    milk-fps-runstop -q "mvalC2dm-${N}" "mfilt-${N}" "wfs2cmodeval-${N}"
+    milk-stream-rm -q --ignore-missing \
+        "${PFX}CMmodesWFS" "${PFX}CMmodesDM" "${PFX}modevalWFS" "${PFX}modevalDM"
+    fpspipe.loadfits CMmodesWFS ../conf/CMmodesWFS .force=1
+    fpspipe.loadfits CMmodesDM  ../conf/CMmodesDM  .force=1
+
+    milk-fps-runstart -q "wfs2cmodeval-${N}"
+    milk-stream-wait -q -t 10 "${PFX}modevalWFS+1"
+    milk-fps-set -q "mfilt-${N}.comp.latencyhardwfr=${lat_fr}"
+    milk-fps-runstart -q "mfilt-${N}"
+    milk-stream-wait -q -t 10 "${PFX}modevalDM"
+    milk-fps-runstart -q "mvalC2dm-${N}"
+    milk-stream-wait -q -t 10 "${PFX}dmC"
+}
+
+do_save_rm() {
+    local rm_dir="$1"
+    if [[ ! -f ../conf/zpokeC.fits || ! -f ../conf/zrespC.fits ]]; then
+        echo "${SCRIPT_NAME}: missing calibrated RM in ${FPSPIPE_ROOTDIR}/conf" >&2
+        return 1
+    fi
+    mkdir -p "${rm_dir}"
+    local fname
+    for fname in \
+        zpokeC.fits zrespC.fits DMmask.fits HpokeC.fits Hpixindex.fits Hmat.fits \
+        HrespC.fits dmmap.fits wfsmap.fits dmmask.fits wfsmask.fits wfsref.fits \
+        CMmodesDM.fits CMmodesWFS.fits rm_meta.env; do
+        if [[ -f "../conf/${fname}" ]]; then
+            cp -f "../conf/${fname}" "${rm_dir}/${fname}"
+        fi
+    done
+    for fname in VTmat.fits mode_norm.txt mode_norm_1.txt; do
+        if [[ -f "mkmodestmp/${fname}" ]]; then
+            cp -f "mkmodestmp/${fname}" "${rm_dir}/${fname}"
+        fi
+    done
+    ln -sfn "zpokeC.fits" "${rm_dir}/RMmodesDM.fits"
+    ln -sfn "zrespC.fits" "${rm_dir}/RMmodesWFS.fits"
+    ln -sfn "zrespC.fits" "${rm_dir}/zrespM.fits"
+}
+
+do_load_rm() {
+    local rm_dir="$1" svdlim="$2" svdlim_set="$3" retake_ref="$4" nframes="$5"
+    local src_poke="" src_resp=""
+    if [[ -f "${rm_dir}/zpokeC.fits" ]]; then
+        src_poke="${rm_dir}/zpokeC.fits"
+    elif [[ -f "${rm_dir}/RMmodesDM.fits" ]]; then
+        src_poke="${rm_dir}/RMmodesDM.fits"
+    fi
+    if [[ -f "${rm_dir}/zrespC.fits" ]]; then
+        src_resp="${rm_dir}/zrespC.fits"
+    elif [[ -f "${rm_dir}/RMmodesWFS.fits" ]]; then
+        src_resp="${rm_dir}/RMmodesWFS.fits"
+    elif [[ -f "${rm_dir}/zrespM.fits" ]]; then
+        src_resp="${rm_dir}/zrespM.fits"
+    fi
+    if [[ -z "${src_poke}" || -z "${src_resp}" ]]; then
+        echo "${SCRIPT_NAME}: saved RM not found in '${rm_dir}'" >&2
+        return 1
+    fi
+
+    @set "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
+    @calc "s.${PFX}dmRM = s.${PFX}dmRM * 0.0"
+    @calc "s.${PFX}dmC = s.${PFX}dmC * 0.0"
+
+    cp -fL "${src_poke}" "../conf/zpokeC.fits"
+    cp -fL "${src_resp}" "../conf/zrespC.fits"
+    local fname
+    for fname in \
+        DMmask.fits HpokeC.fits Hpixindex.fits Hmat.fits HrespC.fits \
+        dmmap.fits wfsmap.fits dmmask.fits wfsmask.fits wfsref.fits rm_meta.env; do
+        if [[ -f "${rm_dir}/${fname}" ]]; then
+            cp -fL "${rm_dir}/${fname}" "../conf/${fname}"
+        fi
+    done
+
+    local fps_hz="${RATE}" lat_fr="${LAT_FR}"
+    if [[ -f "../conf/rm_meta.env" ]]; then
+        # shellcheck disable=SC1091
+        source "../conf/rm_meta.env"
+        fps_hz="${RM_WFSFRATE:-${fps_hz}}"
+        lat_fr="${RM_LATENCYHARDWFR:-${lat_fr}}"
+        if (( ! svdlim_set )) && [[ -n "${RM_SVDLIM:-}" ]]; then
+            svdlim="${RM_SVDLIM}"
+        fi
+    fi
+
+    if [[ ! -f "../conf/dmmask.fits" || ! -f "../conf/wfsmask.fits" ]]; then
+        cacao-cli -q >/dev/null <<'EOF'
+iofits.loadfits "../conf/zrespC.fits" zrespC .
+cacaocc.compmasksWFSDM zrespC 12 12 0.2 0.5 0.5 0.5 0.2 0.5 0.5 0.5
+iofits.saveFITS dmmap "!../conf/dmmap.fits"
+iofits.saveFITS wfsmap "!../conf/wfsmap.fits"
+iofits.saveFITS dmmask "!../conf/dmmask.fits"
+iofits.saveFITS wfsmask "!../conf/wfsmask.fits"
+exit
+EOF
+    fi
+
+    fpspipe.loadfits dmmask  ../conf/dmmask  .force=1
+    fpspipe.loadfits wfsmask ../conf/wfsmask .force=1
+
+    if (( retake_ref )) || [[ ! -f "../conf/wfsref.fits" ]]; then
+        milk-stream-wait -q -t 10 "${PFX}imWFS1+15"
+        do_takeref "${nframes}"
+    else
+        fpspipe.loadfits wfsref  ../conf/wfsref .force=1
+        fpspipe.loadfits wfsrefc ../conf/wfsref .force=1
+        milk-stream-wait -q -t 10 "${PFX}imWFS2+5"
+    fi
+
+    write_rm_meta "${fps_hz}" "${lat_fr}" "${svdlim}"
+    build_and_load_cm "${svdlim}" "${lat_fr}"
+}
+
 cmd_takeref() {
     local nframes="${1:-60}"
     enter_workdir 0
@@ -349,19 +506,64 @@ cmd_takeref() {
     do_takeref "${nframes}"
 }
 
+cmd_save_rm() {
+    if (( $# < 1 )); then
+        echo "${SCRIPT_NAME}: 'save-rm' requires <dir>" >&2
+        return 2
+    fi
+    local rm_dir
+    rm_dir="$(resolve_caller_path "$1")"
+    enter_workdir 0
+    fpspipe.commit
+    do_save_rm "${rm_dir}"
+}
+
+cmd_load_rm() {
+    if (( $# < 1 )); then
+        echo "${SCRIPT_NAME}: 'load-rm' requires <dir>" >&2
+        return 2
+    fi
+    local rm_dir svdlim="${SVDLIM}" svdlim_set=0 retake_ref=0 nframes=60
+    rm_dir="$(resolve_caller_path "$1")"
+    shift
+    while (( $# > 0 )); do
+        case "$1" in
+            --svdlim)  svdlim="$2"; svdlim_set=1; shift 2 ;;
+            --takeref) retake_ref=1; shift ;;
+            --nframes) nframes="$2"; shift 2 ;;
+            *) echo "${SCRIPT_NAME}: unknown load-rm option '$1'" >&2; return 2 ;;
+        esac
+    done
+    enter_workdir 0
+    fpspipe.commit
+    do_load_rm "${rm_dir}" "${svdlim}" "${svdlim_set}" "${retake_ref}" "${nframes}"
+}
+
 cmd_calibrate() {
-    local nframes=60 nbloop=2 svdlim="${SVDLIM}"
+    local nframes=60 nbloop=2 svdlim="${SVDLIM}" svdlim_set=0
+    local save_rm="" load_rm="" retake_ref=0
     while (( $# > 0 )); do
         case "$1" in
             --nframes) nframes="$2"; shift 2 ;;
             --nbloop)  nbloop="$2"; shift 2 ;;
-            --svdlim)  svdlim="$2"; shift 2 ;;
+            --svdlim)  svdlim="$2"; svdlim_set=1; shift 2 ;;
+            --save-rm) save_rm="$(resolve_caller_path "$2")"; shift 2 ;;
+            --load-rm) load_rm="$(resolve_caller_path "$2")"; shift 2 ;;
+            --takeref) retake_ref=1; shift ;;
             *) echo "${SCRIPT_NAME}: unknown calibrate option '$1'" >&2; return 2 ;;
         esac
     done
 
     enter_workdir 0
     fpspipe.commit
+
+    if [[ -n "${load_rm}" ]]; then
+        do_load_rm "${load_rm}" "${svdlim}" "${svdlim_set}" "${retake_ref}" "${nframes}"
+        if [[ -n "${save_rm}" ]]; then
+            do_save_rm "${save_rm}"
+        fi
+        return 0
+    fi
 
     @set "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
     @calc "s.${PFX}dmRM = s.${PFX}dmRM * 0.0"
@@ -382,7 +584,7 @@ cmd_calibrate() {
     if ! @test "${fps_hz} >= ${min_hz} && ${fps_hz} <= ${max_hz}"; then
         fps_hz="${RATE}"
     fi
-    if ! @test "${lat_fr} >= 0.3 && ${lat_fr} <= 5.0"; then
+    if ! @test "${lat_fr} >= 0.5 && ${lat_fr} <= 3.0"; then
         lat_fr="${LAT_FR}"
     fi
 
@@ -432,32 +634,13 @@ EOF
     milk-stream-wait -q -t 10 "${PFX}imWFS1+15"
     do_takeref "${nframes}"
 
-    # 6. Compute straight SVD control matrix
-    milk-fps-set -q \
-        "compstrCM-${N}.svdlim=${svdlim}" \
-        "compstrCM-${N}.RMmodesDM=../conf/zpokeC.fits" \
-        "compstrCM-${N}.RMmodesWFS=../conf/zrespC.fits" \
-        "compstrCM-${N}.dmmask=../conf/dmmask.fits" \
-        "compstrCM-${N}.wfsmask=../conf/wfsmask.fits" \
-        "compstrCM-${N}.CMmodesDM=../conf/CMmodesDM.fits" \
-        "compstrCM-${N}.CMmodesWFS=../conf/CMmodesWFS.fits"
-    milk-fps-runstart -q "compstrCM-${N}"
-    milk-fps-wait -q -t 30 "compstrCM-${N}"
+    # 6. Persist metadata, compute SVD CM, and restart modal control stages
+    write_rm_meta "${fps_hz}" "${lat_fr}" "${svdlim}"
+    build_and_load_cm "${svdlim}" "${lat_fr}"
 
-    # 7. Reload calibrated CM modes and restart modal control stages
-    milk-fps-runstop -q "mvalC2dm-${N}" "mfilt-${N}" "wfs2cmodeval-${N}"
-    milk-stream-rm -q --ignore-missing \
-        "${PFX}CMmodesWFS" "${PFX}CMmodesDM" "${PFX}modevalWFS" "${PFX}modevalDM"
-    fpspipe.loadfits CMmodesWFS ../conf/CMmodesWFS .force=1
-    fpspipe.loadfits CMmodesDM  ../conf/CMmodesDM  .force=1
-
-    milk-fps-runstart -q "wfs2cmodeval-${N}"
-    milk-stream-wait -q -t 10 "${PFX}modevalWFS+1"
-    milk-fps-set -q "mfilt-${N}.comp.latencyhardwfr=${lat_fr}"
-    milk-fps-runstart -q "mfilt-${N}"
-    milk-stream-wait -q -t 10 "${PFX}modevalDM"
-    milk-fps-runstart -q "mvalC2dm-${N}"
-    milk-stream-wait -q -t 10 "${PFX}dmC"
+    if [[ -n "${save_rm}" ]]; then
+        do_save_rm "${save_rm}"
+    fi
 }
 
 cmd_close() {
@@ -520,6 +703,8 @@ shift || true
 case "${subcmd}" in
     deploy)    cmd_deploy "$@" ;;
     calibrate) cmd_calibrate "$@" ;;
+    save-rm)   cmd_save_rm "$@" ;;
+    load-rm)   cmd_load_rm "$@" ;;
     takeref)   cmd_takeref "$@" ;;
     close)     cmd_close "$@" ;;
     open)      cmd_open "$@" ;;

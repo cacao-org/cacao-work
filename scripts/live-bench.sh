@@ -13,7 +13,8 @@ source "${SCRIPT_DIR}/../env.sh"
 # shellcheck source=./shm-sandbox.sh
 source "${SCRIPT_DIR}/shm-sandbox.sh"
 
-LIVE_STATE_FILE="${CACAO_LIVE_STATE_FILE:-/tmp/cacao_work_live_${USER}.state}"
+RUN_USER="${USER:-$(id -un)}"
+LIVE_STATE_FILE="${CACAO_LIVE_STATE_FILE:-/tmp/cacao_work_live_${RUN_USER}.state}"
 LOOP_CTRL="${CACAO_WORK_ROOT}/benches/scao_pyr/cacaoloop-scao-pyr.milk"
 
 usage() {
@@ -24,6 +25,8 @@ Commands:
   start [opts]   Launch persistent optical bench (optionally calibrated/closed)
                  Options: --workflow <fpspipe|cacao>  (default: fpspipe)
                           --calibrate                 Run full calibration
+                          --save-rm <dir>             Save calibrated RM to <dir>
+                          --load-rm <dir>             Load saved RM from <dir>
                           --close                     Close loop after calibrate
                           --shm-dir <dir>             Explicit MILK_SHM_DIR
                           --workdir <dir>             Explicit work directory
@@ -77,11 +80,15 @@ cmd_start() {
     local mode="fused"
     local gain="0.35"
     local mult="0.98"
+    local save_rm=""
+    local load_rm=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --workflow) workflow="$2"; shift 2 ;;
             --calibrate) calibrate=1; shift ;;
+            --save-rm) save_rm="$2"; calibrate=1; shift 2 ;;
+            --load-rm) load_rm="$2"; calibrate=1; shift 2 ;;
             --close) close_loop=1; shift ;;
             --shm-dir) shm_dir="$2"; shift 2 ;;
             --workdir) work_dir="$2"; shift 2 ;;
@@ -103,13 +110,13 @@ cmd_start() {
     fi
 
     if [[ -z "${shm_dir}" ]]; then
-        shm_dir="/dev/shm/cacao_work_live_${USER}_$$"
+        shm_dir="/dev/shm/cacao_work_live_${RUN_USER}_$$"
         LIVE_OWNED_SHM=1
     else
         LIVE_OWNED_SHM=0
     fi
     if [[ -z "${work_dir}" ]]; then
-        work_dir="/tmp/cacao_work_live_${USER}_$$"
+        work_dir="/tmp/cacao_work_live_${RUN_USER}_$$"
         LIVE_OWNED_WORK=1
     else
         LIVE_OWNED_WORK=0
@@ -124,16 +131,20 @@ cmd_start() {
     if [[ "${calibrate}" -eq 1 ]]; then
         loop_root="${SANDBOX_WORK_DIR}/scao_pyr"
         if [[ "${workflow}" == "fpspipe" ]]; then
-            "${SCRIPT_DIR}/run-scao-headless.sh" \
-                --shm-dir "${MILK_SHM_DIR}" \
-                --workdir "${SANDBOX_WORK_DIR}" \
-                --mode "${mode}" \
-                --rate "${rate}" \
-                --seeing "${seeing}" \
-                --gain "${gain}" \
-                --mult "${mult}" \
-                --eval-frames 60 \
+            local -a hl_args=(
+                --shm-dir "${MILK_SHM_DIR}"
+                --workdir "${SANDBOX_WORK_DIR}"
+                --mode "${mode}"
+                --rate "${rate}"
+                --seeing "${seeing}"
+                --gain "${gain}"
+                --mult "${mult}"
+                --eval-frames 60
                 --keep-running
+            )
+            [[ -n "${save_rm}" ]] && hl_args+=(--save-rm "${save_rm}")
+            [[ -n "${load_rm}" ]] && hl_args+=(--load-rm "${load_rm}")
+            "${SCRIPT_DIR}/run-scao-headless.sh" "${hl_args[@]}"
         elif [[ "${workflow}" == "cacao" ]]; then
             "${SCRIPT_DIR}/run-scao-cacao-workflow.sh" \
                 --shm-dir "${MILK_SHM_DIR}" \
