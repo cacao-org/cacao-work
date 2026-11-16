@@ -133,6 +133,25 @@ Once a live bench is running, connect directly to any milk/cacao/cacaosim TUI:
 
 Or connect manually in any shell with `eval "$(./scripts/live-bench.sh env)"`.
 
+### 4. Two-Stage Subaru AO3k + SCExAO Simulation (`run-ao3k-scexao.sh`)
+
+Bench [`ao3k_scexao`](benches/ao3k_scexao/ao3k_scexao.bench) and controller
+[`cacaoloop-ao3k-scexao.milk`](benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk) model a cascaded
+two-stage AO system on an 8.2 m telescope:
+
+- Stage 1 (`ao3k`, `aol1`): 16x16 DM (`dm01disp`) + J-band (1.22 um) Pyramid WFS at 1.0 kHz
+- Stage 2 (`scexao`, `aol2`): 24x24 DM (`dm02disp`) + Visible (0.75 um) Pyramid WFS at 2.0 kHz
+- Simultaneous Visible (0.75 um) and H-band (1.65 um) PSFs at Raw, Stage-1, and Final planes
+
+```bash
+source env.sh
+./scripts/run-ao3k-scexao.sh --phys-time 2.0 --save-rm _work/ao3k_scexao_rm
+./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm
+```
+
+Outputs (integrated FITS PSFs, wavefront stats, metrics JSON, and diagnostic plots) are written
+under `_work/ao3k_scexao` (or `--outdir`).
+
 ## Extending Benches & Tests
 
 - Add new optical configurations under `benches/<bench_name>/` with a `<bench_name>.bench` plan and

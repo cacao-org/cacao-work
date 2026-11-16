@@ -37,6 +37,7 @@ source env.sh
 ./scripts/build-all.sh                         # incremental CMake build + install across repos
 ./scripts/run-scao-headless.sh                 # fpspipe + cacaoloop-scao-pyr.milk validation
 ./scripts/run-scao-cacao-workflow.sh           # fpspipe init + cacao-aorun-* validation
+./scripts/run-ao3k-scexao.sh                   # two-stage AO3k + SCExAO simulation
 ./scripts/live-bench.sh start --calibrate --close
 pytest -v                                      # run full integration test suite
 ```

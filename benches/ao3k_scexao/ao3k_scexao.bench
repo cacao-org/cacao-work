@@ -1,0 +1,221 @@
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Subaru AO3k + SCExAO Two-Stage Cascaded Pyramid WFS Optical Bench
+#
+# Stage 1 (AO3k)  : 16x16 DM (dm01disp) + J-band (1.22 um) Pyramid WFS @ 1.0 kHz
+# Stage 2 (SCExAO): 24x24 DM (dm02disp) + Visible (0.75 um) Pyramid WFS @ 2.0 kHz
+# Science PSFs    : Simultaneous Visible (0.75 um) & Near-IR H-band (1.65 um)
+#                   focal-plane cameras at Pre-AO, Post-Stage-1, and Final Stage-2.
+
+[bench]
+name       = "subaru_ao3k_scexao"
+nwf        = 128
+pup_diam   = 0.9375
+cobs       = 0.30
+nspider    = 4
+spider_w   = 0.012
+spider_deg = 45.0
+tel_diam_m = 8.2
+star_mag   = 6.0
+star_teff  = 9600.0
+tput_tel   = 0.75
+master_hz  = 2000.0
+in_wf      = "outarraypha"
+in_pup     = "csim_pup"
+out_beam   = "b_pup"
+wf_unit    = 1
+ref_lambda = 0.50
+turb_gain  = 0.0
+
+# --- Stage 0: Uncorrected Entrance Pupil PSFs (Visible & Near-IR) ---
+[fpcam.vis_raw]
+in            = "b_pup"
+out_cam       = "psf_vis_raw"
+out_long      = "psf_vis_raw_long"
+ncam          = 192
+prop_mode     = "mft"
+lambda_um     = 0.75
+bw_frac       = 0.15
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.20
+use_beam_flux = 1
+navg          = 20
+ron_e         = 0.3
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+[fpcam.nir_raw]
+in            = "b_pup"
+out_cam       = "psf_nir_raw"
+out_long      = "psf_nir_raw_long"
+ncam          = 192
+prop_mode     = "mft"
+lambda_um     = 1.65
+bw_frac       = 0.18
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.50
+use_beam_flux = 1
+navg          = 20
+ron_e         = 0.5
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+# --- Stage 1 (AO3k): 16x16 DM + Intermediate PSFs + J-Band PyWFS (1 kHz) ---
+[dm.ao3k]
+in           = "b_pup"
+out          = "b_post_stg1"
+in_cmd       = "dm01disp"
+out_opd      = "csim_dm01_opd"
+nact_x       = 16
+nact_y       = 16
+if_coupling  = 0.20
+tput         = 0.98
+max_stroke   = 8.0
+dac_bits     = 16
+dyn_mode     = 1
+tau_us       = 200.0
+delay_frames = 2.0
+
+[fpcam.vis_stg1]
+in            = "b_post_stg1"
+out_cam       = "psf_vis_stg1"
+out_long      = "psf_vis_stg1_long"
+ncam          = 192
+prop_mode     = "mft"
+lambda_um     = 0.75
+bw_frac       = 0.15
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.20
+use_beam_flux = 1
+navg          = 20
+ron_e         = 0.3
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+[fpcam.nir_stg1]
+in            = "b_post_stg1"
+out_cam       = "psf_nir_stg1"
+out_long      = "psf_nir_stg1_long"
+ncam          = 192
+prop_mode     = "mft"
+lambda_um     = 1.65
+bw_frac       = 0.18
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.50
+use_beam_flux = 1
+navg          = 20
+ron_e         = 0.5
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+[splitter.dichroic_stg1]
+in         = "b_post_stg1"
+out_refl   = "b_nir_wfs"
+out_trans  = "b_stg2_in"
+mode       = "dichroic_bp"
+lambda_cut = 1.22
+band_width = 0.30
+roll_um    = 0.03
+eff_refl   = 0.95
+eff_trans  = 0.95
+
+[pyrwfs.wfs_nir]
+in            = "b_nir_wfs"
+out_cam       = "csim_wfs_nir"
+ncam          = 64
+lambda_um     = 1.22
+bw_frac       = 0.20
+qe            = 0.80
+use_beam_flux = 1
+navg          = 2
+mod_rad       = 3.0
+mod_npts      = 12
+ron_e         = 0.8
+out_dtype     = "float32"
+
+# --- Stage 2 (SCExAO): 24x24 DM + Vis PyWFS (2 kHz) + Final Vis & NIR PSFs ---
+[dm.scexao]
+in           = "b_stg2_in"
+out          = "b_post_stg2"
+in_cmd       = "dm02disp"
+out_opd      = "csim_dm02_opd"
+nact_x       = 24
+nact_y       = 24
+if_coupling  = 0.15
+tput         = 0.98
+max_stroke   = 3.0
+dac_bits     = 16
+dyn_mode     = 1
+tau_us       = 60.0
+delay_frames = 1.0
+
+[splitter.dichroic_stg2]
+in         = "b_post_stg2"
+out_refl   = "b_vis_arm"
+out_trans  = "b_nir_sci"
+mode       = "dichroic_lp"
+lambda_cut = 1.00
+roll_um    = 0.03
+eff_refl   = 0.95
+eff_trans  = 0.95
+
+[splitter.vis_pickoff]
+in        = "b_vis_arm"
+out_refl  = "b_vis_wfs"
+out_trans = "b_vis_sci"
+mode      = "gray"
+r_gray    = 0.90
+t_gray    = 0.10
+
+[pyrwfs.wfs_vis]
+in            = "b_vis_wfs"
+out_cam       = "csim_wfs_vis"
+ncam          = 64
+lambda_um     = 0.75
+bw_frac       = 0.20
+qe            = 0.85
+use_beam_flux = 1
+navg          = 1
+mod_rad       = 3.0
+mod_npts      = 12
+ron_e         = 0.2
+out_dtype     = "float32"
+
+[fpcam.vis_final]
+in            = "b_vis_sci"
+out_cam       = "psf_vis_final"
+out_long      = "psf_vis_final_long"
+ncam          = 192
+prop_mode     = "mft"
+lambda_um     = 0.75
+bw_frac       = 0.15
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.20
+use_beam_flux = 1
+navg          = 20
+ron_e         = 0.3
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+[fpcam.nir_final]
+in            = "b_nir_sci"
+out_cam       = "psf_nir_final"
+out_long      = "psf_nir_final_long"
+ncam          = 192
+prop_mode     = "mft"
+lambda_um     = 1.65
+bw_frac       = 0.18
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.50
+use_beam_flux = 1
+navg          = 20
+ron_e         = 0.5
+sat_adu       = 1.0e9
+out_dtype     = "float32"
