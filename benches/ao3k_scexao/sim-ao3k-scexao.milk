@@ -1,0 +1,435 @@
+#!/usr/bin/env -S milk-script -q
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Native milk-script orchestrator for Subaru 8.2m AO3k + SCExAO simulation:
+#   - Stage 1 (AO3k)  : 64x64 DM (D=60 act) + 160x160 J-band (1.22 um) PyWFS @ 1.0 kHz
+#   - Stage 2 (SCExAO): 50x50 DM (D=46 act) + 120x120 Vis I-band (0.75 um) PyWFS @ 2.0 kHz
+#   - Produces BOTH optical REPORT.md (cacaosim-ao-report) and COMPUTE_REPORT.md (milk-perf-report)
+
+set -euo pipefail
+
+SEEING="0.6"
+PHYS_TIME="10.0"
+WALL_RATE="160"
+GAIN1="0.35"
+GAIN2="0.35"
+MULT1="0.98"
+MULT2="0.98"
+MGAIN_ALPHA="0.8"
+MGAIN_FLOOR="0.10"
+MGAIN_TT="1.0"
+SVDLIM1="0.004"
+SVDLIM2="0.004"
+NBLOOP="1"
+RUN_SELFRM="1"
+SELFRM_MODES="256"
+SELFRM_ONSKY_ITER="1"
+OUT_DIR="${CACAO_WORK_ROOT:-.}/_work/ao3k_scexao"
+SAVE_RM_DIR="${CACAO_WORK_ROOT:-.}/_work/ao3k_scexao_rm"
+LOAD_RM_DIR=""
+SKIP_MICROBENCH="0"
+COMPARE_JSON=""
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Options:
+  --seeing <arcsec>   Seeing FWHM at 0.50 um (default: ${SEEING})
+  --phys-time <sec>   Physical closed-loop integration time [s] (default: ${PHYS_TIME})
+  --wall-rate <hz>    Wall-clock master pacing rate [Hz] (default: ${WALL_RATE})
+  --gain1 <float>     Stage-1 AO3k integrator gain (default: ${GAIN1})
+  --gain2 <float>     Stage-2 SCExAO integrator gain (default: ${GAIN2})
+  --mult1 <float>     Stage-1 leak multiplier (default: ${MULT1})
+  --mult2 <float>     Stage-2 leak multiplier (default: ${MULT2})
+  --mgain-alpha <f>   Modal gain power-law rolloff exponent (default: ${MGAIN_ALPHA})
+  --mgain-floor <f>   Modal gain floor factor for highest mode (default: ${MGAIN_FLOOR})
+  --mgain-tt <f>      Modal gain factor for Tip/Tilt modes 0,1 (default: ${MGAIN_TT})
+  --svdlim1 <float>   Stage-1 SVD truncation threshold (default: ${SVDLIM1})
+  --svdlim2 <float>   Stage-2 SVD truncation threshold (default: ${SVDLIM2})
+  --nbloop <int>      Hadamard RM averaging cycles per stage (default: ${NBLOOP})
+  --selfrm-modes <n>  Max modes probed in selfRM (default: ${SELFRM_MODES})
+  --selfrm-iter <n>   On-sky selfRM averaging iterations (default: ${SELFRM_ONSKY_ITER})
+  --no-selfrm         Skip calibration and on-sky selfRM acquisition
+  --save-rm <dir>     Directory to save Stage-1 & Stage-2 RMs (default: ${SAVE_RM_DIR})
+  --load-rm <dir>     Load pre-saved RMs from <dir>/stage1 and <dir>/stage2
+  --outdir <dir>      Output directory (default: ${OUT_DIR})
+  --skip-microbench   Skip cacaosim-benchmark run when generating COMPUTE_REPORT.md
+  --compare-modes <f> Optional modular-vs-fused comparison JSON for compute report
+  -h, --help          Show this help message
+EOF
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --seeing)          SEEING="$2"; shift 2 ;;
+        --phys-time)       PHYS_TIME="$2"; shift 2 ;;
+        --wall-rate)       WALL_RATE="$2"; shift 2 ;;
+        --gain1)           GAIN1="$2"; shift 2 ;;
+        --gain2)           GAIN2="$2"; shift 2 ;;
+        --mult1)           MULT1="$2"; shift 2 ;;
+        --mult2)           MULT2="$2"; shift 2 ;;
+        --mgain-alpha)     MGAIN_ALPHA="$2"; shift 2 ;;
+        --mgain-floor)     MGAIN_FLOOR="$2"; shift 2 ;;
+        --mgain-tt)        MGAIN_TT="$2"; shift 2 ;;
+        --svdlim1)         SVDLIM1="$2"; shift 2 ;;
+        --svdlim2)         SVDLIM2="$2"; shift 2 ;;
+        --nbloop)          NBLOOP="$2"; shift 2 ;;
+        --selfrm-modes)    SELFRM_MODES="$2"; shift 2 ;;
+        --selfrm-iter)     SELFRM_ONSKY_ITER="$2"; shift 2 ;;
+        --no-selfrm)       RUN_SELFRM="0"; shift ;;
+        --save-rm)         SAVE_RM_DIR="$2"; shift 2 ;;
+        --load-rm)         LOAD_RM_DIR="$2"; shift 2 ;;
+        --outdir)          OUT_DIR="$2"; shift 2 ;;
+        --skip-microbench) SKIP_MICROBENCH="1"; shift ;;
+        --compare-modes)   COMPARE_JSON="$2"; shift 2 ;;
+        -h|--help)         usage; exit 0 ;;
+        *) echo "[ao3k-scexao] Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+OUT_DIR="$(realpath -m "${OUT_DIR}")"
+[[ -n "${SAVE_RM_DIR}" ]]  && SAVE_RM_DIR="$(realpath -m "${SAVE_RM_DIR}")"
+[[ -n "${LOAD_RM_DIR}" ]]  && LOAD_RM_DIR="$(realpath -m "${LOAD_RM_DIR}")"
+[[ -n "${COMPARE_JSON}" ]] && COMPARE_JSON="$(realpath -m "${COMPARE_JSON}")"
+mkdir -p "${OUT_DIR}"
+
+MASTER_TICKS="$(awk -v t="${PHYS_TIME}" 'BEGIN { printf "%d", int(t * 2000.0 + 0.5) }')"
+LONG_READOUTS=$(( MASTER_TICKS / 20 ))
+(( LONG_READOUTS < 1 )) && LONG_READOUTS=1
+WALL_DT="$(awk -v r="${WALL_RATE}" 'BEGIN { printf "%.7f", 1.0 / r }')"
+WFS1_WALL_RATE="$(awk -v r="${WALL_RATE}" 'BEGIN { printf "%.2f", 0.5 * r }')"
+
+WORK_ROOT="${SANDBOX_WORK_DIR:-/tmp/ao3k_milk_$$}"
+CSIM_DIR="${CACAOSIM_WORKDIR:-${WORK_ROOT}/csim}"
+STG1_ROOT="${WORK_ROOT}/ao3k"
+STG2_ROOT="${WORK_ROOT}/scexao"
+mkdir -p "${WORK_ROOT}" "${CSIM_DIR}"
+
+BENCH_CFG="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
+LOOP_CTRL="${CACAO_WORK_ROOT}/benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk"
+
+cleanup_sim() {
+    sysmon.stop >/dev/null 2>&1 || true
+    milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
+    milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 teardown --purge-dm \
+        >/dev/null 2>&1 || true
+    CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 teardown --purge-dm \
+        >/dev/null 2>&1 || true
+    cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
+}
+@defer --exit cleanup_sim
+
+echo "================================================================================"
+echo " Subaru 8.2m AO3k + SCExAO Two-Stage Pyramid WFS Simulation (milk-script)"
+echo "   Sandbox SHM : ${MILK_SHM_DIR:-/milk/shm}"
+echo "   Seeing      : ${SEEING}\" @ 0.50 um | Star: mV = 6.0, mH = 6.0 (Teff = 9600 K)"
+echo "   Loop Speeds : Stage 1 (AO3k NIR) = 1.0 kHz | Stage 2 (SCExAO Vis) = 2.0 kHz"
+echo "   Integration : ${PHYS_TIME} s physical (${MASTER_TICKS} ticks, ${LONG_READOUTS} exposures)"
+echo "   Wall Pacing : ${WALL_RATE} Hz master (${WFS1_WALL_RATE} Hz Stg1, ${WALL_RATE} Hz Stg2)"
+echo "================================================================================"
+
+sysmon.start "${OUT_DIR}" .rate=5.0
+
+sysmon.mark "deploy_bench" "Deploy modular optical bench (turb_gain=0.0)"
+echo "[ao3k-scexao] Step 1/7: Deploying modular optical bench (turb_gain = 0.0)..."
+cacaosim.deploy "${BENCH_CFG}" \
+    .mode="modular" \
+    .atmturb=1 \
+    .seeing="${SEEING}" \
+    .workdir="${CSIM_DIR}" >/dev/null
+
+milk-fps-runstop -q csim_mkbeam csim_atmturb
+milk-fps-set -q \
+    "csim_mkbeam.turb_gain=0.0" \
+    "csim_mkbeam.frame_rate=${WALL_RATE}" \
+    "csim_mkbeam.procinfo.triggermode=0"
+milk-fps-runstart -q csim_mkbeam
+milk-stream-wait -q -t 20 csim_wfs_nir csim_wfs_vis psf_vis_final_long psf_nir_final_long
+
+sysmon.mark "dl_reference" "Acquire diffraction-limited reference PSFs"
+echo "[ao3k-scexao] Step 2/7: Acquiring diffraction-limited reference PSFs (turb = 0)..."
+milk-stream-wait -q -t 20 "csim_wfs_vis+40"
+cacaosim.reset_long
+milk-stream-wait -q -t 30 "psf_vis_final_long+15"
+fpspipe.savefits "psf_vis_final_long" "${OUT_DIR}/psf_vis_dl.fits"
+fpspipe.savefits "psf_nir_final_long" "${OUT_DIR}/psf_nir_dl.fits"
+for cam in vis_raw nir_raw vis_stg1 nir_stg1 vis_final nir_final; do
+    fpspipe.savefits "psf_${cam}" "${OUT_DIR}/det_${cam}_dl.fits"
+done
+
+sysmon.mark "deploy_loops" "Deploy Stage-1 (64x64) & Stage-2 (50x50) AO loops"
+echo "[ao3k-scexao] Step 3/7: Deploying Stage-1 (64x64) & Stage-2 (50x50) loops..."
+CACAO_LOOPROOTDIR="${STG1_ROOT}" \
+CACAO_WFSFRATE="${WFS1_WALL_RATE}" \
+CACAO_LOOPGAIN="${GAIN1}" \
+CACAO_LOOPMULT="${MULT1}" \
+    "${LOOP_CTRL}" --stage 1 deploy
+
+CACAO_LOOPROOTDIR="${STG2_ROOT}" \
+CACAO_WFSFRATE="${WALL_RATE}" \
+CACAO_LOOPGAIN="${GAIN2}" \
+CACAO_LOOPMULT="${MULT2}" \
+    "${LOOP_CTRL}" --stage 2 deploy
+
+CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
+CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
+milk-stream-wait -q -t 20 "csim_wfs_vis+20"
+
+TURB_CAL=""
+@get TURB_CAL="f.csim_mkbeam.turb_gain"
+echo "[ao3k-scexao] Step 4/7: Calibrating RMs with NO turbulence (turb_gain = ${TURB_CAL})..."
+
+declare -a CAL1_ARGS=(--nframes 60 --nbloop "${NBLOOP}" --svdlim "${SVDLIM1}")
+declare -a CAL2_ARGS=(--nframes 60 --nbloop "${NBLOOP}" --svdlim "${SVDLIM2}")
+if [[ -n "${LOAD_RM_DIR}" ]]; then
+    CAL1_ARGS+=(--load-rm "${LOAD_RM_DIR}/stage1")
+    CAL2_ARGS+=(--load-rm "${LOAD_RM_DIR}/stage2")
+fi
+if [[ -n "${SAVE_RM_DIR}" ]]; then
+    CAL1_ARGS+=(--save-rm "${SAVE_RM_DIR}/stage1")
+    CAL2_ARGS+=(--save-rm "${SAVE_RM_DIR}/stage2")
+fi
+
+sysmon.mark "calib_stage1" "Stage-1 (64x64) RM/CM calibration or load"
+t_cal1_0="$(date +%s)"
+echo "[ao3k-scexao]   -> Stage 1 (AO3k, 64x64 DM D=60, 160x160 J-band PyWFS)..."
+CACAO_LOOPROOTDIR="${STG1_ROOT}" \
+CACAO_WFSFRATE="${WFS1_WALL_RATE}" \
+CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
+CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
+CACAO_MGAIN_TT="${MGAIN_TT}" \
+    "${LOOP_CTRL}" --stage 1 calibrate "${CAL1_ARGS[@]}"
+CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
+milk-stream-wait -q -t 20 "csim_wfs_vis+20"
+t_cal1_1="$(date +%s)"
+echo "[ao3k-scexao]      Stage-1 calibration done in $(( t_cal1_1 - t_cal1_0 )) s."
+
+sysmon.mark "calib_stage2" "Stage-2 (50x50) RM/CM calibration or load"
+t_cal2_0="$(date +%s)"
+echo "[ao3k-scexao]   -> Stage 2 (SCExAO, 50x50 DM D=46, 120x120 Vis PyWFS)..."
+CACAO_LOOPROOTDIR="${STG2_ROOT}" \
+CACAO_WFSFRATE="${WALL_RATE}" \
+CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
+CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
+CACAO_MGAIN_TT="${MGAIN_TT}" \
+    "${LOOP_CTRL}" --stage 2 calibrate "${CAL2_ARGS[@]}"
+CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
+milk-stream-wait -q -t 20 "csim_wfs_vis+20"
+t_cal2_1="$(date +%s)"
+echo "[ao3k-scexao]      Stage-2 calibration done in $(( t_cal2_1 - t_cal2_0 )) s."
+
+if (( RUN_SELFRM )); then
+    sysmon.mark "selfrm_calib" "Open-loop calibration selfRM (Stage 1 & 2)"
+    echo "[ao3k-scexao] Step 4b/7: Acquiring calibration selfRM (no turbulence, open-loop)..."
+    t_srmc_0="$(date +%s)"
+    CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 selfrm \
+        "${OUT_DIR}/selfRM_calib_stg1.fits" \
+        --nbmode "${SELFRM_MODES}" --ampl 0.015 --nbiter 1 --nbsettle 2
+    cp -f "${OUT_DIR}/selfRM_calib_stg1.fits" "${STG1_ROOT}/conf/selfRM_calib.fits"
+    CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
+    milk-stream-wait -q -t 20 "csim_wfs_vis+15"
+
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 selfrm \
+        "${OUT_DIR}/selfRM_calib_stg2.fits" \
+        --nbmode "${SELFRM_MODES}" --ampl 0.010 --nbiter 1 --nbsettle 2
+    cp -f "${OUT_DIR}/selfRM_calib_stg2.fits" "${STG2_ROOT}/conf/selfRM_calib.fits"
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
+    milk-stream-wait -q -t 20 "csim_wfs_vis+15"
+
+    if [[ -n "${SAVE_RM_DIR}" ]]; then
+        CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 save-rm "${SAVE_RM_DIR}/stage1"
+        CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 save-rm "${SAVE_RM_DIR}/stage2"
+    fi
+    t_srmc_1="$(date +%s)"
+    echo "[ao3k-scexao]      Calibration selfRM done in $(( t_srmc_1 - t_srmc_0 )) s."
+fi
+
+sysmon.mark "closed_loop_warmup" "Enable turbulence & lock Stage 1 + Stage 2 closed loops"
+echo "[ao3k-scexao] Step 5/7: Enabling 1:1 lockstep Maunakea turbulence (${SEEING}\", dt=0.5 ms)..."
+milk-fps-runstop -q csim_mkbeam csim_atmturb
+milk-fps-set -q \
+    "csim_atmturb.seeing=${SEEING}" \
+    "csim_atmturb.time_step=0.0005" \
+    "csim_atmturb.procinfo.triggermode=4" \
+    "csim_atmturb.procinfo.triggerdelay=${WALL_DT}" \
+    "csim_mkbeam.turb_gain=1.0" \
+    "csim_mkbeam.frame_rate=0.0" \
+    "csim_mkbeam.procinfo.triggermode=3" \
+    "csim_mkbeam.procinfo.triggersname=outarraypha"
+milk-fps-runstart -q csim_atmturb
+milk-stream-wait -q -t 30 "outarraypha+5"
+milk-fps-runstart -q csim_mkbeam
+milk-stream-wait -q -t 30 "csim_wfs_vis+20"
+
+echo "[ao3k-scexao] Step 6/7: Closing Stage 1 (1 kHz) -> Stage 2 (2 kHz) (${PHYS_TIME} s)..."
+CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 close "${GAIN1}"
+milk-stream-wait -q -t 30 "csim_wfs_vis+100"
+CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
+milk-stream-wait -q -t 30 "csim_wfs_vis+200"
+
+# Pause master turbulence clock cleanly while attaching C wavefront recorder (csim_wfstat)
+WFSTAT_LINK="/tmp/.wfstat_$$"
+ln -sfn "${OUT_DIR}" "${WFSTAT_LINK}"
+milk-fps-runstop -q csim_atmturb
+sleep 0.15
+milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
+milk-fps-init -q csim_wfstat milk-fpsexec-cacaosim-wfstat >/dev/null
+milk-fps-set -q \
+    "csim_wfstat.trig_beam=b_post_stg2" \
+    "csim_wfstat.beam_raw=b_pup" \
+    "csim_wfstat.beam_stg1=b_post_stg1" \
+    "csim_wfstat.beam_final=b_post_stg2" \
+    "csim_wfstat.outdir=${WFSTAT_LINK}" \
+    "csim_wfstat.target_ticks=${MASTER_TICKS}" \
+    "csim_wfstat.dt_phys=0.0005" \
+    "csim_wfstat.snap_extra=ON" \
+    "csim_wfstat.procinfo.loopcntMax=${MASTER_TICKS}" \
+    "csim_wfstat.procinfo.triggermode=3" \
+    "csim_wfstat.procinfo.triggersname=b_post_stg2"
+milk-fps-runstart -q csim_wfstat
+
+cnt_pha_0=0 cnt_wfs1_0=0 cnt_wfs2_0=0 cnt_long_0=0
+@get cnt_pha_0="s.outarraypha.cnt0" cnt_wfs1_0="s.csim_wfs_nir.cnt0" \
+     cnt_wfs2_0="s.csim_wfs_vis.cnt0" cnt_long_0="s.psf_vis_final_long.cnt0"
+
+cacaosim.reset_long
+sysmon.mark "closed_loop_10s" "10s closed-loop science + csim_wfstat telemetry"
+t_int_0="$(date +%s.%N)"
+milk-fps-runstart -q csim_atmturb
+
+rem="${LONG_READOUTS}"
+done_rd=0
+chunk=100
+while (( rem > 0 )); do
+    step=$(( rem < chunk ? rem : chunk ))
+    milk-stream-wait -q -t 60 "psf_vis_final_long+${step}"
+    rem=$(( rem - step ))
+    done_rd=$(( done_rd + step ))
+    phys_done="$(awk -v d="${done_rd}" 'BEGIN { printf "%.2f", d * 0.01 }')"
+    s1="" s2="" sv=""
+    @get s1="f.csim_nir_stg1.strehl_ave" s2="f.csim_nir_final.strehl_ave" \
+         sv="f.csim_vis_final.strehl_ave"
+    sr_live="$(printf 'NIR_Stg1=%.3f NIR_Final=%.3f Vis_Final=%.3f' "${s1}" "${s2}" "${sv}")"
+    echo "[ao3k-scexao]      t_phys = ${phys_done} / ${PHYS_TIME} s  (${sr_live})"
+done
+
+t_int_1="$(date +%s.%N)"
+cnt_pha_1=0 cnt_wfs1_1=0 cnt_wfs2_1=0 cnt_long_1=0
+@get cnt_pha_1="s.outarraypha.cnt0" cnt_wfs1_1="s.csim_wfs_nir.cnt0" \
+     cnt_wfs2_1="s.csim_wfs_vis.cnt0" cnt_long_1="s.psf_vis_final_long.cnt0"
+
+# Freeze master turbulence clock so all 6 cameras & wfstat flush identical snapshots
+milk-fps-runstop -q csim_atmturb
+sleep 0.2
+milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
+milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
+for _ in $(seq 1 50); do
+    [[ -s "${OUT_DIR}/wf_stats.json" ]] && break
+    sleep 0.1
+done
+milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
+rm -f "${WFSTAT_LINK}"
+
+d_pha=$(( cnt_pha_1 - cnt_pha_0 ))
+d_wfs1=$(( cnt_wfs1_1 - cnt_wfs1_0 ))
+d_wfs2=$(( cnt_wfs2_1 - cnt_wfs2_0 ))
+d_long=$(( cnt_long_1 - cnt_long_0 ))
+WALL_ELAPSED="$(awk -v t0="${t_int_0}" -v t1="${t_int_1}" 'BEGIN { printf "%.2f", t1 - t0 }')"
+
+echo "[ao3k-scexao]      Completed in ${WALL_ELAPSED} s wall-clock:"
+echo "[ao3k-scexao]      d(pha)=${d_pha}, d(wfs1)=${d_wfs1}, d(wfs2)=${d_wfs2}, d(long)=${d_long}"
+
+sysmon.mark "save_psfs" "Save PSFs and closed-loop telemetry streams via fpspipe.savefits"
+echo "[ao3k-scexao] Step 7/7: Saving integrated PSFs, loop telemetry, & generating reports..."
+for cam in vis_raw nir_raw vis_stg1 nir_stg1 vis_final nir_final; do
+    fpspipe.savefits "psf_${cam}_long" "${OUT_DIR}/psf_${cam}.fits"
+    fpspipe.savefits "psf_${cam}" "${OUT_DIR}/det_${cam}.fits"
+done
+
+for n in 1 2; do
+    for sfx in imWFS2 modevalWFS modevalDM mgain mgainfact dmC; do
+        if @exists "s.aol${n}_${sfx}"; then
+            fpspipe.savefits "aol${n}_${sfx}" "${OUT_DIR}/aol${n}_${sfx}.fits"
+        fi
+    done
+done
+
+if (( RUN_SELFRM )); then
+    sysmon.mark "selfrm_onsky" "Closed-loop on-sky selfRM probing (Stage 1 & 2)"
+    echo "[ao3k-scexao] Step 6b/7: Acquiring on-sky closed-loop selfRM (${SEEING}\" seeing)..."
+    t_srms_0="$(date +%s)"
+    milk-fps-runstart -q csim_atmturb
+    milk-stream-wait -q -t 30 "csim_wfs_vis+40"
+
+    CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 selfrm \
+        "${OUT_DIR}/selfRM_onsky_stg1.fits" \
+        --nbmode "${SELFRM_MODES}" --ampl 0.030 --nbiter "${SELFRM_ONSKY_ITER}" --nbsettle 6
+    milk-stream-wait -q -t 30 "csim_wfs_vis+40"
+
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 selfrm \
+        "${OUT_DIR}/selfRM_onsky_stg2.fits" \
+        --nbmode "${SELFRM_MODES}" --ampl 0.020 --nbiter "${SELFRM_ONSKY_ITER}" --nbsettle 6
+
+    milk-fps-runstop -q csim_atmturb
+    t_srms_1="$(date +%s)"
+    echo "[ao3k-scexao]      On-sky selfRM done in $(( t_srms_1 - t_srms_0 )) s."
+fi
+
+for stg_pair in "1:${STG1_ROOT}" "2:${STG2_ROOT}"; do
+    sn="${stg_pair%%:*}"
+    sroot="${stg_pair#*:}"
+    for mf in mlat_hardwlatency.dat mlat_hardwlatencypts.dat mlat_diffseq.fits; do
+        if [[ -f "${sroot}/conf/${mf}" ]]; then
+            cp -f "${sroot}/conf/${mf}" "${OUT_DIR}/stg${sn}_${mf}"
+        fi
+    done
+    if [[ -f "${sroot}/conf/calib_timings.json" ]]; then
+        cp -f "${sroot}/conf/calib_timings.json" "${OUT_DIR}/calib_timings_stg${sn}.json"
+    fi
+done
+
+sysmon.mark "ao_report" "Compile AO optical report & figures (cacaosim-ao-report)"
+cacaosim-ao-report \
+    "${WORK_ROOT}" \
+    "${OUT_DIR}" \
+    "${SEEING}" \
+    "${PHYS_TIME}" \
+    "${d_pha}" \
+    "${WALL_ELAPSED}" \
+    "${GAIN1}" \
+    "${GAIN2}" \
+    "${MULT1}" \
+    "${MULT2}" \
+    "${MGAIN_ALPHA}" \
+    "${MGAIN_FLOOR}" \
+    "${MGAIN_TT}"
+
+sysmon.stop
+
+BENCH_TXT="${OUT_DIR}/cacaosim_microbench.txt"
+if (( ! SKIP_MICROBENCH )) && [[ ! -s "${BENCH_TXT}" ]]; then
+    echo "[ao3k-scexao] Running cacaosim-benchmark hardware kernel suite..."
+    cacaosim-benchmark > "${BENCH_TXT}" || true
+fi
+
+if [[ -z "${COMPARE_JSON}" && -f "${OUT_DIR}/modular_vs_fused.json" ]]; then
+    COMPARE_JSON="${OUT_DIR}/modular_vs_fused.json"
+fi
+
+echo "[ao3k-scexao] Compiling Compute Performance Report (milk-perf-report)..."
+sysmon.report \
+    "${OUT_DIR}" \
+    "${OUT_DIR}/ao3k_scexao_metrics.json" \
+    "${BENCH_TXT}" \
+    "${OUT_DIR}/calib_timings_stg1.json" \
+    "${OUT_DIR}/calib_timings_stg2.json" \
+    "${COMPARE_JSON}"
+
+if [[ -n "${SAVE_RM_DIR}" ]]; then
+    echo "[ao3k-scexao] Saved Stage-1 & Stage-2 response matrices in: ${SAVE_RM_DIR}"
+fi
+echo "[ao3k-scexao] Optical Report : ${OUT_DIR}/REPORT.md"
+echo "[ao3k-scexao] Compute Report : ${OUT_DIR}/COMPUTE_REPORT.md"

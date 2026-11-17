@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
 # cacaoloop-ao3k-scexao.milk - Stage-parameterized Pyramid WFS AO loop controller
-# for Subaru AO3k (Stage 1: aol1, dm01 16x16, NIR PyWFS) and
-# SCExAO (Stage 2: aol2, dm02 24x24, Visible PyWFS).
+# for Subaru AO3k (Stage 1: aol1, dm01 64x64, D=60 act, 160x160 NIR PyWFS) and
+# SCExAO (Stage 2: aol2, dm02 50x50, D=46 act, 120x120 Visible PyWFS).
 
 set -euo pipefail
 
@@ -22,27 +22,35 @@ if [[ "${STAGE}" == "1" || "${STAGE}" == "ao3k" ]]; then
     DEF_NAME="ao3k"
     DEF_NUM=1
     DEF_DM="01"
-    DEF_DMX=16
-    DEF_DMY=16
+    DEF_DMX=64
+    DEF_DMY=64
+    DEF_PUP_DIAM="60.0"
     DEF_WFS="csim_wfs_nir"
+    DEF_WFSX=160
+    DEF_WFSY=160
     DEF_GAIN="0.35"
     DEF_MULT="0.98"
-    DEF_SVDLIM="0.008"
-    DEF_CPAMAX="8"
-    DEF_RCPAMAX="10.0"
+    DEF_SVDLIM="0.004"
+    DEF_CPAMAX="28"
+    DEF_RCPAMAX="28.5"
+    DEF_DELTACPA="1.0"
     DEF_AMPL="0.015"
 elif [[ "${STAGE}" == "2" || "${STAGE}" == "scexao" ]]; then
     DEF_NAME="scexao"
     DEF_NUM=2
     DEF_DM="02"
-    DEF_DMX=24
-    DEF_DMY=24
+    DEF_DMX=50
+    DEF_DMY=50
+    DEF_PUP_DIAM="46.0"
     DEF_WFS="csim_wfs_vis"
+    DEF_WFSX=120
+    DEF_WFSY=120
     DEF_GAIN="0.35"
     DEF_MULT="0.98"
-    DEF_SVDLIM="0.007"
-    DEF_CPAMAX="12"
-    DEF_RCPAMAX="15.0"
+    DEF_SVDLIM="0.004"
+    DEF_CPAMAX="22"
+    DEF_RCPAMAX="22.5"
+    DEF_DELTACPA="1.0"
     DEF_AMPL="0.010"
 else
     echo "${SCRIPT_NAME}: invalid --stage '${STAGE}' (expected 1 or 2)" >&2
@@ -55,11 +63,12 @@ PFX="aol${N}_"
 DM="${CACAO_DMINDEX:-${DEF_DM}}"
 DMX="${CACAO_DMX:-${DEF_DMX}}"
 DMY="${CACAO_DMY:-${DEF_DMY}}"
+PUP_DIAM_ACT="${CACAO_PUP_DIAM_ACT:-${DEF_PUP_DIAM}}"
 WFS_STREAM="${CACAO_WFSSTREAM:-${DEF_WFS}}"
-WFSX="${CACAO_WFSX:-64}"
-WFSY="${CACAO_WFSY:-64}"
+WFSX="${CACAO_WFSX:-${DEF_WFSX}}"
+WFSY="${CACAO_WFSY:-${DEF_WFSY}}"
 ROOTDIR="${CACAO_LOOPROOTDIR:-${PWD}/${LOOPNAME}-rootdir}"
-GPUINDEX="${CACAO_GPUINDEX:-99}"
+GPUINDEX="${CACAO_GPUINDEX:-0}"
 RATE="${CACAO_WFSFRATE:-100}"
 LAT_FR="${CACAO_LATENCYHARDWFR:-1.5}"
 GAIN="${CACAO_LOOPGAIN:-${DEF_GAIN}}"
@@ -67,6 +76,7 @@ MULT="${CACAO_LOOPMULT:-${DEF_MULT}}"
 SVDLIM="${CACAO_SVDLIM:-${DEF_SVDLIM}}"
 CPAMAX="${CACAO_CPAMAX:-${DEF_CPAMAX}}"
 RCPAMAX="${CACAO_RCPAMAX:-${DEF_RCPAMAX}}"
+DELTACPA="${CACAO_DELTACPA:-${DEF_DELTACPA}}"
 MGAIN_ALPHA="${CACAO_MGAIN_ALPHA:-0.8}"
 MGAIN_FLOOR="${CACAO_MGAIN_FLOOR:-0.10}"
 MGAIN_TT="${CACAO_MGAIN_TT:-1.0}"
@@ -76,12 +86,13 @@ POKE_AMPL="${CACAO_POKEAMPL:-${DEF_AMPL}}"
 
 XCENT="$(awk -v n="${DMX}" 'BEGIN { printf "%.2f", 0.5 * (n - 1.0) }')"
 YCENT="$(awk -v n="${DMY}" 'BEGIN { printf "%.2f", 0.5 * (n - 1.0) }')"
-RAD="$(awk -v n="${DMX}" 'BEGIN { printf "%.2f", 0.475 * n }')"
-RAD_IN="$(awk -v n="${DMX}" 'BEGIN { printf "%.2f", 0.125 * n }')"
+RAD="$(awk -v d="${PUP_DIAM_ACT}" 'BEGIN { printf "%.2f", 0.5 * d }')"
+HAD_RAD="$(awk -v r="${RAD}" 'BEGIN { printf "%.2f", r + 1.2 }')"
+RAD_IN="$(awk -v r="${RAD}" 'BEGIN { printf "%.2f", 0.30 * r - 1.4 }')"
 
 DESC_SHORT="deploy, calibrate, and control Stage-1 AO3k or Stage-2 SCExAO Pyramid loop"
-DESC_LONG="Deploy, calibrate, and operate Stage-1 AO3k (16x16 NIR PyWFS) or Stage-2 SCExAO
-(24x24 Vis PyWFS) AO loops using fpspipe and cacaoloop (no terminal multiplexer)."
+DESC_LONG="Deploy, calibrate, and operate Stage-1 AO3k (64x64 NIR PyWFS) or Stage-2 SCExAO
+(50x50 Vis PyWFS) AO loops using fpspipe and cacaoloop (no terminal multiplexer)."
 
 usage() {
     cat <<EOF
@@ -278,6 +289,7 @@ DMch2disp-${DM}.zpoffset.DMcomboutzpo = ${PFX}dmzpo
 DMch2disp-${DM}.procinfo.loopcntMax   = -1
 DMch2disp-${DM}.procinfo.triggermode  = 4
 DMch2disp-${DM}.procinfo.triggerdelay = 0.0005
+DMch2disp-${DM}.procinfo.MeasureTiming = ON
 
 acquWFS-${N}.AOloopindex              = ${N}
 acquWFS-${N}.insname                  = ${PFX}wfsim
@@ -291,6 +303,7 @@ acquWFS-${N}.wfszpo                   = ${PFX}wfszpo
 acquWFS-${N}.procinfo.loopcntMax      = -1
 acquWFS-${N}.procinfo.triggermode     = 3
 acquWFS-${N}.procinfo.triggersname    = ${PFX}wfsim
+acquWFS-${N}.procinfo.MeasureTiming   = ON
 
 wfs2cmodeval-${N}.GPUindex            = ${GPUINDEX}
 wfs2cmodeval-${N}.insname             = ${PFX}imWFS2
@@ -302,6 +315,7 @@ wfs2cmodeval-${N}.option.MODENORM     = ON
 wfs2cmodeval-${N}.procinfo.loopcntMax = -1
 wfs2cmodeval-${N}.procinfo.triggermode  = 3
 wfs2cmodeval-${N}.procinfo.triggersname = ${PFX}imWFS2
+wfs2cmodeval-${N}.procinfo.MeasureTiming = ON
 
 mfilt-${N}.AOloopindex                = ${N}
 mfilt-${N}.inmval                     = ${PFX}modevalWFS
@@ -319,6 +333,7 @@ mfilt-${N}.selfRM.nbsettle            = 2
 mfilt-${N}.procinfo.loopcntMax        = -1
 mfilt-${N}.procinfo.triggermode       = 3
 mfilt-${N}.procinfo.triggersname      = ${PFX}modevalWFS
+mfilt-${N}.procinfo.MeasureTiming     = ON
 
 mvalC2dm-${N}.GPUindex                = ${GPUINDEX}
 mvalC2dm-${N}.insname                 = ${PFX}modevalDM
@@ -330,6 +345,7 @@ mvalC2dm-${N}.option.MODENORM         = OFF
 mvalC2dm-${N}.procinfo.loopcntMax     = -1
 mvalC2dm-${N}.procinfo.triggermode    = 3
 mvalC2dm-${N}.procinfo.triggersname   = ${PFX}modevalDM
+mvalC2dm-${N}.procinfo.MeasureTiming  = ON
 
 mlat-${N}.frameratewait               = 0.5
 mlat-${N}.CPA                         = 4.0
@@ -363,8 +379,12 @@ compstrCM-${N}.CMmodesWFS             = ../conf/CMmodesWFS.fits
 compstrCM-${N}.svdlim                 = ${SVDLIM}
 compstrCM-${N}.GPUdevice              = ${GPUINDEX}
 compstrCM-${N}.procinfo.loopcntMax    = 1
+compstrCM-${N}.procinfo.MeasureTiming = ON
 
+mlat-${N}.procinfo.MeasureTiming      = ON
+measlinresp-${N}.procinfo.MeasureTiming = ON
 mctrlstats-${N}.AOloopindex           = ${N}
+mctrlstats-${N}.procinfo.MeasureTiming = ON
 EOF
 
     milk-stream-wait -q -t 20 "${WFS_STREAM}:${WFSX}x${WFSY}"
@@ -435,15 +455,55 @@ EOF
     milk-fps-rm -f -q --ignore-missing "${save_fps}" >/dev/null 2>&1 || true
 }
 
+elapsed_s() {
+    awk -v t0="$1" -v t1="$2" 'BEGIN { printf "%.4f", (t1 > t0 ? t1 - t0 : 0.0) }'
+}
+
+write_calib_timings() {
+    local dst="../conf/calib_timings.json"
+    local prev_mlr="${PREV_MEASLINRESP_S:-null}"
+    local prev_had="${PREV_HADDEC_S:-null}"
+    local prev_mkh="${PREV_MKHADAMARD_S:-null}"
+    local v_tr="${LAST_TAKEREF_S:-0.0}"
+    local v_ml="${LAST_MLAT_S:-0.0}"
+    local v_mk="${LAST_MKHADAMARD_S:-${prev_mkh}}"
+    local v_mr="${LAST_MEASLINRESP_S:-${prev_mlr}}"
+    local v_hd="${LAST_HADDEC_S:-${prev_had}}"
+    local v_mx="${LAST_MASKEXTRAP_S:-0.0}"
+    local v_sg="${LAST_SGEMM_S:-0.0}"
+    local v_sv="${LAST_COMPSTRCM_S:-0.0}"
+    local v_rl="${LAST_RELOAD_CM_S:-0.0}"
+    cat > "${dst}" <<EOF
+{
+  "stage": ${N},
+  "loopname": "${LOOPNAME}",
+  "takeref_s": ${v_tr},
+  "mlat_s": ${v_ml},
+  "mkhadamard_s": ${v_mk},
+  "measlinresp_s": ${v_mr},
+  "haddec_and_masks_s": ${v_hd},
+  "maskextrapolate_s": ${v_mx},
+  "sgemm_s": ${v_sg},
+  "compstrcm_svd_s": ${v_sv},
+  "reload_cm_s": ${v_rl}
+}
+EOF
+}
+
 build_and_load_cm() {
     local svdlim="$1" lat_fr="$2"
-    local rad_ext zcmd fcmd
-    rad_ext="$(awk -v r="${RAD}" 'BEGIN { printf "%.4f", r * 1.12 }')"
+    local rad_ext rad_fact zcmd fcmd t0 t1 t2 t3
+    rad_ext="$(awk -v r="${RAD}" -v n="${DMX}" \
+        'BEGIN { mx = 0.5 * n; v = r + 1.8; printf "%.4f", (v < mx ? v : mx) }')"
+    rad_fact="$(awk -v r="${RAD}" -v re="${rad_ext}" 'BEGIN { printf "%.4f", re / r }')"
     zcmd="zern.mkzerc zerc ${DMX} ${DMY} ${XCENT} ${YCENT} ${RAD} 5"
-    zcmd+=" .TTfactor=8.0 .radmaskfact=1.12"
-    fcmd="lintools.mkFouriermodes Fmodes ${DMX} ${DMY} ${CPAMAX} 0.8 ${RAD} 1.12 0"
-    fcmd+=" .fpowerlaw=-1.0 .rCPAmin=0.8 .rCPAmax=${RCPAMAX}"
+    zcmd+=" .TTfactor=8.0 .radmaskfact=${rad_fact}"
+    fcmd="lintools.mkFouriermodes Fmodes ${DMX} ${DMY} ${CPAMAX} ${DELTACPA}"
+    fcmd+=" ${RAD} ${rad_fact} 0"
+    fcmd+=" .fpowerlaw=-0.5 .rCPAmin=0.8 .rCPAmax=${RCPAMAX}"
+    fcmd+=" .align.centered=0 .align.xcenter=${XCENT} .align.ycenter=${YCENT}"
 
+    t0="$(date +%s.%N)"
     cacao-cli -q >/dev/null 2>&1 <<EOF
 ${zcmd}
 ${fcmd}
@@ -451,12 +511,21 @@ arith.immerge zerc Fmodes syn0 2
 imgen.mkdisk dmmaskext ${DMX} ${DMY} ${XCENT} ${YCENT} ${rad_ext}
 iofits.loadfits "../conf/dmmask.fits" dmmask .
 cacaocc.maskextrapolate syn0 dmmask dmmaskext RMsynDM 1.0
-iofits.loadfits "../conf/zrespC.fits" zrespM .
-cacaocc.generateRMWFS zrespM RMsynDM RMsynWFS
 iofits.saveFITS RMsynDM "!../conf/RMsyn_modesDM.fits"
+exit
+EOF
+    t1="$(date +%s.%N)"
+    LAST_MASKEXTRAP_S="$(elapsed_s "${t0}" "${t1}")"
+
+    cacao-cli -q >/dev/null 2>&1 <<EOF
+iofits.loadfits "../conf/RMsyn_modesDM.fits" RMsynDM .
+iofits.loadfits "../conf/zrespC.fits" zrespM .
+linalg.sgemm zrespM RMsynDM RMsynWFS .GPUdevice=${GPUINDEX}
 iofits.saveFITS RMsynWFS "!../conf/RMsyn_modesWFS.fits"
 exit
 EOF
+    t2="$(date +%s.%N)"
+    LAST_SGEMM_S="$(elapsed_s "${t1}" "${t2}")"
 
     milk-fps-set -q \
         "compstrCM-${N}.svdlim=${svdlim}" \
@@ -467,7 +536,9 @@ EOF
         "compstrCM-${N}.CMmodesDM=../conf/CMmodesDM.fits" \
         "compstrCM-${N}.CMmodesWFS=../conf/CMmodesWFS.fits"
     milk-fps-runstart -q "compstrCM-${N}"
-    milk-fps-wait -q -t 60 "compstrCM-${N}"
+    milk-fps-wait -q -t 600 "compstrCM-${N}"
+    t3="$(date +%s.%N)"
+    LAST_COMPSTRCM_S="$(elapsed_s "${t2}" "${t3}")"
 
     milk-fps-runstop -q "mvalC2dm-${N}" "mfilt-${N}" "wfs2cmodeval-${N}"
     milk-stream-rm -q --ignore-missing \
@@ -479,16 +550,19 @@ EOF
     fpspipe.loadfits CMmodesDM  ../conf/CMmodesDM  .force=1
 
     milk-fps-runstart -q "wfs2cmodeval-${N}"
-    milk-stream-wait -q -t 15 "${PFX}modevalWFS+1"
+    milk-stream-wait -q -t 30 "${PFX}modevalWFS+1"
     milk-fps-set -q \
         "mfilt-${N}.comp.latencyhardwfr=${lat_fr}" \
         "mfilt-${N}.selfRM.zsize=${SELFRM_ZSIZE}"
     milk-fps-runstart -q "mfilt-${N}"
-    milk-stream-wait -q -t 15 \
+    milk-stream-wait -q -t 30 \
         "${PFX}modevalDM" "${PFX}mgainfact" "${PFX}modevalDMf" "${PFX}mfiltselfRM"
     apply_modal_gains "${MGAIN_ALPHA}" "${MGAIN_FLOOR}" "${MGAIN_TT}"
     milk-fps-runstart -q "mvalC2dm-${N}"
-    milk-stream-wait -q -t 15 "${PFX}dmC"
+    milk-stream-wait -q -t 30 "${PFX}dmC"
+    local t4
+    t4="$(date +%s.%N)"
+    LAST_RELOAD_CM_S="$(elapsed_s "${t3}" "${t4}")"
 }
 
 run_and_stage_mlat() {
@@ -528,7 +602,8 @@ do_save_rm() {
         HrespC.fits dmmap.fits wfsmap.fits dmmask.fits wfsmask.fits wfsref.fits \
         RMsyn_modesDM.fits RMsyn_modesWFS.fits CMmodesDM.fits CMmodesWFS.fits \
         mlat_hardwlatency.dat mlat_hardwlatencypts.dat mlat_cacaovars.bash \
-        mlat_diffseq.fits selfRM_calib.fits mgainfact.fits rm_meta.env; do
+        mlat_diffseq.fits selfRM_calib.fits mgainfact.fits rm_meta.env \
+        calib_timings.json; do
         if [[ -f "../conf/${fname}" ]]; then
             cp -f "../conf/${fname}" "${rm_dir}/${fname}"
         fi
@@ -574,11 +649,23 @@ do_load_rm() {
         DMmask.fits HpokeC.fits Hpixindex.fits Hmat.fits HrespC.fits \
         dmmap.fits wfsmap.fits dmmask.fits wfsmask.fits wfsref.fits \
         mlat_hardwlatency.dat mlat_hardwlatencypts.dat mlat_cacaovars.bash \
-        mlat_diffseq.fits selfRM_calib.fits rm_meta.env; do
+        mlat_diffseq.fits selfRM_calib.fits rm_meta.env calib_timings.json; do
         if [[ -f "${rm_dir}/${fname}" ]]; then
             cp -fL "${rm_dir}/${fname}" "../conf/${fname}"
         fi
     done
+
+    PREV_MEASLINRESP_S="null"
+    PREV_HADDEC_S="null"
+    PREV_MKHADAMARD_S="null"
+    if [[ -f "../conf/calib_timings.json" ]]; then
+        PREV_MKHADAMARD_S="$(awk -F'[:,]' '/"mkhadamard_s"/{gsub(/ /,"",$2); print $2}' \
+            ../conf/calib_timings.json || echo "null")"
+        PREV_MEASLINRESP_S="$(awk -F'[:,]' '/"measlinresp_s"/{gsub(/ /,"",$2); print $2}' \
+            ../conf/calib_timings.json || echo "null")"
+        PREV_HADDEC_S="$(awk -F'[:,]' '/"haddec_and_masks_s"/{gsub(/ /,"",$2); print $2}' \
+            ../conf/calib_timings.json || echo "null")"
+    fi
 
     local fps_hz="${RATE}" lat_fr="${LAT_FR}"
     if [[ -f "../conf/rm_meta.env" ]]; then
@@ -608,15 +695,24 @@ EOF
 
     if (( retake_ref )) || [[ ! -f "../conf/wfsref.fits" ]]; then
         milk-stream-wait -q -t 15 "${PFX}imWFS1+15"
+        local _tr0 _tr1
+        _tr0="$(date +%s.%N)"
         do_takeref "${nframes}"
+        _tr1="$(date +%s.%N)"
+        LAST_TAKEREF_S="$(elapsed_s "${_tr0}" "${_tr1}")"
     else
+        LAST_TAKEREF_S="0.0"
         fpspipe.loadfits wfsref  ../conf/wfsref .force=1
         fpspipe.loadfits wfsrefc ../conf/wfsref .force=1
         milk-stream-wait -q -t 15 "${PFX}imWFS2+5"
     fi
 
     if [[ ! -f "../conf/mlat_hardwlatencypts.dat" ]]; then
+        local _ml0 _ml1
+        _ml0="$(date +%s.%N)"
         run_and_stage_mlat "${MLAT_NBITER}"
+        _ml1="$(date +%s.%N)"
+        LAST_MLAT_S="$(elapsed_s "${_ml0}" "${_ml1}")"
         local m_fps=0.0 m_lat=0.0 min_hz max_hz
         @get m_fps="f.mlat-${N}.out.framerateHz" m_lat="f.mlat-${N}.out.latencyfr"
         min_hz="$(awk -v r="${RATE}" 'BEGIN { printf "%.3f", r * 0.4 }')"
@@ -627,10 +723,13 @@ EOF
         if @test "${m_lat} >= 0.5 && ${m_lat} <= 3.5"; then
             lat_fr="${m_lat}"
         fi
+    else
+        LAST_MLAT_S="0.0"
     fi
 
     write_rm_meta "${fps_hz}" "${lat_fr}" "${svdlim}"
     build_and_load_cm "${svdlim}" "${lat_fr}"
+    write_calib_timings
 }
 
 cmd_takeref() {
@@ -703,9 +802,15 @@ cmd_calibrate() {
     @calc "s.${PFX}dmRM = s.${PFX}dmRM * 0.0"
     @calc "s.${PFX}dmC = s.${PFX}dmC * 0.0"
 
+    local _tc0 _tc1 _tc2 _tc3 _tc4 _tc5
+    _tc0="$(date +%s.%N)"
     do_takeref "${nframes}"
+    _tc1="$(date +%s.%N)"
+    LAST_TAKEREF_S="$(elapsed_s "${_tc0}" "${_tc1}")"
 
     run_and_stage_mlat "${MLAT_NBITER}"
+    _tc2="$(date +%s.%N)"
+    LAST_MLAT_S="$(elapsed_s "${_tc1}" "${_tc2}")"
 
     local fps_hz="${RATE}" lat_fr="${LAT_FR}" min_hz=0.0 max_hz=0.0
     @get fps_hz="f.mlat-${N}.out.framerateHz" lat_fr="f.mlat-${N}.out.latencyfr"
@@ -719,7 +824,7 @@ cmd_calibrate() {
     fi
 
     cacao-cli -q >/dev/null 2>&1 <<EOF
-imgen.mkdisk DMouter ${DMX} ${DMY} ${XCENT} ${YCENT} ${RAD}
+imgen.mkdisk DMouter ${DMX} ${DMY} ${XCENT} ${YCENT} ${HAD_RAD}
 imgen.mkdisk DMinner ${DMX} ${DMY} ${XCENT} ${YCENT} ${RAD_IN}
 @calc "DMmask = DMouter - DMinner"
 cacaocc.mkHadamard DMmask HpokeC
@@ -729,6 +834,8 @@ iofits.saveFITS Hpixindex "!../conf/Hpixindex.fits"
 iofits.saveFITS Hmat "!../conf/Hmat.fits"
 exit
 EOF
+    _tc3="$(date +%s.%N)"
+    LAST_MKHADAMARD_S="$(elapsed_s "${_tc2}" "${_tc3}")"
 
     milk-fps-set -q \
         "measlinresp-${N}.timing.WFSfrequ=${fps_hz}" \
@@ -737,10 +844,12 @@ EOF
         "measlinresp-${N}.inmodes=../conf/HpokeC.fits" \
         "measlinresp-${N}.outmodes=../conf/HrespC.fits"
     milk-fps-runstart -q "measlinresp-${N}"
-    milk-fps-wait -q -t 240 "measlinresp-${N}"
+    milk-fps-wait -q -t 1800 "measlinresp-${N}"
     @calc "s.${PFX}dmRM = s.${PFX}dmRM * 0.0"
+    _tc4="$(date +%s.%N)"
+    LAST_MEASLINRESP_S="$(elapsed_s "${_tc3}" "${_tc4}")"
 
-    cacao-cli -q >/dev/null <<EOF
+    OMP_NUM_THREADS=32 cacao-cli -q >/dev/null <<EOF
 iofits.loadfits "../conf/Hpixindex.fits" pixiind .
 iofits.loadfits "../conf/Hmat.fits" Hmat .
 iofits.loadfits "../conf/HpokeC.fits" HpokeC .
@@ -756,6 +865,8 @@ iofits.saveFITS dmmask "!../conf/dmmask.fits"
 iofits.saveFITS wfsmask "!../conf/wfsmask.fits"
 exit
 EOF
+    _tc5="$(date +%s.%N)"
+    LAST_HADDEC_S="$(elapsed_s "${_tc4}" "${_tc5}")"
 
     fpspipe.loadfits dmmask  ../conf/dmmask  .force=1
     fpspipe.loadfits wfsmask ../conf/wfsmask .force=1
@@ -764,6 +875,7 @@ EOF
 
     write_rm_meta "${fps_hz}" "${lat_fr}" "${svdlim}"
     build_and_load_cm "${svdlim}" "${lat_fr}"
+    write_calib_timings
 
     if [[ -n "${save_rm}" ]]; then
         do_save_rm "${save_rm}"
@@ -782,7 +894,7 @@ cmd_selfrm() {
         echo "${SCRIPT_NAME}: 'selfrm' requires <out.fits>" >&2
         return 2
     fi
-    local out_fits nbmode=2000 ampl="${POKE_AMPL}" nbiter=1 nbsettle=2 timeout=900
+    local out_fits nbmode=2000 ampl="${POKE_AMPL}" nbiter=1 nbsettle=2 timeout=1800
     out_fits="$(resolve_caller_path "$1")"
     shift
     while (( $# > 0 )); do
@@ -836,14 +948,17 @@ cmd_close() {
         @set "f.mfilt-${N}.loopgain=$1"
     fi
     @set "f.mfilt-${N}.loopON=ON"
+    milk-fps-runstart -q "mctrlstats-${N}" >/dev/null 2>&1 || true
 }
 
 cmd_open() {
     @set "f.mfilt-${N}.loopON=OFF"
+    milk-fps-runstop -q "mctrlstats-${N}" >/dev/null 2>&1 || true
 }
 
 cmd_zero() {
     @set "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
+    milk-fps-runstop -q "mctrlstats-${N}" >/dev/null 2>&1 || true
     if @exists "s.${PFX}dmC"; then
         @calc "s.${PFX}dmC = s.${PFX}dmC * 0.0"
     fi

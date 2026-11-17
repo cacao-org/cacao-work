@@ -87,7 +87,9 @@ def stack_env(repo_root: Path) -> dict[str, str]:
     env["MILK_INSTALLDIR"] = install_root
     env["MILK_ROOT"] = install_root
     env["PYTHON_BIN"] = python_bin
-    env["ATMTURB_MASTER_SIZE"] = env.get("ATMTURB_MASTER_SIZE", "512")
+    env["ATMTURB_MASTER_SIZE"] = env.get("ATMTURB_MASTER_SIZE", "1024")
+    env["OMP_NUM_THREADS"] = env.get("OMP_NUM_THREADS", "4")
+    env["OPENBLAS_NUM_THREADS"] = env.get("OPENBLAS_NUM_THREADS", "1")
     env["MILK_QUIET"] = "1"
     if not env.get("TERM") or env.get("TERM") == "dumb":
         env["TERM"] = "xterm-256color"

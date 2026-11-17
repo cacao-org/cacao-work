@@ -3,14 +3,14 @@
 #
 # Subaru AO3k + SCExAO Two-Stage Cascaded Pyramid WFS Optical Bench
 #
-# Stage 1 (AO3k)  : 16x16 DM (dm01disp) + J-band (1.22 um) Pyramid WFS @ 1.0 kHz
-# Stage 2 (SCExAO): 24x24 DM (dm02disp) + Visible (0.75 um) Pyramid WFS @ 2.0 kHz
+# Stage 1 (AO3k)  : 64x64 DM (D=60 act, dm01disp) + J-band (1.22 um) 160x160 PyWFS @ 1.0 kHz
+# Stage 2 (SCExAO): 50x50 DM (D=46 act, dm02disp) + Vis (0.75 um) 120x120 PyWFS @ 2.0 kHz
 # Science PSFs    : Simultaneous Visible (0.75 um) & Near-IR H-band (1.65 um)
 #                   focal-plane cameras at Pre-AO, Post-Stage-1, and Final Stage-2.
 
 [bench]
 name       = "subaru_ao3k_scexao"
-nwf        = 128
+nwf        = 256
 pup_diam   = 0.9375
 cobs       = 0.30
 nspider    = 4
@@ -33,7 +33,7 @@ turb_gain  = 0.0
 in            = "b_pup"
 out_cam       = "psf_vis_raw"
 out_long      = "psf_vis_raw_long"
-ncam          = 192
+ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 0.75
 bw_frac       = 0.15
@@ -50,7 +50,7 @@ out_dtype     = "float32"
 in            = "b_pup"
 out_cam       = "psf_nir_raw"
 out_long      = "psf_nir_raw_long"
-ncam          = 192
+ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
@@ -63,14 +63,15 @@ ron_e         = 0.5
 sat_adu       = 1.0e9
 out_dtype     = "float32"
 
-# --- Stage 1 (AO3k): 16x16 DM + Intermediate PSFs + J-Band PyWFS (1 kHz) ---
+# --- Stage 1 (AO3k): 64x64 DM (D=60 act) + Intermediate PSFs + 160x160 J-Band PyWFS (1 kHz) ---
 [dm.ao3k]
 in           = "b_pup"
 out          = "b_post_stg1"
 in_cmd       = "dm01disp"
 out_opd      = "csim_dm01_opd"
-nact_x       = 16
-nact_y       = 16
+nact_x       = 64
+nact_y       = 64
+dm_diam      = 0.984375
 if_coupling  = 0.20
 tput         = 0.98
 max_stroke   = 8.0
@@ -83,7 +84,7 @@ delay_frames = 2.0
 in            = "b_post_stg1"
 out_cam       = "psf_vis_stg1"
 out_long      = "psf_vis_stg1_long"
-ncam          = 192
+ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 0.75
 bw_frac       = 0.15
@@ -100,7 +101,7 @@ out_dtype     = "float32"
 in            = "b_post_stg1"
 out_cam       = "psf_nir_stg1"
 out_long      = "psf_nir_stg1_long"
-ncam          = 192
+ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
@@ -127,7 +128,7 @@ eff_trans  = 0.95
 [pyrwfs.wfs_nir]
 in            = "b_nir_wfs"
 out_cam       = "csim_wfs_nir"
-ncam          = 64
+ncam          = 160
 lambda_um     = 1.22
 bw_frac       = 0.20
 qe            = 0.80
@@ -138,14 +139,15 @@ mod_npts      = 12
 ron_e         = 0.8
 out_dtype     = "float32"
 
-# --- Stage 2 (SCExAO): 24x24 DM + Vis PyWFS (2 kHz) + Final Vis & NIR PSFs ---
+# --- Stage 2 (SCExAO): 50x50 DM (D=46 act) + 120x120 Vis PyWFS (2 kHz) + Final PSFs ---
 [dm.scexao]
 in           = "b_stg2_in"
 out          = "b_post_stg2"
 in_cmd       = "dm02disp"
 out_opd      = "csim_dm02_opd"
-nact_x       = 24
-nact_y       = 24
+nact_x       = 50
+nact_y       = 50
+dm_diam      = 0.9986413
 if_coupling  = 0.15
 tput         = 0.98
 max_stroke   = 3.0
@@ -175,7 +177,7 @@ t_gray    = 0.10
 [pyrwfs.wfs_vis]
 in            = "b_vis_wfs"
 out_cam       = "csim_wfs_vis"
-ncam          = 64
+ncam          = 120
 lambda_um     = 0.75
 bw_frac       = 0.20
 qe            = 0.85
@@ -190,7 +192,7 @@ out_dtype     = "float32"
 in            = "b_vis_sci"
 out_cam       = "psf_vis_final"
 out_long      = "psf_vis_final_long"
-ncam          = 192
+ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 0.75
 bw_frac       = 0.15
@@ -207,7 +209,7 @@ out_dtype     = "float32"
 in            = "b_nir_sci"
 out_cam       = "psf_nir_final"
 out_long      = "psf_nir_final_long"
-ncam          = 192
+ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18

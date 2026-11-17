@@ -91,6 +91,8 @@ verify_install() {
         milk-fps-runstart
         milk-fps-runstop
         milk-fps-rm
+        milk-sysmon
+        milk-perf-report
         milk-stream-link
         milk-stream-rm
         milk-stream-wait
@@ -121,14 +123,17 @@ verify_install() {
         cacao-fpsexec-cacaoac-measlinresp
         cacao-fpsexec-cacaocc-compstrcm
         cacaosim-bench
+        cacaosim-benchmark
         cacaosim-bench-view
         cacaosim-CTRL
+        cacaosim-ao-report
         milk-fpsexec-cacaosim-htsim
         milk-fpsexec-cacaosim-mkbeam
         milk-fpsexec-cacaosim-dmsim
         milk-fpsexec-cacaosim-beamsplit
         milk-fpsexec-cacaosim-pyrwfs
         milk-fpsexec-cacaosim-fpcam
+        milk-fpsexec-cacaosim-wfstat
         milk-fpsexec-atmturb-mkwfs
     )
     local libs=(
@@ -146,6 +151,7 @@ verify_install() {
     )
     local cmd_mods=(
         fpspipe.bash
+        sysmon.bash
         cacaoloop.bash
         cacaosim.bash
     )

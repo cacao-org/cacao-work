@@ -96,6 +96,14 @@ if [ -z "${PYTHON_BIN:-}" ]; then
 fi
 export PYTHON_BIN
 
+# Cap OpenMP/OpenBLAS thread pools & enable passive spin + GPU-local NUMA (overridable).
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export OMP_WAIT_POLICY="${OMP_WAIT_POLICY:-PASSIVE}"
+export GOMP_SPINCOUNT="${GOMP_SPINCOUNT:-0}"
+export MILK_OMP_WAIT_POLICY="${MILK_OMP_WAIT_POLICY:-PASSIVE}"
+export MILK_NUMANODE="${MILK_NUMANODE:-auto}"
+
 # Ensure tput calls inside cacao scripts do not fail under set -e when
 # running in non-interactive shells (e.g. pytest, CI, TERM=dumb).
 if [ -z "${TERM:-}" ] || [ "${TERM}" = "dumb" ]; then
