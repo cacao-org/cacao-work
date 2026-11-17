@@ -12,6 +12,7 @@ set -euo pipefail
 SEEING="0.6"
 PHYS_TIME="10.0"
 WALL_RATE="160"
+BENCH_MODE="fused"
 GAIN1="0.35"
 GAIN2="0.35"
 MULT1="0.98"
@@ -39,6 +40,7 @@ Options:
   --seeing <arcsec>   Seeing FWHM at 0.50 um (default: ${SEEING})
   --phys-time <sec>   Physical closed-loop integration time [s] (default: ${PHYS_TIME})
   --wall-rate <hz>    Wall-clock master pacing rate [Hz] (default: ${WALL_RATE})
+  --bench-mode <mode> cacaosim optical bench mode: fused or modular (default: ${BENCH_MODE})
   --gain1 <float>     Stage-1 AO3k integrator gain (default: ${GAIN1})
   --gain2 <float>     Stage-2 SCExAO integrator gain (default: ${GAIN2})
   --mult1 <float>     Stage-1 leak multiplier (default: ${MULT1})
@@ -66,6 +68,7 @@ while (( $# > 0 )); do
         --seeing)          SEEING="$2"; shift 2 ;;
         --phys-time)       PHYS_TIME="$2"; shift 2 ;;
         --wall-rate)       WALL_RATE="$2"; shift 2 ;;
+        --bench-mode)      BENCH_MODE="$2"; shift 2 ;;
         --gain1)           GAIN1="$2"; shift 2 ;;
         --gain2)           GAIN2="$2"; shift 2 ;;
         --mult1)           MULT1="$2"; shift 2 ;;
@@ -88,6 +91,13 @@ while (( $# > 0 )); do
         *) echo "[ao3k-scexao] Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [[ "${BENCH_MODE}" != "fused" && "${BENCH_MODE}" != "modular" ]]; then
+    echo "[ao3k-scexao] Invalid --bench-mode '${BENCH_MODE}' (expected fused or modular)" >&2
+    exit 2
+fi
+MASTER_UNIT="csim_mkbeam"
+[[ "${BENCH_MODE}" == "fused" ]] && MASTER_UNIT="csim_htsim"
 
 OUT_DIR="$(realpath -m "${OUT_DIR}")"
 [[ -n "${SAVE_RM_DIR}" ]]  && SAVE_RM_DIR="$(realpath -m "${SAVE_RM_DIR}")"
@@ -119,12 +129,14 @@ cleanup_sim() {
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 teardown --purge-dm \
         >/dev/null 2>&1 || true
     cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
+    milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 >/dev/null 2>&1 || true
 }
 @defer --exit cleanup_sim
 
 echo "================================================================================"
 echo " Subaru 8.2m AO3k + SCExAO Two-Stage Pyramid WFS Simulation (milk-script)"
 echo "   Sandbox SHM : ${MILK_SHM_DIR:-/milk/shm}"
+echo "   Bench Mode  : ${BENCH_MODE} (${MASTER_UNIT})"
 echo "   Seeing      : ${SEEING}\" @ 0.50 um | Star: mV = 6.0, mH = 6.0 (Teff = 9600 K)"
 echo "   Loop Speeds : Stage 1 (AO3k NIR) = 1.0 kHz | Stage 2 (SCExAO Vis) = 2.0 kHz"
 echo "   Integration : ${PHYS_TIME} s physical (${MASTER_TICKS} ticks, ${LONG_READOUTS} exposures)"
@@ -133,20 +145,26 @@ echo "==========================================================================
 
 sysmon.start "${OUT_DIR}" .rate=5.0
 
-sysmon.mark "deploy_bench" "Deploy modular optical bench (turb_gain=0.0)"
-echo "[ao3k-scexao] Step 1/7: Deploying modular optical bench (turb_gain = 0.0)..."
+sysmon.mark "deploy_bench" "Deploy ${BENCH_MODE} optical bench (turb_gain=0.0)"
+echo "[ao3k-scexao] Step 1/7: Deploying ${BENCH_MODE} optical bench (turb_gain = 0.0)..."
 cacaosim.deploy "${BENCH_CFG}" \
-    .mode="modular" \
+    .mode="${BENCH_MODE}" \
     .atmturb=1 \
     .seeing="${SEEING}" \
     .workdir="${CSIM_DIR}" >/dev/null
 
-milk-fps-runstop -q csim_mkbeam csim_atmturb
+milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
+milk-fps-wait -q -t 10 "${MASTER_UNIT}" >/dev/null 2>&1 || true
 milk-fps-set -q \
-    "csim_mkbeam.turb_gain=0.0" \
-    "csim_mkbeam.frame_rate=${WALL_RATE}" \
-    "csim_mkbeam.procinfo.triggermode=0"
-milk-fps-runstart -q csim_mkbeam
+    "${MASTER_UNIT}.turb_gain=0.0" \
+    "${MASTER_UNIT}.frame_rate=${WALL_RATE}" \
+    "${MASTER_UNIT}.procinfo.triggermode=0"
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    milk-fps-set -q \
+        "csim_htsim.export_beams=b_pup,b_post_stg1,b_post_stg2" \
+        "csim_htsim.export_enable=OFF"
+fi
+milk-fps-runstart -q "${MASTER_UNIT}"
 milk-stream-wait -q -t 20 csim_wfs_nir csim_wfs_vis psf_vis_final_long psf_nir_final_long
 
 sysmon.mark "dl_reference" "Acquire diffraction-limited reference PSFs"
@@ -179,7 +197,7 @@ CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
 milk-stream-wait -q -t 20 "csim_wfs_vis+20"
 
 TURB_CAL=""
-@get TURB_CAL="f.csim_mkbeam.turb_gain"
+@get TURB_CAL="f.${MASTER_UNIT}.turb_gain"
 echo "[ao3k-scexao] Step 4/7: Calibrating RMs with NO turbulence (turb_gain = ${TURB_CAL})..."
 
 declare -a CAL1_ARGS=(--nframes 60 --nbloop "${NBLOOP}" --svdlim "${SVDLIM1}")
@@ -249,25 +267,29 @@ fi
 
 sysmon.mark "closed_loop_warmup" "Enable turbulence & lock Stage 1 + Stage 2 closed loops"
 echo "[ao3k-scexao] Step 5/7: Enabling 1:1 lockstep Maunakea turbulence (${SEEING}\", dt=0.5 ms)..."
-milk-fps-runstop -q csim_mkbeam csim_atmturb
+milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
+milk-fps-wait -q -t 10 "${MASTER_UNIT}" csim_atmturb >/dev/null 2>&1 || true
 milk-fps-set -q \
     "csim_atmturb.seeing=${SEEING}" \
     "csim_atmturb.time_step=0.0005" \
     "csim_atmturb.procinfo.triggermode=4" \
     "csim_atmturb.procinfo.triggerdelay=${WALL_DT}" \
-    "csim_mkbeam.turb_gain=1.0" \
-    "csim_mkbeam.frame_rate=0.0" \
-    "csim_mkbeam.procinfo.triggermode=3" \
-    "csim_mkbeam.procinfo.triggersname=outarraypha"
+    "${MASTER_UNIT}.turb_gain=1.0" \
+    "${MASTER_UNIT}.frame_rate=0.0" \
+    "${MASTER_UNIT}.procinfo.triggermode=3" \
+    "${MASTER_UNIT}.procinfo.triggersname=outarraypha"
 milk-fps-runstart -q csim_atmturb
 milk-stream-wait -q -t 30 "outarraypha+5"
-milk-fps-runstart -q csim_mkbeam
+milk-fps-runstart -q "${MASTER_UNIT}"
 milk-stream-wait -q -t 30 "csim_wfs_vis+20"
 
 echo "[ao3k-scexao] Step 6/7: Closing Stage 1 (1 kHz) -> Stage 2 (2 kHz) (${PHYS_TIME} s)..."
 CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 close "${GAIN1}"
 milk-stream-wait -q -t 30 "csim_wfs_vis+100"
 CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    @set "f.csim_htsim.export_enable=ON"
+fi
 milk-stream-wait -q -t 30 "csim_wfs_vis+200"
 
 # Pause master turbulence clock cleanly while attaching C wavefront recorder (csim_wfstat)
@@ -296,7 +318,7 @@ cnt_pha_0=0 cnt_wfs1_0=0 cnt_wfs2_0=0 cnt_long_0=0
      cnt_wfs2_0="s.csim_wfs_vis.cnt0" cnt_long_0="s.psf_vis_final_long.cnt0"
 
 cacaosim.reset_long
-sysmon.mark "closed_loop_10s" "10s closed-loop science + csim_wfstat telemetry"
+sysmon.mark "closed_loop_10s" "10s closed-loop science + csim_wfstat telemetry (${BENCH_MODE})"
 t_int_0="$(date +%s.%N)"
 milk-fps-runstart -q csim_atmturb
 
@@ -310,9 +332,16 @@ while (( rem > 0 )); do
     done_rd=$(( done_rd + step ))
     phys_done="$(awk -v d="${done_rd}" 'BEGIN { printf "%.2f", d * 0.01 }')"
     s1="" s2="" sv=""
-    @get s1="f.csim_nir_stg1.strehl_ave" s2="f.csim_nir_final.strehl_ave" \
-         sv="f.csim_vis_final.strehl_ave"
-    sr_live="$(printf 'NIR_Stg1=%.3f NIR_Final=%.3f Vis_Final=%.3f' "${s1}" "${s2}" "${sv}")"
+    if [[ "${BENCH_MODE}" == "modular" ]]; then
+        @get s1="f.csim_nir_stg1.strehl_ave" s2="f.csim_nir_final.strehl_ave" \
+             sv="f.csim_vis_final.strehl_ave"
+    else
+        @get s1="s.psf_nir_stg1_long.kw.STREHL" s2="s.psf_nir_final_long.kw.STREHL" \
+             sv="s.psf_vis_final_long.kw.STREHL" 2>/dev/null || true
+        [[ -z "${sv}" ]] && @get sv="f.csim_htsim.strehl_ave" 2>/dev/null || true
+    fi
+    sr_live="$(printf 'NIR_Stg1=%.3f NIR_Final=%.3f Vis_Final=%.3f' \
+        "${s1:-0}" "${s2:-0}" "${sv:-0}")"
     echo "[ao3k-scexao]      t_phys = ${phys_done} / ${PHYS_TIME} s  (${sr_live})"
 done
 
@@ -324,6 +353,9 @@ cnt_pha_1=0 cnt_wfs1_1=0 cnt_wfs2_1=0 cnt_long_1=0
 # Freeze master turbulence clock so all 6 cameras & wfstat flush identical snapshots
 milk-fps-runstop -q csim_atmturb
 sleep 0.2
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    @set "f.csim_htsim.export_enable=OFF"
+fi
 milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
 milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
 for _ in $(seq 1 50); do

@@ -503,8 +503,10 @@ build_and_load_cm() {
     fcmd+=" .fpowerlaw=-0.5 .rCPAmin=0.8 .rCPAmax=${RCPAMAX}"
     fcmd+=" .align.centered=0 .align.xcenter=${XCENT} .align.ycenter=${YCENT}"
 
+    local ts_file="/tmp/.cacaoloop_ts_$$"
+    rm -f "${ts_file}"
     t0="$(date +%s.%N)"
-    cacao-cli -q >/dev/null 2>&1 <<EOF
+    OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 cacao-cli -q >/dev/null 2>&1 <<EOF
 ${zcmd}
 ${fcmd}
 arith.immerge zerc Fmodes syn0 2
@@ -512,19 +514,16 @@ imgen.mkdisk dmmaskext ${DMX} ${DMY} ${XCENT} ${YCENT} ${rad_ext}
 iofits.loadfits "../conf/dmmask.fits" dmmask .
 cacaocc.maskextrapolate syn0 dmmask dmmaskext RMsynDM 1.0
 iofits.saveFITS RMsynDM "!../conf/RMsyn_modesDM.fits"
-exit
-EOF
-    t1="$(date +%s.%N)"
-    LAST_MASKEXTRAP_S="$(elapsed_s "${t0}" "${t1}")"
-
-    cacao-cli -q >/dev/null 2>&1 <<EOF
-iofits.loadfits "../conf/RMsyn_modesDM.fits" RMsynDM .
+date +%s.%N > "${ts_file}"
 iofits.loadfits "../conf/zrespC.fits" zrespM .
-linalg.sgemm zrespM RMsynDM RMsynWFS .GPUdevice=${GPUINDEX}
+cacaocc.generateRMWFS zrespM RMsynDM RMsynWFS
 iofits.saveFITS RMsynWFS "!../conf/RMsyn_modesWFS.fits"
 exit
 EOF
     t2="$(date +%s.%N)"
+    t1="$(cat "${ts_file}" 2>/dev/null || printf '%s\n' "${t2}")"
+    rm -f "${ts_file}"
+    LAST_MASKEXTRAP_S="$(elapsed_s "${t0}" "${t1}")"
     LAST_SGEMM_S="$(elapsed_s "${t1}" "${t2}")"
 
     milk-fps-set -q \
@@ -849,7 +848,7 @@ EOF
     _tc4="$(date +%s.%N)"
     LAST_MEASLINRESP_S="$(elapsed_s "${_tc3}" "${_tc4}")"
 
-    OMP_NUM_THREADS=32 cacao-cli -q >/dev/null <<EOF
+    OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 cacao-cli -q >/dev/null <<EOF
 iofits.loadfits "../conf/Hpixindex.fits" pixiind .
 iofits.loadfits "../conf/Hmat.fits" Hmat .
 iofits.loadfits "../conf/HpokeC.fits" HpokeC .
