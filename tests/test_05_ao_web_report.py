@@ -1,0 +1,266 @@
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Verify pure-stdlib AO Markdown-to-HTML web report builder and staging script."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00"
+    b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def _create_synthetic_report(report_dir: Path) -> None:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    for png_name in (
+        "cacaosim_gui_schematic.png",
+        "cacaosim_gui_builder.png",
+        "cacaosim_gui_tables.png",
+        "cacaosim_gui_status.png",
+        "psf_comparison_2x3.png",
+        "wf_strehl_timeseries_4x1.png",
+        "psf_inst_vis_5x3.png",
+        "dm_samples_5x4.png",
+        "wfs_samples_5x4.png",
+        "compute_timeline_4x1.png",
+        "extra_wf_samples_5x3.png",
+    ):
+        (report_dir / png_name).write_bytes(TINY_PNG)
+    (report_dir / "ao3k_scexao.bench").write_text(
+        '[bench]\nname = "subaru_ao3k_scexao"\n', encoding="utf-8"
+    )
+    (report_dir / "metrics.json").write_text('{"strehl": 0.36}\n', encoding="utf-8")
+    (report_dir / "wf_timeseries.csv").write_text(
+        "frame,t_phys_s,rms_raw_nm,rms_stg1_nm,rms_final_nm\n1,0.0005,900.0,300.0,150.0\n",
+        encoding="utf-8",
+    )
+    (report_dir / "strehl_timeseries.csv").write_text(
+        "exposure,frame,t_phys_s,vis_final_inst,vis_final_long\n1,20,0.0100,0.35,0.35\n",
+        encoding="utf-8",
+    )
+    (report_dir / "cube.fits").write_bytes(b"SIMPLE  =                    T")
+
+    report_md = "\n".join(
+        [
+            "# Synthetic AO Simulation Report",
+            "",
+            "- **Seeing**: `0.60\"` at 0.50 um | **Star**: mV=6.0, mH=6.0",
+            "- Code ref: `csim_htsim` and `b_post_stg1` stay literal",
+            "",
+            "> Companion report: [COMPUTE_REPORT.md](COMPUTE_REPORT.md)",
+            "",
+            "## Optical Bench & Hardware Configuration (`cacaosim-CTRL`)",
+            "",
+            "- **Declarative Bench**: [ao3k_scexao.bench](ao3k_scexao.bench)",
+            "- **Views**: [Hardware Simulator GUI (`cacaosim-CTRL`)]"
+            "(#hardware-simulator-gui-cacaosim-ctrl)",
+            "",
+            "![cacaosim-CTRL 2D Optical Bench Schematic](cacaosim_gui_schematic.png)",
+            "",
+            "| Band | Strehl | Mode |",
+            "| :--- | ---: | :---: |",
+            "| Vis | 36.1% | `aol2_imWFS2` |",
+            "",
+            "```mermaid",
+            "flowchart LR",
+            "    ATM --> DM1",
+            "```",
+            "",
+            "### Hardware Simulator GUI (cacaosim-CTRL)",
+            "",
+            "- ![cacaosim-CTRL Builder](cacaosim_gui_builder.png)",
+            "- ![cacaosim-CTRL Tables](cacaosim_gui_tables.png)",
+            "- ![cacaosim-CTRL Status](cacaosim_gui_status.png)",
+            "",
+            "- ![PSF Comparison](psf_comparison_2x3.png)",
+            "- ![Wavefront Error & Strehl Time Series](wf_strehl_timeseries_4x1.png)",
+            "- ![Instantaneous Visible PSFs](psf_inst_vis_5x3.png)",
+            "- ![Instantaneous DM Samples](dm_samples_5x4.png)",
+            "- ![Instantaneous WFS Samples](wfs_samples_5x4.png)",
+            "",
+            "- [metrics.json](metrics.json)",
+            "- [wf_timeseries.csv](wf_timeseries.csv)",
+            "- [strehl_timeseries.csv](strehl_timeseries.csv)",
+            "- [cube.fits](cube.fits)",
+            "- [rm_dir](../ao3k_scexao_rm)",
+        ]
+    )
+    compute_md = "\n".join(
+        [
+            "# Compute Performance Report",
+            "",
+            "> Optical report: [REPORT.md](REPORT.md)",
+            "",
+            "![Compute Timeline](compute_timeline_4x1.png)",
+        ]
+    )
+    (report_dir / "REPORT.md").write_text(report_md + "\n", encoding="utf-8")
+    (report_dir / "COMPUTE_REPORT.md").write_text(compute_md + "\n", encoding="utf-8")
+
+
+def test_build_ao_web_report_markdown_and_staging(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify GFM tables, inline tokens, companion links, extra PNGs, and FITS filter."""
+    report_dir = tmp_path / "demo_run"
+    site_dir = tmp_path / "web_site"
+    _create_synthetic_report(report_dir)
+
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--report-dir",
+            str(report_dir),
+            "--site-dir",
+            str(site_dir),
+            "--slug",
+            "demo_run",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+
+    slug_out = site_dir / "public" / "demo_run"
+    index_html = (slug_out / "index.html").read_text(encoding="utf-8")
+    compute_html = (slug_out / "compute_report.html").read_text(encoding="utf-8")
+
+    # Bullet with pipe stays in <ul>, while GFM table gets alignments.
+    assert "<ul>" in index_html
+    assert "<strong>Seeing</strong>:" in index_html
+    assert 'style="text-align: left;"' in index_html
+    assert 'style="text-align: right;"' in index_html
+    assert 'style="text-align: center;"' in index_html
+
+    # Underscores inside code spans and filenames are not turned into <em>.
+    assert "<code>csim_htsim</code>" in index_html
+    assert "<code>b_post_stg1</code>" in index_html
+    assert "<code>aol2_imWFS2</code>" in index_html
+    assert 'src="cacaosim_gui_schematic.png"' in index_html
+    assert 'src="cacaosim_gui_builder.png"' in index_html
+    assert 'src="cacaosim_gui_tables.png"' in index_html
+    assert 'src="cacaosim_gui_status.png"' in index_html
+    assert 'id="hardware-simulator-gui-cacaosim-ctrl"' in index_html
+    assert 'href="#hardware-simulator-gui-cacaosim-ctrl"' in index_html
+    assert 'href="ao3k_scexao.bench"' in index_html
+    assert (slug_out / "ao3k_scexao.bench").is_file()
+    assert 'src="psf_comparison_2x3.png"' in index_html
+    assert 'src="wf_strehl_timeseries_4x1.png"' in index_html
+    assert 'src="psf_inst_vis_5x3.png"' in index_html
+    assert 'src="dm_samples_5x4.png"' in index_html
+    assert 'src="wfs_samples_5x4.png"' in index_html
+    assert "<em>" not in index_html
+
+    # Image-only list avoids <ul> bullets and renders <div class="figure-stack">.
+    assert '<div class="figure-stack">' in index_html
+    assert "<li><img" not in index_html
+
+    # Mermaid diagram and script enabled on index.html only.
+    assert '<pre class="mermaid">' in index_html
+    assert "mermaid.esm.min.mjs" in index_html
+    assert "mermaid.esm.min.mjs" not in compute_html
+
+    # Bidirectional report link rewriting works.
+    assert 'href="compute_report.html"' in index_html
+    assert 'href="index.html"' in compute_html
+
+    # Extra unreferenced PNG appears on index.html; compute PNG is NOT duplicated.
+    assert 'src="extra_wf_samples_5x3.png"' in index_html
+    assert "Additional Diagnostic Figures" in index_html
+    assert 'src="compute_timeline_4x1.png"' in compute_html
+    assert 'src="compute_timeline_4x1.png"' not in index_html
+
+    # Excluded .fits and external ../ paths do not produce broken <a href> links.
+    assert not (slug_out / "cube.fits").exists()
+    assert 'href="cube.fits"' not in index_html
+    assert 'href="../ao3k_scexao_rm"' not in index_html
+    assert 'href="metrics.json"' in index_html
+    assert 'href="wf_timeseries.csv"' in index_html
+    assert 'href="strehl_timeseries.csv"' in index_html
+    assert "(local artifact, omitted from web bundle)" in index_html
+
+    # Single-slug redirect configured in firebase.json.
+    fb_cfg = json.loads((site_dir / "firebase.json").read_text(encoding="utf-8"))
+    assert fb_cfg["hosting"]["redirects"][0]["destination"] == "/demo_run/"
+
+
+def test_publish_ao_report_build_only_and_include_fits(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify publish-ao-report.sh --build-only, --include-fits, and multi-slug index."""
+    rep_a = tmp_path / "run_a"
+    rep_b = tmp_path / "run_b"
+    site_dir = tmp_path / "web_site"
+    _create_synthetic_report(rep_a)
+    _create_synthetic_report(rep_b)
+
+    pub_sh = str(repo_root / "scripts" / "publish-ao-report.sh")
+    res1 = subprocess.run(
+        [
+            pub_sh,
+            "--build-only",
+            "--include-fits",
+            "--site-dir",
+            str(site_dir),
+            str(rep_a),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res1.returncode == 0, res1.stderr + res1.stdout
+    assert (site_dir / "public" / "run_a" / "cube.fits").is_file()
+    index_a = (site_dir / "public" / "run_a" / "index.html").read_text(encoding="utf-8")
+    assert 'href="cube.fits"' in index_a
+
+    # Adding a second slug removes the single-slug "/" redirect and serves reports index.
+    res2 = subprocess.run(
+        [pub_sh, "--build-only", "--site-dir", str(site_dir), str(rep_b)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res2.returncode == 0, res2.stderr + res2.stdout
+    fb_cfg = json.loads((site_dir / "firebase.json").read_text(encoding="utf-8"))
+    assert "redirects" not in fb_cfg["hosting"]
+    root_idx = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
+    assert "run_a" in root_idx and "run_b" in root_idx
+
+
+def test_publish_ao_report_requires_project_without_build_only(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify publish-ao-report.sh exits 2 when no --project, env, or .firebaserc exists."""
+    rep_dir = tmp_path / "run_req"
+    site_dir = tmp_path / "fresh_site"
+    _create_synthetic_report(rep_dir)
+
+    env = os.environ.copy()
+    env.pop("FIREBASE_PROJECT", None)
+    pub_sh = str(repo_root / "scripts" / "publish-ao-report.sh")
+    res = subprocess.run(
+        [pub_sh, "--site-dir", str(site_dir), str(rep_dir)],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 2
+    assert "specify --project <gcp-project> or set FIREBASE_PROJECT" in res.stderr

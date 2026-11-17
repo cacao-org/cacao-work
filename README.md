@@ -147,10 +147,26 @@ two-stage AO system on an 8.2 m telescope:
 source env.sh
 ./scripts/run-ao3k-scexao.sh --phys-time 2.0 --save-rm _work/ao3k_scexao_rm
 ./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm
+./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm \
+    --save-telemetry standard
 ```
 
 Outputs (integrated FITS PSFs, wavefront stats, metrics JSON, and diagnostic plots) are written
-under `_work/ao3k_scexao` (or `--outdir`).
+under `_work/ao3k_scexao` (or `--outdir`). Passing `--save-telemetry [standard|speckle|truth]`
+buffers all closed-loop WFS, PSF, DM, and modal (`WFS`, `DM`, `OL`) streams in `/dev/shm`, flushes
+paired `.fits`/`.txt` cubes into `_work/ao3k_scexao/telemetry` (erasing and overwriting prior files
+by default unless `--keep-telemetry` is passed), and runs `milk-mlt-aotlm` (`mlt.aoopt` +
+`mlt.psfrecon`) to generate `_work/ao3k_scexao/telemetry/analysis/TELEMETRY_REPORT.md`.
+
+#### Publishing Reports to Firebase Hosting
+
+Build static HTML pages (`REPORT.md`, `COMPUTE_REPORT.md`, diagnostic PNGs, and JSON/CSV telemetry)
+under `_work/_web_site` and publish publicly under a Firebase-enabled GCP project:
+
+```bash
+./scripts/publish-ao-report.sh --build-only
+./scripts/publish-ao-report.sh --project <gcp-project>
+```
 
 ## Extending Benches & Tests
 

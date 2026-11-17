@@ -22,6 +22,7 @@ star_mag   = 6.0
 star_teff  = 5778.0
 tput_tel   = 0.75
 master_hz  = 1000.0
+oversample = 4
 in_wf      = "outarraypha"
 in_pup     = "csim_pup"
 out_beam   = "b_tel"
@@ -42,7 +43,7 @@ max_stroke   = 10.0
 dac_bits     = 16
 dyn_mode     = 1
 tau_us       = 100.0
-delay_frames = 0.5
+delay_us     = 500.0
 
 [splitter.dichroic]
 in         = "b_corr"

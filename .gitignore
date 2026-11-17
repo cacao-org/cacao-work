@@ -13,3 +13,5 @@ htmlcov/
 logdir*/
 fps.*.confdir/
 fps.*.datadir/
+.firebase/
+.firebaserc

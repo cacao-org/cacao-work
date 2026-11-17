@@ -17,6 +17,7 @@ SHM_DIR=""
 WORK_DIR=""
 MODE="fused"
 RATE="400"
+OVERSAMPLE=""
 SEEING="0.7"
 GAIN="0.35"
 MULT="0.98"
@@ -36,6 +37,7 @@ Options:
   --workdir <dir>         Explicit calibration/work directory
   --mode <fused|modular>  cacaosim execution mode (default: fused)
   --rate <hz>             Master WFS/turbulence frame rate [Hz] (default: 400)
+  --oversample <int>      Temporal oversampling factor K (default: bench config)
   --seeing <arcsec>       Turbulence seeing [arcsec] (default: 0.7)
   --gain <float>          Closed-loop modal integrator gain (default: 0.35)
   --mult <float>          Closed-loop modal leak multiplier (default: 0.98)
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --workdir) WORK_DIR="$2"; shift 2 ;;
         --mode) MODE="$2"; shift 2 ;;
         --rate) RATE="$2"; shift 2 ;;
+        --oversample) OVERSAMPLE="$2"; shift 2 ;;
         --seeing) SEEING="$2"; shift 2 ;;
         --gain) GAIN="$2"; shift 2 ;;
         --mult) MULT="$2"; shift 2 ;;
@@ -111,14 +114,20 @@ cleanup_run() {
 trap cleanup_run EXIT
 
 echo "[fpspipe] 1/7 Deploying cacaosim (${MODE}, ${RATE} Hz, seeing=${SEEING}\" )..."
-cacaosim-bench deploy \
-    --workdir "${CACAOSIM_WORKDIR}" \
-    --config "${CACAO_WORK_ROOT}/benches/scao_pyr/scao_pyr.bench" \
-    --mode "${MODE}" \
-    --rate "${RATE}" \
-    --atmturb \
-    --seeing "${SEEING}" \
-    --no-view >/dev/null
+deploy_args=(
+    deploy
+    --workdir "${CACAOSIM_WORKDIR}"
+    --config "${CACAO_WORK_ROOT}/benches/scao_pyr/scao_pyr.bench"
+    --mode "${MODE}"
+    --rate "${RATE}"
+    --atmturb
+    --seeing "${SEEING}"
+    --no-view
+)
+if [[ -n "${OVERSAMPLE}" ]]; then
+    deploy_args+=(--oversample "${OVERSAMPLE}")
+fi
+cacaosim-bench "${deploy_args[@]}" >/dev/null
 
 milk-stream-wait -q -t 20 outarraypha csim_wfs csim_fpcam csim_fplong
 

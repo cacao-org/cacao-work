@@ -83,6 +83,8 @@ MGAIN_TT="${CACAO_MGAIN_TT:-1.0}"
 MLAT_NBITER="${CACAO_MLAT_NBITER:-30}"
 SELFRM_ZSIZE="${CACAO_SELFRM_ZSIZE:-8}"
 POKE_AMPL="${CACAO_POKEAMPL:-${DEF_AMPL}}"
+FAST_CALIB="${CACAO_FAST_CALIB:-0}"
+HTSIM_UNIT="${CACAO_HTSIM_UNIT:-csim_htsim}"
 
 XCENT="$(awk -v n="${DMX}" 'BEGIN { printf "%.2f", 0.5 * (n - 1.0) }')"
 YCENT="$(awk -v n="${DMY}" 'BEGIN { printf "%.2f", 0.5 * (n - 1.0) }')"
@@ -286,9 +288,9 @@ DMch2disp-${DM}.option.voltmode       = OFF
 DMch2disp-${DM}.option.DClevel        = 0.0
 DMch2disp-${DM}.astrogrid.sname       = ${PFX}DMastrogrid
 DMch2disp-${DM}.zpoffset.DMcomboutzpo = ${PFX}dmzpo
+DMch2disp-${DM}.option.semwaitall     = ON
 DMch2disp-${DM}.procinfo.loopcntMax   = -1
-DMch2disp-${DM}.procinfo.triggermode  = 4
-DMch2disp-${DM}.procinfo.triggerdelay = 0.0005
+DMch2disp-${DM}.procinfo.triggermode  = 0
 DMch2disp-${DM}.procinfo.MeasureTiming = ON
 
 acquWFS-${N}.AOloopindex              = ${N}
@@ -324,6 +326,7 @@ mfilt-${N}.loopON                     = OFF
 mfilt-${N}.loopgain                   = ${GAIN}
 mfilt-${N}.loopmult                   = ${MULT}
 mfilt-${N}.looplimit                  = 1.0
+mfilt-${N}.comp.OLmodes               = ON
 mfilt-${N}.comp.latencyhardwfr        = ${LAT_FR}
 mfilt-${N}.selfRM.zsize               = ${SELFRM_ZSIZE}
 mfilt-${N}.selfRM.NBmode              = 2000
@@ -491,8 +494,12 @@ EOF
 }
 
 build_and_load_cm() {
-    local svdlim="$1" lat_fr="$2"
-    local rad_ext rad_fact zcmd fcmd t0 t1 t2 t3
+    local svdlim="$1" lat_fr="$2" norm_scale="${3:-1.0}"
+    local rad_ext rad_fact zcmd fcmd scale_cmds="" t0 t1 t2 t3
+    if [[ "${norm_scale}" != "1.0" && "${norm_scale}" != "1.00000000" ]]; then
+        scale_cmds=$'@calc "zrespM = zrespM * '"${norm_scale}"$'"\n'
+        scale_cmds+='iofits.saveFITS zrespM "!../conf/zrespC.fits"'
+    fi
     rad_ext="$(awk -v r="${RAD}" -v n="${DMX}" \
         'BEGIN { mx = 0.5 * n; v = r + 1.8; printf "%.4f", (v < mx ? v : mx) }')"
     rad_fact="$(awk -v r="${RAD}" -v re="${rad_ext}" 'BEGIN { printf "%.4f", re / r }')"
@@ -516,6 +523,7 @@ cacaocc.maskextrapolate syn0 dmmask dmmaskext RMsynDM 1.0
 iofits.saveFITS RMsynDM "!../conf/RMsyn_modesDM.fits"
 date +%s.%N > "${ts_file}"
 iofits.loadfits "../conf/zrespC.fits" zrespM .
+${scale_cmds}
 cacaocc.generateRMWFS zrespM RMsynDM RMsynWFS
 iofits.saveFITS RMsynWFS "!../conf/RMsyn_modesWFS.fits"
 exit
@@ -542,7 +550,7 @@ EOF
     milk-fps-runstop -q "mvalC2dm-${N}" "mfilt-${N}" "wfs2cmodeval-${N}"
     milk-stream-rm -q --ignore-missing \
         "${PFX}CMmodesWFS" "${PFX}CMmodesDM" "${PFX}modevalWFS" "${PFX}modevalDM" \
-        "${PFX}mgain" "${PFX}mgainfact" "${PFX}mmult" "${PFX}mmultfact" \
+        "${PFX}modevalOL" "${PFX}mgain" "${PFX}mgainfact" "${PFX}mmult" "${PFX}mmultfact" \
         "${PFX}mlimit" "${PFX}mlimitfact" "${PFX}mzeropoint" "${PFX}modevalDMf" \
         "${PFX}mfiltselfRM"
     fpspipe.loadfits CMmodesWFS ../conf/CMmodesWFS .force=1
@@ -551,11 +559,12 @@ EOF
     milk-fps-runstart -q "wfs2cmodeval-${N}"
     milk-stream-wait -q -t 30 "${PFX}modevalWFS+1"
     milk-fps-set -q \
+        "mfilt-${N}.comp.OLmodes=ON" \
         "mfilt-${N}.comp.latencyhardwfr=${lat_fr}" \
         "mfilt-${N}.selfRM.zsize=${SELFRM_ZSIZE}"
     milk-fps-runstart -q "mfilt-${N}"
     milk-stream-wait -q -t 30 \
-        "${PFX}modevalDM" "${PFX}mgainfact" "${PFX}modevalDMf" "${PFX}mfiltselfRM"
+        "${PFX}modevalDM" "${PFX}modevalOL" "${PFX}mgainfact" "${PFX}modevalDMf" "${PFX}mfiltselfRM"
     apply_modal_gains "${MGAIN_ALPHA}" "${MGAIN_FLOOR}" "${MGAIN_TT}"
     milk-fps-runstart -q "mvalC2dm-${N}"
     milk-stream-wait -q -t 30 "${PFX}dmC"
@@ -680,7 +689,7 @@ do_load_rm() {
     if [[ ! -f "../conf/dmmask.fits" || ! -f "../conf/wfsmask.fits" ]]; then
         cacao-cli -q >/dev/null <<EOF
 iofits.loadfits "../conf/zrespC.fits" zrespC .
-cacaocc.compmasksWFSDM zrespC ${DMX} ${DMY} 0.2 0.5 0.5 0.5 0.2 0.5 0.5 0.5
+cacaocc.compmasksWFSDM zrespC ${DMX} ${DMY} 0.2 0.5 0.5 0.15 0.2 0.5 0.5 0.20
 iofits.saveFITS dmmap "!../conf/dmmap.fits"
 iofits.saveFITS wfsmap "!../conf/wfsmap.fits"
 iofits.saveFITS dmmask "!../conf/dmmask.fits"
@@ -836,14 +845,40 @@ EOF
     _tc3="$(date +%s.%N)"
     LAST_MKHADAMARD_S="$(elapsed_s "${_tc2}" "${_tc3}")"
 
-    milk-fps-set -q \
-        "measlinresp-${N}.timing.WFSfrequ=${fps_hz}" \
-        "measlinresp-${N}.timing.hardwlatfr=${lat_fr}" \
-        "measlinresp-${N}.procinfo.loopcntMax=${nbloop}" \
-        "measlinresp-${N}.inmodes=../conf/HpokeC.fits" \
-        "measlinresp-${N}.outmodes=../conf/HrespC.fits"
-    milk-fps-runstart -q "measlinresp-${N}"
-    milk-fps-wait -q -t 1800 "measlinresp-${N}"
+    if (( FAST_CALIB )) && @exists "f.${HTSIM_UNIT}"; then
+        milk-fps-set -q \
+            "${HTSIM_UNIT}.calib_wfs=${WFS_STREAM}" \
+            "${HTSIM_UNIT}.calib_trig=dm${DM}disp" \
+            "${HTSIM_UNIT}.calib_fast=ON" \
+            "measlinresp-${N}.timing.WFSfrequ=2000" \
+            "measlinresp-${N}.timing.hardwlatfr=1.5" \
+            "measlinresp-${N}.timing.NBave=1" \
+            "measlinresp-${N}.timing.NBexcl=0" \
+            "measlinresp-${N}.procinfo.loopcntMax=${nbloop}" \
+            "measlinresp-${N}.inmodes=../conf/HpokeC.fits" \
+            "measlinresp-${N}.outmodes=../conf/HrespC.fits"
+        # Wait >1 wall tick so csim_htsim arms calib_sem before measlinresp emits frame 0
+        sleep 0.05
+        local mlr_rc=0
+        milk-fps-runstart -q "measlinresp-${N}" || mlr_rc=$?
+        if (( mlr_rc == 0 )); then
+            milk-fps-wait -q -t 1800 "measlinresp-${N}" || mlr_rc=$?
+        fi
+        @set "f.${HTSIM_UNIT}.calib_fast=OFF"
+        milk-fps-set -q "${HTSIM_UNIT}.calib_trig=none" "${HTSIM_UNIT}.calib_wfs=none"
+        (( mlr_rc == 0 )) || return "${mlr_rc}"
+    else
+        milk-fps-set -q \
+            "measlinresp-${N}.timing.WFSfrequ=${fps_hz}" \
+            "measlinresp-${N}.timing.hardwlatfr=${lat_fr}" \
+            "measlinresp-${N}.timing.NBave=2" \
+            "measlinresp-${N}.timing.NBexcl=2" \
+            "measlinresp-${N}.procinfo.loopcntMax=${nbloop}" \
+            "measlinresp-${N}.inmodes=../conf/HpokeC.fits" \
+            "measlinresp-${N}.outmodes=../conf/HrespC.fits"
+        milk-fps-runstart -q "measlinresp-${N}"
+        milk-fps-wait -q -t 1800 "measlinresp-${N}"
+    fi
     @calc "s.${PFX}dmRM = s.${PFX}dmRM * 0.0"
     _tc4="$(date +%s.%N)"
     LAST_MEASLINRESP_S="$(elapsed_s "${_tc3}" "${_tc4}")"
@@ -855,7 +890,7 @@ iofits.loadfits "../conf/HpokeC.fits" HpokeC .
 iofits.loadfits "../conf/HrespC.fits" HrespC .
 cacaocc.aolHaddec HpokeC Hmat pixiind zpokeC
 cacaocc.aolHaddec HrespC Hmat pixiind zrespC
-cacaocc.compmasksWFSDM zrespC ${DMX} ${DMY} 0.2 0.5 0.5 0.5 0.2 0.5 0.5 0.5
+cacaocc.compmasksWFSDM zrespC ${DMX} ${DMY} 0.2 0.5 0.5 0.15 0.2 0.5 0.5 0.20
 iofits.saveFITS zpokeC "!../conf/zpokeC.fits"
 iofits.saveFITS zrespC "!../conf/zrespC.fits"
 iofits.saveFITS dmmap "!../conf/dmmap.fits"
@@ -867,13 +902,25 @@ EOF
     _tc5="$(date +%s.%N)"
     LAST_HADDEC_S="$(elapsed_s "${_tc4}" "${_tc5}")"
 
+    local flux_pre=0.0 flux_post=0.0 norm_scale="1.0"
+    milk-stream-wait -q -t 15 "${PFX}imWFS1+4"
+    @get flux_pre="f.acquWFS-${N}.out.fluxtotal"
+
     fpspipe.loadfits dmmask  ../conf/dmmask  .force=1
     fpspipe.loadfits wfsmask ../conf/wfsmask .force=1
     milk-stream-wait -q -t 15 "${PFX}imWFS1+15"
+    @get flux_post="f.acquWFS-${N}.out.fluxtotal"
+    norm_scale="$(awk -v a="${flux_pre}" -v b="${flux_post}" \
+        -v nx="${WFSX}" -v ny="${WFSY}" 'BEGIN {
+            off = 1.0 * nx * ny
+            da = a + off; db = b + off
+            if (da > 0.0 && db > 0.0) printf "%.8f", da / db
+            else printf "1.0"
+        }')"
     do_takeref "${nframes}"
 
     write_rm_meta "${fps_hz}" "${lat_fr}" "${svdlim}"
-    build_and_load_cm "${svdlim}" "${lat_fr}"
+    build_and_load_cm "${svdlim}" "${lat_fr}" "${norm_scale}"
     write_calib_timings
 
     if [[ -n "${save_rm}" ]]; then
@@ -994,9 +1041,10 @@ cmd_teardown() {
     FPSPIPE_UNITS=("${ALL_UNITS[@]}")
     if (( purge_dm )); then
         cacaoloop.teardown .purge_dm="${DM}"
+        milk-stream-rm -q --ignore-missing "dm${DM}trig" || true
     else
         cacaoloop.teardown
-        milk-stream-rm -r -f -q --ignore-missing "^dm${DM}disp[0-9]" || true
+        milk-stream-rm -r -f -q --ignore-missing "^dm${DM}(disp[0-9]|trig$)" || true
     fi
 }
 

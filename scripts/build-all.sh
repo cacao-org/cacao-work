@@ -99,7 +99,17 @@ verify_install() {
         milk-fpsexec-iofits-loadfits
         milk-fpsexec-iofits-saveFITS
         milk-fpsexec-mem-streamave
+        milk-fpsexec-mem-streamFITSlog
         milk-fpsexec-linalg-MVMextract
+        milk-fpsexec-mlt-tlmindex
+        milk-fpsexec-mlt-tlmload
+        milk-fpsexec-mlt-tlmsync
+        milk-fpsexec-mlt-tlmsave
+        milk-fpsexec-mlt-aoopt
+        milk-fpsexec-mlt-psfrecon
+        milk-mlt-aoopt
+        milk-mlt-psfrecon
+        milk-mlt-aotlm
         cacao-setDMnolink
         cacao-mkDMpokemodes
         cacao-modalstatsTUI
@@ -143,6 +153,7 @@ verify_install() {
         libmilkfps.so
         libmilkCOREMODmemory.so
         libmilklinalgebra.so
+        libmilkmltools.so
         libcacaoAOloopControl.so
         libmilkOpticsMaterials.so
         libmilkWFpropagate.so
@@ -154,6 +165,7 @@ verify_install() {
         sysmon.bash
         cacaoloop.bash
         cacaosim.bash
+        mltools.bash
     )
 
     local missing=0

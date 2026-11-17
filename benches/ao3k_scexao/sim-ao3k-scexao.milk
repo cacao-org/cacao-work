@@ -12,8 +12,11 @@ set -euo pipefail
 SEEING="0.6"
 PHYS_TIME="10.0"
 WALL_RATE=""
-CALIB_RATE="160"
+CALIB_RATE=""
+FAST_CALIB="1"
 BENCH_MODE="fused"
+OVERSAMPLE="0"
+CLOCK_SKEW_US=""
 WFSTAT_VALIDATE="0"
 GAIN1="0.35"
 GAIN2="0.35"
@@ -31,6 +34,11 @@ SELFRM_ONSKY_ITER="1"
 OUT_DIR="${CACAO_WORK_ROOT:-.}/_work/ao3k_scexao"
 SAVE_RM_DIR="${CACAO_WORK_ROOT:-.}/_work/ao3k_scexao_rm"
 LOAD_RM_DIR=""
+SAVE_TELEMETRY="none"
+TELEM_DIR=""
+KEEP_TELEMETRY="0"
+PSF_NAVG=""
+RUN_TLM_ANALYSIS="1"
 SKIP_MICROBENCH="0"
 COMPARE_JSON=""
 
@@ -42,9 +50,11 @@ Options:
   --seeing <arcsec>   Seeing FWHM at 0.50 um (default: ${SEEING})
   --phys-time <sec>   Physical closed-loop integration time [s] (default: ${PHYS_TIME})
   --wall-rate <hz>    Wall-clock master pacing rate [Hz] (default: 640 fused, 160 modular)
-  --calib-rate <hz>   Wall-clock rate for fresh RM acquisition (default: ${CALIB_RATE}; RMs
-                      measured at 640 Hz gave ~3% lower closed-loop Strehl)
+  --calib-rate <hz>   Override wall-clock rate for mlat/takeref (default: matches --wall-rate)
+  --no-fast-calib     Disable fused lockstep step-and-shoot RM; use real-time paced RM
   --bench-mode <mode> cacaosim optical bench mode: fused or modular (default: ${BENCH_MODE})
+  --oversample <int>  Temporal oversampling factor K (default: bench config = 4)
+  --clock-skew-us <f> Stage-2 WFS clock trigger offset [us] relative to Stage 1
   --wfstat-validate   Fused mode: also export beams and run CPU csim_wfstat into
                       <outdir>/wfstat_cpu to cross-check the in-DAG GPU statistics
   --gain1 <float>     Stage-1 AO3k integrator gain (default: ${GAIN1})
@@ -63,6 +73,11 @@ Options:
   --save-rm <dir>     Directory to save Stage-1 & Stage-2 RMs (default: ${SAVE_RM_DIR})
   --load-rm <dir>     Load pre-saved RMs from <dir>/stage1 and <dir>/stage2
   --outdir <dir>      Output directory (default: ${OUT_DIR})
+  --save-telemetry [m] Save 10s WFS, PSF, DM, & modal cubes (none|standard|speckle|truth)
+  --telemetry-dir <d> Telemetry directory (default: <outdir>/telemetry; overwritten on rerun)
+  --keep-telemetry    Preserve previous telemetry dir (<dir>_<UTC>) instead of erasing it
+  --psf-navg <int>    Science PSF subframe integration count (default: 20=100Hz; 1=2kHz)
+  --no-tlm-analysis   Skip post-run milk-mlt-aotlm PSFR & AO optimization report
   --skip-microbench   Skip cacaosim-benchmark run when generating COMPUTE_REPORT.md
   --compare-modes <f> Optional modular-vs-fused comparison JSON for compute report
   -h, --help          Show this help message
@@ -75,7 +90,10 @@ while (( $# > 0 )); do
         --phys-time)       PHYS_TIME="$2"; shift 2 ;;
         --wall-rate)       WALL_RATE="$2"; shift 2 ;;
         --calib-rate)      CALIB_RATE="$2"; shift 2 ;;
+        --no-fast-calib)   FAST_CALIB="0"; shift ;;
         --bench-mode)      BENCH_MODE="$2"; shift 2 ;;
+        --oversample)      OVERSAMPLE="$2"; shift 2 ;;
+        --clock-skew-us)   CLOCK_SKEW_US="$2"; shift 2 ;;
         --wfstat-validate) WFSTAT_VALIDATE="1"; shift ;;
         --gain1)           GAIN1="$2"; shift 2 ;;
         --gain2)           GAIN2="$2"; shift 2 ;;
@@ -93,6 +111,17 @@ while (( $# > 0 )); do
         --save-rm)         SAVE_RM_DIR="$2"; shift 2 ;;
         --load-rm)         LOAD_RM_DIR="$2"; shift 2 ;;
         --outdir)          OUT_DIR="$2"; shift 2 ;;
+        --save-telemetry)
+            if (( $# >= 2 )) && [[ "$2" != -* ]]; then
+                SAVE_TELEMETRY="$2"; shift 2
+            else
+                SAVE_TELEMETRY="standard"; shift
+            fi
+            ;;
+        --telemetry-dir)   TELEM_DIR="$2"; shift 2 ;;
+        --keep-telemetry)  KEEP_TELEMETRY="1"; shift ;;
+        --psf-navg)        PSF_NAVG="$2"; shift 2 ;;
+        --no-tlm-analysis) RUN_TLM_ANALYSIS="0"; shift ;;
         --skip-microbench) SKIP_MICROBENCH="1"; shift ;;
         --compare-modes)   COMPARE_JSON="$2"; shift 2 ;;
         -h|--help)         usage; exit 0 ;;
@@ -114,6 +143,32 @@ if [[ -z "${WALL_RATE}" ]]; then
     [[ "${BENCH_MODE}" == "fused" ]] && WALL_RATE="640"
 fi
 
+case "${SAVE_TELEMETRY}" in
+    none|standard|speckle|truth) ;;
+    1|on|all) SAVE_TELEMETRY="standard" ;;
+    0|off)    SAVE_TELEMETRY="none" ;;
+    *)
+        echo "[ao3k-scexao] Invalid --save-telemetry '${SAVE_TELEMETRY}'" >&2
+        echo "              Expected: none, standard, speckle, or truth" >&2
+        exit 2
+        ;;
+esac
+
+EFF_PSF_NAVG=20
+if [[ "${SAVE_TELEMETRY}" == "speckle" || "${SAVE_TELEMETRY}" == "truth" ]]; then
+    EFF_PSF_NAVG=1
+fi
+[[ -n "${PSF_NAVG}" ]] && EFF_PSF_NAVG="${PSF_NAVG}"
+if (( EFF_PSF_NAVG < 1 )); then
+    EFF_PSF_NAVG=1
+fi
+
+EXPORT_BEAMS_NEEDED=0
+if [[ "${BENCH_MODE}" == "modular" ]] || (( WFSTAT_VALIDATE )) || \
+   [[ "${SAVE_TELEMETRY}" == "truth" ]]; then
+    EXPORT_BEAMS_NEEDED=1
+fi
+
 # CPU csim_wfstat runs in modular mode, or alongside the GPU path when validating fused mode
 CPU_WFSTAT=0
 if [[ "${BENCH_MODE}" == "modular" ]] || (( WFSTAT_VALIDATE )); then
@@ -121,21 +176,40 @@ if [[ "${BENCH_MODE}" == "modular" ]] || (( WFSTAT_VALIDATE )); then
 fi
 
 OUT_DIR="$(realpath -m "${OUT_DIR}")"
+[[ -z "${TELEM_DIR}" ]]    && TELEM_DIR="${OUT_DIR}/telemetry"
+TELEM_DIR="$(realpath -m "${TELEM_DIR}")"
 [[ -n "${SAVE_RM_DIR}" ]]  && SAVE_RM_DIR="$(realpath -m "${SAVE_RM_DIR}")"
 [[ -n "${LOAD_RM_DIR}" ]]  && LOAD_RM_DIR="$(realpath -m "${LOAD_RM_DIR}")"
 [[ -n "${COMPARE_JSON}" ]] && COMPARE_JSON="$(realpath -m "${COMPARE_JSON}")"
 mkdir -p "${OUT_DIR}"
 
+if [[ "${SAVE_TELEMETRY}" != "none" ]]; then
+    if [[ -d "${TELEM_DIR}" ]] && compgen -G "${TELEM_DIR}/*" >/dev/null; then
+        if (( KEEP_TELEMETRY )); then
+            PREV_TLM="${TELEM_DIR}_$(date -u +%Y%m%dT%H%M%SZ)"
+            mv "${TELEM_DIR}" "${PREV_TLM}"
+            echo "[ao3k-scexao] Preserved existing telemetry -> ${PREV_TLM}"
+        else
+            rm -rf "${TELEM_DIR}"
+        fi
+    fi
+    mkdir -p "${TELEM_DIR}"
+fi
+
 MASTER_TICKS="$(awk -v t="${PHYS_TIME}" 'BEGIN { printf "%d", int(t * 2000.0 + 0.5) }')"
-LONG_READOUTS=$(( MASTER_TICKS / 20 ))
+LONG_READOUTS=$(( MASTER_TICKS / EFF_PSF_NAVG ))
 (( LONG_READOUTS < 1 )) && LONG_READOUTS=1
 WALL_DT="$(awk -v r="${WALL_RATE}" 'BEGIN { printf "%.7f", 1.0 / r }')"
 WFS1_WALL_RATE="$(awk -v r="${WALL_RATE}" 'BEGIN { printf "%.2f", 0.5 * r }')"
 
-# Fresh response-matrix acquisition runs at CALIB_RATE; loading saved RMs uses WALL_RATE
+# Calibration runs at WALL_RATE by default (lockstep .calib_fast RM in fused mode)
 CAL_RATE="${WALL_RATE}"
-[[ -z "${LOAD_RM_DIR}" ]] && CAL_RATE="${CALIB_RATE}"
+[[ -z "${LOAD_RM_DIR}" ]] && [[ -n "${CALIB_RATE}" ]] && CAL_RATE="${CALIB_RATE}"
 CAL_WFS1_RATE="$(awk -v r="${CAL_RATE}" 'BEGIN { printf "%.2f", 0.5 * r }')"
+USE_FAST_CALIB=0
+if [[ "${BENCH_MODE}" == "fused" ]] && (( FAST_CALIB )) && [[ -z "${LOAD_RM_DIR}" ]]; then
+    USE_FAST_CALIB=1
+fi
 
 WORK_ROOT="${SANDBOX_WORK_DIR:-/tmp/ao3k_milk_$$}"
 CSIM_DIR="${CACAOSIM_WORKDIR:-${WORK_ROOT}/csim}"
@@ -143,13 +217,122 @@ STG1_ROOT="${WORK_ROOT}/ao3k"
 STG2_ROOT="${WORK_ROOT}/scexao"
 mkdir -p "${WORK_ROOT}" "${CSIM_DIR}"
 
-BENCH_CFG="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
+BENCH_CFG_SRC="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
+BENCH_CFG="${BENCH_CFG_SRC}"
+if (( EFF_PSF_NAVG != 20 )) || [[ -n "${CLOCK_SKEW_US}" ]]; then
+    BENCH_CFG="${WORK_ROOT}/ao3k_scexao_run.bench"
+    awk -v nv="${EFF_PSF_NAVG}" -v skew="${CLOCK_SKEW_US}" '
+        /^\[/ { sec = $0 }
+        sec == "[pyrwfs.wfs_vis]" && /^\[pyrwfs\.wfs_vis\]/ && skew != "" {
+            print; printf "clock_offset_us = %s\n", skew; next
+        }
+        (sec == "[fpcam.vis_final]" || sec == "[fpcam.nir_final]") &&
+        nv != 20 && /^(navg|rate_hz)[ \t]*=/ {
+            printf "rate_hz       = %.4f\n", 2000.0 / nv; next
+        }
+        { print }
+    ' "${BENCH_CFG_SRC}" > "${BENCH_CFG}"
+fi
+ACTIVE_BENCH="${BENCH_CFG}"
 LOOP_CTRL="${CACAO_WORK_ROOT}/benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk"
 WFSTAT_LINK="/tmp/.wfstat_$$"
 WFSTAT_CPU_LINK="/tmp/.wfstat_cpu_$$"
+TLM_LINK="/tmp/.tlm_$$"
+declare -a TLM_UNITS=()
+declare -a TLM_SAVED_STREAMS=()
+
+cleanup_tlm_loggers() {
+    if (( ${#TLM_UNITS[@]} > 0 )); then
+        milk-fps-runstop -q "${TLM_UNITS[@]}" >/dev/null 2>&1 || true
+        milk-fps-wait -q -t 120 "${TLM_UNITS[@]}" >/dev/null 2>&1 || true
+        milk-fps-rm -f -q --ignore-missing "${TLM_UNITS[@]}" >/dev/null 2>&1 || true
+        TLM_UNITS=()
+    fi
+    if [[ -n "${MILK_SHM_DIR:-}" && -d "${MILK_SHM_DIR}" ]]; then
+        rm -f "${MILK_SHM_DIR}"/*_logbuff0.im.shm "${MILK_SHM_DIR}"/*_logbuff1.im.shm \
+            >/dev/null 2>&1 || true
+    fi
+    rm -f "${TLM_LINK}" >/dev/null 2>&1 || true
+}
+
+start_tlm_loggers() {
+    [[ "${SAVE_TELEMETRY}" == "none" ]] && return 0
+    ln -sfn "${TELEM_DIR}" "${TLM_LINK}"
+    local n_s2="${MASTER_TICKS}"
+    local n_s1=$(( MASTER_TICKS / 2 ))
+    local n_pd=$(( MASTER_TICKS / 20 ))
+    local n_ps=$(( MASTER_TICKS / EFF_PSF_NAVG ))
+    (( n_s1 < 1 )) && n_s1=1
+    (( n_pd < 1 )) && n_pd=1
+    (( n_ps < 1 )) && n_ps=1
+
+    local -a specs=(
+        "csim_wfs_nir:${n_s1}:-1"
+        "csim_wfs_vis:${n_s2}:-1"
+        "psf_vis_raw:${n_pd}:-1"
+        "psf_nir_raw:${n_pd}:-1"
+        "psf_vis_stg1:${n_pd}:-1"
+        "psf_nir_stg1:${n_pd}:-1"
+        "psf_vis_final:${n_ps}:-1"
+        "psf_nir_final:${n_ps}:-1"
+        "aol1_dmC:${n_s1}:-1"
+        "dm01disp:${n_s1}:-1"
+        "aol2_dmC:${n_s2}:-1"
+        "dm02disp:${n_s2}:-1"
+        "aol1_modevalWFS:${n_s1}:-1"
+        "aol1_modevalDM:${n_s1}:-1"
+        "aol1_modevalOL:${n_s1}:-1"
+        "aol2_modevalWFS:${n_s2}:-1"
+        "aol2_modevalDM:${n_s2}:-1"
+        "aol2_modevalOL:${n_s2}:-1"
+    )
+    if [[ "${SAVE_TELEMETRY}" == "truth" ]]; then
+        specs+=(
+            "b_pup:${n_s2}:0"
+            "b_post_stg1:${n_s2}:0"
+            "b_post_stg2:${n_s2}:0"
+        )
+    fi
+
+    TLM_UNITS=()
+    TLM_SAVED_STREAMS=()
+    local idx=0 entry sname exp_n zsl u csz
+    for entry in "${specs[@]}"; do
+        IFS=':' read -r sname exp_n zsl <<< "${entry}"
+        if ! @exists "s.${sname}"; then
+            continue
+        fi
+        printf -v u "tlog_%02d" "${idx}"
+        idx=$(( idx + 1 ))
+        csz=$(( exp_n + 64 ))
+        (( csz < 32 )) && csz=32
+        milk-fps-rm -f -q --ignore-missing "${u}" >/dev/null 2>&1 || true
+        milk-fps-init -q "${u}" milk-fpsexec-mem-streamFITSlog >/dev/null
+        milk-fps-set -q \
+            "${u}.sname=${sname}" \
+            "${u}.dirname=${TLM_LINK}" \
+            "${u}.cubesize=${csz}" \
+            "${u}.maxframecnt=${exp_n}" \
+            "${u}.maxfilecnt=1" \
+            "${u}.zslice=${zsl}" \
+            "${u}.saveON=ON" \
+            "${u}.procinfo.loopcntMax=-1" \
+            "${u}.procinfo.triggermode=3" \
+            "${u}.procinfo.triggersname=${sname}" \
+            "${u}.procinfo.triggertimeout=0.5"
+        TLM_UNITS+=("${u}")
+        TLM_SAVED_STREAMS+=("${sname}")
+    done
+    if (( ${#TLM_UNITS[@]} > 0 )); then
+        milk-fps-runstart -q "${TLM_UNITS[@]}"
+        sleep 0.15
+        echo "[ao3k-scexao]      Armed ${#TLM_UNITS[@]} SHM stream loggers -> ${TELEM_DIR}"
+    fi
+}
 
 cleanup_sim() {
     sysmon.stop >/dev/null 2>&1 || true
+    cleanup_tlm_loggers
     milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
     milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 teardown --purge-dm \
@@ -158,7 +341,7 @@ cleanup_sim() {
         >/dev/null 2>&1 || true
     cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
     milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 >/dev/null 2>&1 || true
-    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" >/dev/null 2>&1 || true
+    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" >/dev/null 2>&1 || true
 }
 @defer --exit cleanup_sim
 
@@ -170,28 +353,45 @@ echo "   Seeing      : ${SEEING}\" @ 0.50 um | Star: mV = 6.0, mH = 6.0 (Teff = 
 echo "   Loop Speeds : Stage 1 (AO3k NIR) = 1.0 kHz | Stage 2 (SCExAO Vis) = 2.0 kHz"
 echo "   Integration : ${PHYS_TIME} s physical (${MASTER_TICKS} ticks, ${LONG_READOUTS} exposures)"
 echo "   Wall Pacing : ${WALL_RATE} Hz master (${WFS1_WALL_RATE} Hz Stg1, ${WALL_RATE} Hz Stg2)"
-echo "   Calib Pacing: ${CAL_RATE} Hz master (RM acquisition / load)"
+if (( USE_FAST_CALIB )); then
+    echo "   Calib Pacing: ${CAL_RATE} Hz mlat/ref + unthrottled lockstep .calib_fast RM"
+else
+    echo "   Calib Pacing: ${CAL_RATE} Hz master (RM acquisition / load)"
+fi
 echo "================================================================================"
 
 sysmon.start "${OUT_DIR}" .rate=5.0
 
 sysmon.mark "deploy_bench" "Deploy ${BENCH_MODE} optical bench (turb_gain=0.0)"
 echo "[ao3k-scexao] Step 1/7: Deploying ${BENCH_MODE} optical bench (turb_gain = 0.0)..."
-cacaosim.deploy "${BENCH_CFG}" \
+cacaosim.deploy "${ACTIVE_BENCH}" \
     .mode="${BENCH_MODE}" \
+    .oversample="${OVERSAMPLE}" \
     .atmturb=1 \
     .seeing="${SEEING}" \
     .workdir="${CSIM_DIR}" >/dev/null
+
+EFF_OV="$(awk -F'\t' '$1=="OVERSAMPLE"{print $2; exit}' \
+    "${CSIM_DIR}/cacaosim.meta" "${CSIM_DIR}/run/cacaosim.meta" 2>/dev/null || true)"
+if [[ -z "${EFF_OV}" && -f "${MILK_SHM_DIR:-/milk/shm}/csim_active.bench" ]]; then
+    EFF_OV="$(awk -F'=' '/^[ \t]*oversample[ \t]*=/{gsub(/[ \t]/,"",$2); print int($2); exit}' \
+        "${MILK_SHM_DIR:-/milk/shm}/csim_active.bench" 2>/dev/null || true)"
+fi
+[[ -z "${EFF_OV}" || "${EFF_OV}" -lt 1 ]] && EFF_OV=1
+CAL_MASTER_RATE="$(awk -v r="${CAL_RATE}" -v k="${EFF_OV}" 'BEGIN { printf "%.2f", r * k }')"
+WALL_MASTER_RATE="$(awk -v r="${WALL_RATE}" -v k="${EFF_OV}" 'BEGIN { printf "%.2f", r * k }')"
+SIM_MASTER_HZ=$(( 2000 * EFF_OV ))
+echo "[ao3k-scexao]   Active oversampling: ${EFF_OV}x (sim master = ${SIM_MASTER_HZ} Hz)"
 
 milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
 milk-fps-wait -q -t 10 "${MASTER_UNIT}" >/dev/null 2>&1 || true
 milk-fps-set -q \
     "${MASTER_UNIT}.turb_gain=0.0" \
-    "${MASTER_UNIT}.frame_rate=${CAL_RATE}" \
+    "${MASTER_UNIT}.frame_rate=${CAL_MASTER_RATE}" \
     "${MASTER_UNIT}.procinfo.triggermode=0"
 if [[ "${BENCH_MODE}" == "fused" ]]; then
-    # Beams are exported to SHM only for the CPU cross-check (--wfstat-validate)
-    if (( CPU_WFSTAT )); then
+    # Beams are exported to SHM for CPU cross-check (--wfstat-validate) or truth telemetry
+    if (( EXPORT_BEAMS_NEEDED )); then
         milk-fps-set -q "csim_htsim.export_beams=b_pup,b_post_stg1,b_post_stg2"
     fi
     milk-fps-set -q \
@@ -250,6 +450,7 @@ t_cal1_0="$(date +%s)"
 echo "[ao3k-scexao]   -> Stage 1 (AO3k, 64x64 DM D=60, 160x160 J-band PyWFS)..."
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
 CACAO_WFSFRATE="${CAL_WFS1_RATE}" \
+CACAO_FAST_CALIB="${USE_FAST_CALIB}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
@@ -264,6 +465,7 @@ t_cal2_0="$(date +%s)"
 echo "[ao3k-scexao]   -> Stage 2 (SCExAO, 50x50 DM D=46, 120x120 Vis PyWFS)..."
 CACAO_LOOPROOTDIR="${STG2_ROOT}" \
 CACAO_WFSFRATE="${CAL_RATE}" \
+CACAO_FAST_CALIB="${USE_FAST_CALIB}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
@@ -274,7 +476,7 @@ t_cal2_1="$(date +%s)"
 echo "[ao3k-scexao]      Stage-2 calibration done in $(( t_cal2_1 - t_cal2_0 )) s."
 
 if [[ "${CAL_RATE}" != "${WALL_RATE}" ]]; then
-    @set "f.${MASTER_UNIT}.frame_rate=${WALL_RATE}"
+    @set "f.${MASTER_UNIT}.frame_rate=${WALL_MASTER_RATE}"
 fi
 
 if (( RUN_SELFRM )); then
@@ -304,14 +506,20 @@ if (( RUN_SELFRM )); then
 fi
 
 sysmon.mark "closed_loop_warmup" "Enable turbulence & lock Stage 1 + Stage 2 closed loops"
-echo "[ao3k-scexao] Step 5/7: Enabling 1:1 lockstep Maunakea turbulence (${SEEING}\", dt=0.5 ms)..."
+echo "[ao3k-scexao] Step 5/7: Enabling 1:${EFF_OV} lockstep turbulence (${SEEING}\", dt=0.5 ms)..."
 milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
 milk-fps-wait -q -t 10 "${MASTER_UNIT}" csim_atmturb >/dev/null 2>&1 || true
+ATM_STEP_S="0.0005"
+ATM_TRIG_DT="${WALL_DT}"
+if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
+    ATM_STEP_S="$(awk -v k="${EFF_OV}" 'BEGIN { printf "%.8f", 0.0005 / k }')"
+    ATM_TRIG_DT="$(awk -v d="${WALL_DT}" -v k="${EFF_OV}" 'BEGIN { printf "%.7f", d / k }')"
+fi
 milk-fps-set -q \
     "csim_atmturb.seeing=${SEEING}" \
-    "csim_atmturb.time_step=0.0005" \
+    "csim_atmturb.time_step=${ATM_STEP_S}" \
     "csim_atmturb.procinfo.triggermode=4" \
-    "csim_atmturb.procinfo.triggerdelay=${WALL_DT}" \
+    "csim_atmturb.procinfo.triggerdelay=${ATM_TRIG_DT}" \
     "${MASTER_UNIT}.turb_gain=1.0" \
     "${MASTER_UNIT}.frame_rate=0.0" \
     "${MASTER_UNIT}.procinfo.triggermode=3" \
@@ -325,7 +533,7 @@ echo "[ao3k-scexao] Step 6/7: Closing Stage 1 (1 kHz) -> Stage 2 (2 kHz) (${PHYS
 CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 close "${GAIN1}"
 milk-stream-wait -q -t 30 "csim_wfs_vis+100"
 CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
-if (( CPU_WFSTAT )) && [[ "${BENCH_MODE}" == "fused" ]]; then
+if (( EXPORT_BEAMS_NEEDED )) && [[ "${BENCH_MODE}" == "fused" ]]; then
     @set "f.csim_htsim.export_enable=ON"
 fi
 milk-stream-wait -q -t 30 "csim_wfs_vis+200"
@@ -347,6 +555,12 @@ if [[ "${BENCH_MODE}" == "fused" ]]; then
     (( CPU_WFSTAT )) && WFSTAT_CPU_DIR="${OUT_DIR}/wfstat_cpu"
 fi
 if (( CPU_WFSTAT )); then
+    CPU_WF_TICKS="${MASTER_TICKS}"
+    CPU_WF_DT="0.0005"
+    if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
+        CPU_WF_TICKS=$(( MASTER_TICKS * EFF_OV ))
+        CPU_WF_DT="$(awk -v k="${EFF_OV}" 'BEGIN { printf "%.8f", 0.0005 / k }')"
+    fi
     mkdir -p "${WFSTAT_CPU_DIR}"
     rm -f "${WFSTAT_CPU_DIR}/wf_stats.json"
     ln -sfn "${WFSTAT_CPU_DIR}" "${WFSTAT_CPU_LINK}"
@@ -358,14 +572,16 @@ if (( CPU_WFSTAT )); then
         "csim_wfstat.beam_stg1=b_post_stg1" \
         "csim_wfstat.beam_final=b_post_stg2" \
         "csim_wfstat.outdir=${WFSTAT_CPU_LINK}" \
-        "csim_wfstat.target_ticks=${MASTER_TICKS}" \
-        "csim_wfstat.dt_phys=0.0005" \
+        "csim_wfstat.target_ticks=${CPU_WF_TICKS}" \
+        "csim_wfstat.dt_phys=${CPU_WF_DT}" \
         "csim_wfstat.snap_extra=ON" \
-        "csim_wfstat.procinfo.loopcntMax=${MASTER_TICKS}" \
+        "csim_wfstat.procinfo.loopcntMax=${CPU_WF_TICKS}" \
         "csim_wfstat.procinfo.triggermode=3" \
         "csim_wfstat.procinfo.triggersname=b_post_stg2"
     milk-fps-runstart -q csim_wfstat
 fi
+
+start_tlm_loggers
 
 cnt_pha_0=0 cnt_wfs1_0=0 cnt_wfs2_0=0 cnt_long_0=0
 @get cnt_pha_0="s.outarraypha.cnt0" cnt_wfs1_0="s.csim_wfs_nir.cnt0" \
@@ -378,13 +594,15 @@ milk-fps-runstart -q csim_atmturb
 
 rem="${LONG_READOUTS}"
 done_rd=0
-chunk=100
+chunk=$(( (2000 + EFF_PSF_NAVG - 1) / EFF_PSF_NAVG ))
+(( chunk < 1 )) && chunk=1
 while (( rem > 0 )); do
     step=$(( rem < chunk ? rem : chunk ))
     milk-stream-wait -q -t 60 "psf_vis_final_long+${step}"
     rem=$(( rem - step ))
     done_rd=$(( done_rd + step ))
-    phys_done="$(awk -v d="${done_rd}" 'BEGIN { printf "%.2f", d * 0.01 }')"
+    phys_done="$(awk -v d="${done_rd}" -v nv="${EFF_PSF_NAVG}" \
+        'BEGIN { printf "%.2f", d * nv * 0.0005 }')"
     s1="" s2="" sv=""
     if [[ "${BENCH_MODE}" == "modular" ]]; then
         @get s1="f.csim_nir_stg1.strehl_ave" s2="f.csim_nir_final.strehl_ave" \
@@ -420,11 +638,85 @@ milk-fps-runstop -q csim_atmturb
 sleep 0.2
 if [[ "${BENCH_MODE}" == "fused" ]]; then
     @set "f.csim_htsim.wfstat_enable=OFF"
-    (( CPU_WFSTAT )) && @set "f.csim_htsim.export_enable=OFF"
+    (( EXPORT_BEAMS_NEEDED )) && @set "f.csim_htsim.export_enable=OFF"
 fi
 if (( CPU_WFSTAT )); then
     milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
     milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
+fi
+if [[ "${SAVE_TELEMETRY}" != "none" ]]; then
+    echo "[ao3k-scexao]      Flushing ${#TLM_UNITS[@]} telemetry cubes to ${TELEM_DIR}..."
+    cleanup_tlm_loggers
+    if @exists "s.csim_pup"; then
+        fpspipe.savefits "csim_pup" "${TELEM_DIR}/csim_pup.fits"
+    fi
+    for stg_pair in "1:${STG1_ROOT}" "2:${STG2_ROOT}"; do
+        sn="${stg_pair%%:*}"
+        sroot="${stg_pair#*:}"
+        mkdir -p "${TELEM_DIR}/calib_stg${sn}"
+        for cf in CMmodesDM.fits CMmodesWFS.fits dmmask.fits wfsmask.fits wfsref.fits \
+                  mgainfact.fits rm_meta.env; do
+            if [[ -f "${sroot}/conf/${cf}" ]]; then
+                cp -fL "${sroot}/conf/${cf}" "${TELEM_DIR}/calib_stg${sn}/${cf}"
+            fi
+        done
+    done
+    lat1_val="2.5" lat2_val="2.0"
+    if [[ -f "${STG1_ROOT}/conf/rm_meta.env" ]]; then
+        lat1_val="$(awk -F'"' '/^export RM_LATENCYHARDWFR=/{print $2}' \
+            "${STG1_ROOT}/conf/rm_meta.env" || echo "2.5")"
+    fi
+    if [[ -f "${STG2_ROOT}/conf/rm_meta.env" ]]; then
+        lat2_val="$(awk -F'"' '/^export RM_LATENCYHARDWFR=/{print $2}' \
+            "${STG2_ROOT}/conf/rm_meta.env" || echo "2.0")"
+    fi
+    lat1_tot="$(awk -v h="${lat1_val:-1.5}" 'BEGIN { printf "%.3f", h + 1.0 }')"
+    lat2_tot="$(awk -v h="${lat2_val:-1.0}" 'BEGIN { printf "%.3f", h + 1.0 }')"
+    cat > "${TELEM_DIR}/telemetry_manifest.env" <<EOF
+TLM_MODE="${SAVE_TELEMETRY}"
+TLM_SEEING="${SEEING}"
+TLM_PHYS_TIME="${PHYS_TIME}"
+TLM_MASTER_TICKS="${MASTER_TICKS}"
+TLM_PSF_NAVG="${EFF_PSF_NAVG}"
+TLM_TEL_DIAM="8.2"
+TLM_NWF="256"
+TLM_PUP_DIAM="0.9375"
+TLM_COBS="0.30"
+TLM_FS1="1000.0"
+TLM_FS2="2000.0"
+TLM_LAT1="${lat1_tot}"
+TLM_LAT2="${lat2_tot}"
+TLM_GAIN1="${GAIN1}"
+TLM_GAIN2="${GAIN2}"
+TLM_MULT1="${MULT1}"
+TLM_MULT2="${MULT2}"
+TLM_DM2_DIAM="0.9986413"
+TLM_DM2_COUPL="0.15"
+TLM_STREAMS="${TLM_SAVED_STREAMS[*]}"
+TLM_PUP_FITS="${TELEM_DIR}/csim_pup.fits"
+TLM_STG1_CALIB="${TELEM_DIR}/calib_stg1"
+TLM_STG2_CALIB="${TELEM_DIR}/calib_stg2"
+TLM_PARENT_OUT="${OUT_DIR}"
+EOF
+    cat > "${TELEM_DIR}/telemetry_manifest.json" <<EOF
+{
+  "mode": "${SAVE_TELEMETRY}",
+  "seeing_arcsec": ${SEEING},
+  "phys_time_s": ${PHYS_TIME},
+  "master_ticks": ${MASTER_TICKS},
+  "psf_navg": ${EFF_PSF_NAVG},
+  "tel_diam_m": 8.2,
+  "fs_stg1_hz": 1000.0,
+  "fs_stg2_hz": 2000.0,
+  "latency_tot_stg1_fr": ${lat1_tot},
+  "latency_tot_stg2_fr": ${lat2_tot},
+  "gain1": ${GAIN1},
+  "gain2": ${GAIN2},
+  "mult1": ${MULT1},
+  "mult2": ${MULT2},
+  "n_streams": ${#TLM_SAVED_STREAMS[@]}
+}
+EOF
 fi
 for _ in $(seq 1 100); do
     [[ -s "${OUT_DIR}/wf_stats.json" && -s "${WFSTAT_CPU_DIR}/wf_stats.json" ]] && break
@@ -452,7 +744,7 @@ for cam in vis_raw nir_raw vis_stg1 nir_stg1 vis_final nir_final; do
 done
 
 for n in 1 2; do
-    for sfx in imWFS2 modevalWFS modevalDM mgain mgainfact dmC; do
+    for sfx in imWFS2 modevalWFS modevalDM modevalOL mgain mgainfact mmult dmC; do
         if @exists "s.aol${n}_${sfx}"; then
             fpspipe.savefits "aol${n}_${sfx}" "${OUT_DIR}/aol${n}_${sfx}.fits"
         fi
@@ -493,13 +785,34 @@ for stg_pair in "1:${STG1_ROOT}" "2:${STG2_ROOT}"; do
     fi
 done
 
+if [[ "${SAVE_TELEMETRY}" != "none" ]] && (( RUN_TLM_ANALYSIS )) && \
+   command -v milk-mlt-aotlm >/dev/null 2>&1; then
+    sysmon.mark "tlm_analysis" "Run milk-mltools C AO optimization & PSF reconstruction"
+    echo "[ao3k-scexao] Running milk-mlt-aotlm C analysis on ${TELEM_DIR}..."
+    milk-mlt-aotlm "${TELEM_DIR}" "${TELEM_DIR}/analysis" 4 || true
+fi
+
 sysmon.mark "ao_report" "Compile AO optical report & figures (cacaosim-ao-report)"
+cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
+if command -v cacaosim-gui-screenshot >/dev/null 2>&1; then
+    milk-fps-runstart -q csim_atmturb >/dev/null 2>&1 || true
+    milk-stream-wait -q -t 10 "csim_wfs_vis+20" >/dev/null 2>&1 || true
+    cacaosim-gui-screenshot \
+        --outdir "${OUT_DIR}" \
+        --include-status always \
+        "${OUT_DIR}/ao3k_scexao.bench" >/dev/null 2>&1 || true
+    milk-fps-runstop -q csim_atmturb >/dev/null 2>&1 || true
+fi
+REP_TICKS="${d_pha}"
+if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
+    REP_TICKS="${d_wfs2}"
+fi
 cacaosim-ao-report \
     "${WORK_ROOT}" \
     "${OUT_DIR}" \
     "${SEEING}" \
     "${PHYS_TIME}" \
-    "${d_pha}" \
+    "${REP_TICKS}" \
     "${WALL_ELAPSED}" \
     "${GAIN1}" \
     "${GAIN2}" \
@@ -532,6 +845,12 @@ sysmon.report \
 
 if [[ -n "${SAVE_RM_DIR}" ]]; then
     echo "[ao3k-scexao] Saved Stage-1 & Stage-2 response matrices in: ${SAVE_RM_DIR}"
+fi
+if [[ "${SAVE_TELEMETRY}" != "none" ]]; then
+    echo "[ao3k-scexao] Telemetry Cubes: ${TELEM_DIR}"
+    if [[ -f "${TELEM_DIR}/analysis/TELEMETRY_REPORT.md" ]]; then
+        echo "[ao3k-scexao] PSFR/AO Report : ${TELEM_DIR}/analysis/TELEMETRY_REPORT.md"
+    fi
 fi
 echo "[ao3k-scexao] Optical Report : ${OUT_DIR}/REPORT.md"
 echo "[ao3k-scexao] Compute Report : ${OUT_DIR}/COMPUTE_REPORT.md"
