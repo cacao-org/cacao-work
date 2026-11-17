@@ -11,8 +11,10 @@ set -euo pipefail
 
 SEEING="0.6"
 PHYS_TIME="10.0"
-WALL_RATE="160"
+WALL_RATE=""
+CALIB_RATE="160"
 BENCH_MODE="fused"
+WFSTAT_VALIDATE="0"
 GAIN1="0.35"
 GAIN2="0.35"
 MULT1="0.98"
@@ -39,8 +41,12 @@ Usage: $(basename "$0") [options]
 Options:
   --seeing <arcsec>   Seeing FWHM at 0.50 um (default: ${SEEING})
   --phys-time <sec>   Physical closed-loop integration time [s] (default: ${PHYS_TIME})
-  --wall-rate <hz>    Wall-clock master pacing rate [Hz] (default: ${WALL_RATE})
+  --wall-rate <hz>    Wall-clock master pacing rate [Hz] (default: 640 fused, 160 modular)
+  --calib-rate <hz>   Wall-clock rate for fresh RM acquisition (default: ${CALIB_RATE}; RMs
+                      measured at 640 Hz gave ~3% lower closed-loop Strehl)
   --bench-mode <mode> cacaosim optical bench mode: fused or modular (default: ${BENCH_MODE})
+  --wfstat-validate   Fused mode: also export beams and run CPU csim_wfstat into
+                      <outdir>/wfstat_cpu to cross-check the in-DAG GPU statistics
   --gain1 <float>     Stage-1 AO3k integrator gain (default: ${GAIN1})
   --gain2 <float>     Stage-2 SCExAO integrator gain (default: ${GAIN2})
   --mult1 <float>     Stage-1 leak multiplier (default: ${MULT1})
@@ -68,7 +74,9 @@ while (( $# > 0 )); do
         --seeing)          SEEING="$2"; shift 2 ;;
         --phys-time)       PHYS_TIME="$2"; shift 2 ;;
         --wall-rate)       WALL_RATE="$2"; shift 2 ;;
+        --calib-rate)      CALIB_RATE="$2"; shift 2 ;;
         --bench-mode)      BENCH_MODE="$2"; shift 2 ;;
+        --wfstat-validate) WFSTAT_VALIDATE="1"; shift ;;
         --gain1)           GAIN1="$2"; shift 2 ;;
         --gain2)           GAIN2="$2"; shift 2 ;;
         --mult1)           MULT1="$2"; shift 2 ;;
@@ -99,6 +107,19 @@ fi
 MASTER_UNIT="csim_mkbeam"
 [[ "${BENCH_MODE}" == "fused" ]] && MASTER_UNIT="csim_htsim"
 
+# Fused csim_htsim sustains lossless 2-stage lockstep well above 640 Hz; the modular
+# 14-daemon SHM chain is benchmarked at its historical 160 Hz.
+if [[ -z "${WALL_RATE}" ]]; then
+    WALL_RATE="160"
+    [[ "${BENCH_MODE}" == "fused" ]] && WALL_RATE="640"
+fi
+
+# CPU csim_wfstat runs in modular mode, or alongside the GPU path when validating fused mode
+CPU_WFSTAT=0
+if [[ "${BENCH_MODE}" == "modular" ]] || (( WFSTAT_VALIDATE )); then
+    CPU_WFSTAT=1
+fi
+
 OUT_DIR="$(realpath -m "${OUT_DIR}")"
 [[ -n "${SAVE_RM_DIR}" ]]  && SAVE_RM_DIR="$(realpath -m "${SAVE_RM_DIR}")"
 [[ -n "${LOAD_RM_DIR}" ]]  && LOAD_RM_DIR="$(realpath -m "${LOAD_RM_DIR}")"
@@ -111,6 +132,11 @@ LONG_READOUTS=$(( MASTER_TICKS / 20 ))
 WALL_DT="$(awk -v r="${WALL_RATE}" 'BEGIN { printf "%.7f", 1.0 / r }')"
 WFS1_WALL_RATE="$(awk -v r="${WALL_RATE}" 'BEGIN { printf "%.2f", 0.5 * r }')"
 
+# Fresh response-matrix acquisition runs at CALIB_RATE; loading saved RMs uses WALL_RATE
+CAL_RATE="${WALL_RATE}"
+[[ -z "${LOAD_RM_DIR}" ]] && CAL_RATE="${CALIB_RATE}"
+CAL_WFS1_RATE="$(awk -v r="${CAL_RATE}" 'BEGIN { printf "%.2f", 0.5 * r }')"
+
 WORK_ROOT="${SANDBOX_WORK_DIR:-/tmp/ao3k_milk_$$}"
 CSIM_DIR="${CACAOSIM_WORKDIR:-${WORK_ROOT}/csim}"
 STG1_ROOT="${WORK_ROOT}/ao3k"
@@ -119,6 +145,8 @@ mkdir -p "${WORK_ROOT}" "${CSIM_DIR}"
 
 BENCH_CFG="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
 LOOP_CTRL="${CACAO_WORK_ROOT}/benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk"
+WFSTAT_LINK="/tmp/.wfstat_$$"
+WFSTAT_CPU_LINK="/tmp/.wfstat_cpu_$$"
 
 cleanup_sim() {
     sysmon.stop >/dev/null 2>&1 || true
@@ -130,6 +158,7 @@ cleanup_sim() {
         >/dev/null 2>&1 || true
     cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
     milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 >/dev/null 2>&1 || true
+    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" >/dev/null 2>&1 || true
 }
 @defer --exit cleanup_sim
 
@@ -141,6 +170,7 @@ echo "   Seeing      : ${SEEING}\" @ 0.50 um | Star: mV = 6.0, mH = 6.0 (Teff = 
 echo "   Loop Speeds : Stage 1 (AO3k NIR) = 1.0 kHz | Stage 2 (SCExAO Vis) = 2.0 kHz"
 echo "   Integration : ${PHYS_TIME} s physical (${MASTER_TICKS} ticks, ${LONG_READOUTS} exposures)"
 echo "   Wall Pacing : ${WALL_RATE} Hz master (${WFS1_WALL_RATE} Hz Stg1, ${WALL_RATE} Hz Stg2)"
+echo "   Calib Pacing: ${CAL_RATE} Hz master (RM acquisition / load)"
 echo "================================================================================"
 
 sysmon.start "${OUT_DIR}" .rate=5.0
@@ -157,12 +187,16 @@ milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
 milk-fps-wait -q -t 10 "${MASTER_UNIT}" >/dev/null 2>&1 || true
 milk-fps-set -q \
     "${MASTER_UNIT}.turb_gain=0.0" \
-    "${MASTER_UNIT}.frame_rate=${WALL_RATE}" \
+    "${MASTER_UNIT}.frame_rate=${CAL_RATE}" \
     "${MASTER_UNIT}.procinfo.triggermode=0"
 if [[ "${BENCH_MODE}" == "fused" ]]; then
+    # Beams are exported to SHM only for the CPU cross-check (--wfstat-validate)
+    if (( CPU_WFSTAT )); then
+        milk-fps-set -q "csim_htsim.export_beams=b_pup,b_post_stg1,b_post_stg2"
+    fi
     milk-fps-set -q \
-        "csim_htsim.export_beams=b_pup,b_post_stg1,b_post_stg2" \
-        "csim_htsim.export_enable=OFF"
+        "csim_htsim.export_enable=OFF" \
+        "csim_htsim.wfstat_enable=OFF"
 fi
 milk-fps-runstart -q "${MASTER_UNIT}"
 milk-stream-wait -q -t 20 csim_wfs_nir csim_wfs_vis psf_vis_final_long psf_nir_final_long
@@ -181,13 +215,13 @@ done
 sysmon.mark "deploy_loops" "Deploy Stage-1 (64x64) & Stage-2 (50x50) AO loops"
 echo "[ao3k-scexao] Step 3/7: Deploying Stage-1 (64x64) & Stage-2 (50x50) loops..."
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
-CACAO_WFSFRATE="${WFS1_WALL_RATE}" \
+CACAO_WFSFRATE="${CAL_WFS1_RATE}" \
 CACAO_LOOPGAIN="${GAIN1}" \
 CACAO_LOOPMULT="${MULT1}" \
     "${LOOP_CTRL}" --stage 1 deploy
 
 CACAO_LOOPROOTDIR="${STG2_ROOT}" \
-CACAO_WFSFRATE="${WALL_RATE}" \
+CACAO_WFSFRATE="${CAL_RATE}" \
 CACAO_LOOPGAIN="${GAIN2}" \
 CACAO_LOOPMULT="${MULT2}" \
     "${LOOP_CTRL}" --stage 2 deploy
@@ -215,7 +249,7 @@ sysmon.mark "calib_stage1" "Stage-1 (64x64) RM/CM calibration or load"
 t_cal1_0="$(date +%s)"
 echo "[ao3k-scexao]   -> Stage 1 (AO3k, 64x64 DM D=60, 160x160 J-band PyWFS)..."
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
-CACAO_WFSFRATE="${WFS1_WALL_RATE}" \
+CACAO_WFSFRATE="${CAL_WFS1_RATE}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
@@ -229,7 +263,7 @@ sysmon.mark "calib_stage2" "Stage-2 (50x50) RM/CM calibration or load"
 t_cal2_0="$(date +%s)"
 echo "[ao3k-scexao]   -> Stage 2 (SCExAO, 50x50 DM D=46, 120x120 Vis PyWFS)..."
 CACAO_LOOPROOTDIR="${STG2_ROOT}" \
-CACAO_WFSFRATE="${WALL_RATE}" \
+CACAO_WFSFRATE="${CAL_RATE}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
@@ -238,6 +272,10 @@ CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
 milk-stream-wait -q -t 20 "csim_wfs_vis+20"
 t_cal2_1="$(date +%s)"
 echo "[ao3k-scexao]      Stage-2 calibration done in $(( t_cal2_1 - t_cal2_0 )) s."
+
+if [[ "${CAL_RATE}" != "${WALL_RATE}" ]]; then
+    @set "f.${MASTER_UNIT}.frame_rate=${WALL_RATE}"
+fi
 
 if (( RUN_SELFRM )); then
     sysmon.mark "selfrm_calib" "Open-loop calibration selfRM (Stage 1 & 2)"
@@ -287,38 +325,54 @@ echo "[ao3k-scexao] Step 6/7: Closing Stage 1 (1 kHz) -> Stage 2 (2 kHz) (${PHYS
 CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 close "${GAIN1}"
 milk-stream-wait -q -t 30 "csim_wfs_vis+100"
 CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
-if [[ "${BENCH_MODE}" == "fused" ]]; then
+if (( CPU_WFSTAT )) && [[ "${BENCH_MODE}" == "fused" ]]; then
     @set "f.csim_htsim.export_enable=ON"
 fi
 milk-stream-wait -q -t 30 "csim_wfs_vis+200"
 
-# Pause master turbulence clock cleanly while attaching C wavefront recorder (csim_wfstat)
-WFSTAT_LINK="/tmp/.wfstat_$$"
-ln -sfn "${OUT_DIR}" "${WFSTAT_LINK}"
+# Pause master turbulence clock while arming wavefront statistics:
+#   - fused  : in-DAG GPU accumulation inside csim_htsim (no beam export, no extra process)
+#   - modular: csim_wfstat CPU recorder on SHM beams (also used by --wfstat-validate)
+WFSTAT_CPU_DIR="${OUT_DIR}"
 milk-fps-runstop -q csim_atmturb
 sleep 0.15
-milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
-milk-fps-init -q csim_wfstat milk-fpsexec-cacaosim-wfstat >/dev/null
-milk-fps-set -q \
-    "csim_wfstat.trig_beam=b_post_stg2" \
-    "csim_wfstat.beam_raw=b_pup" \
-    "csim_wfstat.beam_stg1=b_post_stg1" \
-    "csim_wfstat.beam_final=b_post_stg2" \
-    "csim_wfstat.outdir=${WFSTAT_LINK}" \
-    "csim_wfstat.target_ticks=${MASTER_TICKS}" \
-    "csim_wfstat.dt_phys=0.0005" \
-    "csim_wfstat.snap_extra=ON" \
-    "csim_wfstat.procinfo.loopcntMax=${MASTER_TICKS}" \
-    "csim_wfstat.procinfo.triggermode=3" \
-    "csim_wfstat.procinfo.triggersname=b_post_stg2"
-milk-fps-runstart -q csim_wfstat
+rm -f "${OUT_DIR}/wf_stats.json"
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    ln -sfn "${OUT_DIR}" "${WFSTAT_LINK}"
+    milk-fps-set -q \
+        "csim_htsim.wfstat_outdir=${WFSTAT_LINK}" \
+        "csim_htsim.wfstat_ticks=${MASTER_TICKS}" \
+        "csim_htsim.wfstat_extra=ON"
+    @set "f.csim_htsim.wfstat_enable=ON"
+    (( CPU_WFSTAT )) && WFSTAT_CPU_DIR="${OUT_DIR}/wfstat_cpu"
+fi
+if (( CPU_WFSTAT )); then
+    mkdir -p "${WFSTAT_CPU_DIR}"
+    rm -f "${WFSTAT_CPU_DIR}/wf_stats.json"
+    ln -sfn "${WFSTAT_CPU_DIR}" "${WFSTAT_CPU_LINK}"
+    milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
+    milk-fps-init -q csim_wfstat milk-fpsexec-cacaosim-wfstat >/dev/null
+    milk-fps-set -q \
+        "csim_wfstat.trig_beam=b_post_stg2" \
+        "csim_wfstat.beam_raw=b_pup" \
+        "csim_wfstat.beam_stg1=b_post_stg1" \
+        "csim_wfstat.beam_final=b_post_stg2" \
+        "csim_wfstat.outdir=${WFSTAT_CPU_LINK}" \
+        "csim_wfstat.target_ticks=${MASTER_TICKS}" \
+        "csim_wfstat.dt_phys=0.0005" \
+        "csim_wfstat.snap_extra=ON" \
+        "csim_wfstat.procinfo.loopcntMax=${MASTER_TICKS}" \
+        "csim_wfstat.procinfo.triggermode=3" \
+        "csim_wfstat.procinfo.triggersname=b_post_stg2"
+    milk-fps-runstart -q csim_wfstat
+fi
 
 cnt_pha_0=0 cnt_wfs1_0=0 cnt_wfs2_0=0 cnt_long_0=0
 @get cnt_pha_0="s.outarraypha.cnt0" cnt_wfs1_0="s.csim_wfs_nir.cnt0" \
      cnt_wfs2_0="s.csim_wfs_vis.cnt0" cnt_long_0="s.psf_vis_final_long.cnt0"
 
 cacaosim.reset_long
-sysmon.mark "closed_loop_10s" "10s closed-loop science + csim_wfstat telemetry (${BENCH_MODE})"
+sysmon.mark "closed_loop_10s" "10s closed-loop science + wavefront telemetry (${BENCH_MODE})"
 t_int_0="$(date +%s.%N)"
 milk-fps-runstart -q csim_atmturb
 
@@ -350,20 +404,36 @@ cnt_pha_1=0 cnt_wfs1_1=0 cnt_wfs2_1=0 cnt_long_1=0
 @get cnt_pha_1="s.outarraypha.cnt0" cnt_wfs1_1="s.csim_wfs_nir.cnt0" \
      cnt_wfs2_1="s.csim_wfs_vis.cnt0" cnt_long_1="s.psf_vis_final_long.cnt0"
 
-# Freeze master turbulence clock so all 6 cameras & wfstat flush identical snapshots
+# In fused mode, csim_htsim auto-writes its in-DAG statistics after exactly MASTER_TICKS
+# frames; keep the clock running until it reports completion (it only iterates on ticks).
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    wf_n=0
+    for _ in $(seq 1 600); do
+        @get wf_n="f.csim_htsim.wfstat_frames"
+        (( wf_n >= MASTER_TICKS )) && [[ -s "${OUT_DIR}/wf_stats.json" ]] && break
+        sleep 0.05
+    done
+fi
+
+# Freeze master turbulence clock so all 6 cameras & wavefront stats flush identical snapshots
 milk-fps-runstop -q csim_atmturb
 sleep 0.2
 if [[ "${BENCH_MODE}" == "fused" ]]; then
-    @set "f.csim_htsim.export_enable=OFF"
+    @set "f.csim_htsim.wfstat_enable=OFF"
+    (( CPU_WFSTAT )) && @set "f.csim_htsim.export_enable=OFF"
 fi
-milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
-milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
-for _ in $(seq 1 50); do
-    [[ -s "${OUT_DIR}/wf_stats.json" ]] && break
+if (( CPU_WFSTAT )); then
+    milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
+    milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
+fi
+for _ in $(seq 1 100); do
+    [[ -s "${OUT_DIR}/wf_stats.json" && -s "${WFSTAT_CPU_DIR}/wf_stats.json" ]] && break
     sleep 0.1
 done
-milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
-rm -f "${WFSTAT_LINK}"
+if (( CPU_WFSTAT )); then
+    milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
+fi
+rm -f "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}"
 
 d_pha=$(( cnt_pha_1 - cnt_pha_0 ))
 d_wfs1=$(( cnt_wfs1_1 - cnt_wfs1_0 ))
