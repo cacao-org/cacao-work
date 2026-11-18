@@ -137,6 +137,7 @@ verify_install() {
         cacaosim-bench-view
         cacaosim-CTRL
         cacaosim-ao-report
+        cacaosim-telemetry-video
         milk-fpsexec-cacaosim-htsim
         milk-fpsexec-cacaosim-mkbeam
         milk-fpsexec-cacaosim-dmsim

@@ -24,15 +24,21 @@ def _create_synthetic_report(report_dir: Path) -> None:
         "cacaosim_gui_builder.png",
         "cacaosim_gui_tables.png",
         "cacaosim_gui_status.png",
+        "chromatic_passbands_2x1.png",
         "psf_comparison_2x3.png",
         "wf_strehl_timeseries_4x1.png",
         "psf_inst_vis_5x3.png",
         "dm_samples_5x4.png",
         "wfs_samples_5x4.png",
+        "wfs_psf_short_evolution_poster.png",
         "compute_timeline_4x1.png",
         "extra_wf_samples_5x3.png",
     ):
         (report_dir / png_name).write_bytes(TINY_PNG)
+    (report_dir / "wfs_psf_short_evolution.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    (report_dir / "wfs_psf_short_evolution_meta.json").write_text(
+        '{"video_file": "wfs_psf_short_evolution.mp4"}\n', encoding="utf-8"
+    )
     (report_dir / "ao3k_scexao.bench").write_text(
         '[bench]\nname = "subaru_ao3k_scexao"\n', encoding="utf-8"
     )
@@ -52,6 +58,8 @@ def _create_synthetic_report(report_dir: Path) -> None:
             "# Synthetic AO Simulation Report",
             "",
             "- **Seeing**: `0.60\"` at 0.50 um | **Star**: mV=6.0, mH=6.0",
+            "- **Internal Optical-Bench Clock**: **`8.0 kHz` (`dt = 0.125 ms = 125 us`), "
+            "i.e., `4` sub-samples per `0.50 ms` (`2.0 kHz`) outer tick**",
             "- Code ref: `csim_htsim` and `b_post_stg1` stay literal",
             "",
             "> Companion report: [COMPUTE_REPORT.md](COMPUTE_REPORT.md)",
@@ -63,6 +71,19 @@ def _create_synthetic_report(report_dir: Path) -> None:
             "(#hardware-simulator-gui-cacaosim-ctrl)",
             "",
             "![cacaosim-CTRL 2D Optical Bench Schematic](cacaosim_gui_schematic.png)",
+            "",
+            "### Internal Multi-Rate Timing & Sub-Stepping (`8.0 kHz` / `125 us`)",
+            "",
+            "> **Internal Timing Architecture**: `8.0 kHz` (`dt = 0.125 ms = 125 us`), "
+            "`4` sub-samples per `0.50 ms` (`2.0 kHz`) outer tick.",
+            "",
+            "## Polychromatic Passbands, Sub-Band Sampling & Flux Scaling",
+            "",
+            "| Sensor | Bandpass [um] | Slices `N` |",
+            "| :--- | :---: | ---: |",
+            "| `wfs_nir` | 1.098-1.342 (`20%`) | 2 |",
+            "",
+            "![Optical Bench 32-Bin Spectra](chromatic_passbands_2x1.png)",
             "",
             "| Band | Strehl | Mode |",
             "| :--- | ---: | :---: |",
@@ -84,6 +105,8 @@ def _create_synthetic_report(report_dir: Path) -> None:
             "- ![Instantaneous Visible PSFs](psf_inst_vis_5x3.png)",
             "- ![Instantaneous DM Samples](dm_samples_5x4.png)",
             "- ![Instantaneous WFS Samples](wfs_samples_5x4.png)",
+            "",
+            "![Short-Timescale WFS & PSF Evolution](wfs_psf_short_evolution.mp4)",
             "",
             "- [metrics.json](metrics.json)",
             "- [wf_timeseries.csv](wf_timeseries.csv)",
@@ -140,6 +163,9 @@ def test_build_ao_web_report_markdown_and_staging(
     # Bullet with pipe stays in <ul>, while GFM table gets alignments.
     assert "<ul>" in index_html
     assert "<strong>Seeing</strong>:" in index_html
+    assert "<strong>Internal Optical-Bench Clock</strong>:" in index_html
+    assert "<code>8.0 kHz</code>" in index_html
+    assert "<code>dt = 0.125 ms = 125 us</code>" in index_html
     assert 'style="text-align: left;"' in index_html
     assert 'style="text-align: right;"' in index_html
     assert 'style="text-align: center;"' in index_html
@@ -152,6 +178,8 @@ def test_build_ao_web_report_markdown_and_staging(
     assert 'src="cacaosim_gui_builder.png"' in index_html
     assert 'src="cacaosim_gui_tables.png"' in index_html
     assert 'src="cacaosim_gui_status.png"' in index_html
+    assert 'src="chromatic_passbands_2x1.png"' in index_html
+    assert "<code>wfs_nir</code>" in index_html
     assert 'id="hardware-simulator-gui-cacaosim-ctrl"' in index_html
     assert 'href="#hardware-simulator-gui-cacaosim-ctrl"' in index_html
     assert 'href="ao3k_scexao.bench"' in index_html
@@ -176,11 +204,17 @@ def test_build_ao_web_report_markdown_and_staging(
     assert 'href="compute_report.html"' in index_html
     assert 'href="index.html"' in compute_html
 
-    # Extra unreferenced PNG appears on index.html; compute PNG is NOT duplicated.
+    # Extra unreferenced PNG appears on index.html; compute PNG and video poster are NOT duplicated.
     assert 'src="extra_wf_samples_5x3.png"' in index_html
     assert "Additional Diagnostic Figures" in index_html
     assert 'src="compute_timeline_4x1.png"' in compute_html
     assert 'src="compute_timeline_4x1.png"' not in index_html
+    assert "<video controls loop autoplay muted playsinline" in index_html
+    assert 'poster="wfs_psf_short_evolution_poster.png"' in index_html
+    assert '<source src="wfs_psf_short_evolution.mp4" type="video/mp4">' in index_html
+    assert 'src="wfs_psf_short_evolution_poster.png"' not in index_html
+    assert (slug_out / "wfs_psf_short_evolution.mp4").is_file()
+    assert 'href="wfs_psf_short_evolution_meta.json"' not in index_html
 
     # Excluded .fits and external ../ paths do not produce broken <a href> links.
     assert not (slug_out / "cube.fits").exists()
@@ -191,9 +225,10 @@ def test_build_ao_web_report_markdown_and_staging(
     assert 'href="strehl_timeseries.csv"' in index_html
     assert "(local artifact, omitted from web bundle)" in index_html
 
-    # Single-slug redirect configured in firebase.json.
+    # Single-slug redirect & mp4 cache headers configured in firebase.json.
     fb_cfg = json.loads((site_dir / "firebase.json").read_text(encoding="utf-8"))
     assert fb_cfg["hosting"]["redirects"][0]["destination"] == "/demo_run/"
+    assert "mp4" in fb_cfg["hosting"]["headers"][0]["source"]
 
 
 def test_publish_ao_report_build_only_and_include_fits(
@@ -264,3 +299,111 @@ def test_publish_ao_report_requires_project_without_build_only(
     )
     assert res.returncode == 2
     assert "specify --project <gcp-project> or set FIREBASE_PROJECT" in res.stderr
+
+
+def test_cacaosim_telemetry_video_renderer(
+    stack_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    """Verify cacaosim-telemetry-video slices synthetic FITS cubes into a valid H.264 MP4."""
+    import numpy as np
+    from astropy.io import fits
+
+    rep_dir = tmp_path / "ao_out"
+    tlm_dir = rep_dir / "telemetry"
+    tlm_dir.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(42)
+    yy, xx = np.indices((64, 64), dtype=np.float32)
+    dl_psf = np.exp(-((xx - 32.0) ** 2 + (yy - 32.0) ** 2) / (2.0 * 1.8**2)).astype(np.float32)
+    for bkey in ("vis", "nir"):
+        fits.writeto(rep_dir / f"psf_{bkey}_dl.fits", dl_psf, overwrite=True)
+        for skey in ("stg1", "final"):
+            fits.writeto(
+                rep_dir / f"det_{bkey}_{skey}_dl.fits",
+                100.0 + 5000.0 * dl_psf,
+                overwrite=True,
+            )
+
+    wf_rows = ["frame,t_phys_s,rms_raw_nm,rms_stg1_nm,rms_final_nm"]
+    for i in range(1, 21):
+        wf_rows.append(f"{i},{i*0.0005:.6f},850.0,190.0,85.0")
+    (rep_dir / "wf_timeseries.csv").write_text("\n".join(wf_rows) + "\n", encoding="utf-8")
+    (rep_dir / "ao3k_scexao.bench").write_text(
+        "[bench]\nmaster_hz = 2000.0\noversample = 4\n", encoding="utf-8"
+    )
+    (tlm_dir / "telemetry_manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "speckle",
+                "seeing_arcsec": 0.6,
+                "phys_time_s": 0.010,
+                "master_ticks": 20,
+                "psf_navg": 1,
+                "fs_stg1_hz": 1000.0,
+                "fs_stg2_hz": 2000.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def write_stream(name: str, nfr: int, ny: int, nx: int, base: float, scale: float) -> None:
+        cube = (base + scale * rng.random((nfr, ny, nx), dtype=np.float32)).astype(np.float32)
+        fits.writeto(tlm_dir / f"{name}_12:00:00.000000.fits", cube, overwrite=True)
+        txt = [
+            f"{k} {k} 12:00:00.000000 {1000.0 + k*1e-3:.9f} {1000.0 + k*1e-3:.9f} {100 + k} 0"
+            for k in range(nfr)
+        ]
+        (tlm_dir / f"{name}_12:00:00.000000.txt").write_text(
+            "\n".join(txt) + "\n", encoding="utf-8"
+        )
+
+    write_stream("csim_wfs_nir", 10, 40, 40, 100.0, 40.0)
+    write_stream("csim_wfs_vis", 20, 32, 32, 100.0, 40.0)
+    for bkey in ("vis", "nir"):
+        for skey, sr in (("stg1", 0.25), ("final", 0.65)):
+            pcube = np.empty((20, 64, 64), dtype=np.float32)
+            for k in range(20):
+                dx = 0.4 * np.sin(0.5 * k)
+                sp = np.exp(-((xx - 32.0 - dx) ** 2 + (yy - 32.0) ** 2) / (2.0 * 1.9**2))
+                pcube[k] = 100.0 + 5000.0 * sr * sp + 8.0 * rng.random((64, 64), dtype=np.float32)
+            fits.writeto(
+                tlm_dir / f"psf_{bkey}_{skey}_12:00:00.000000.fits", pcube, overwrite=True
+            )
+            txt = [
+                f"{k} {k} 12:00:00.000000 {1000.0 + k*5e-4:.9f} {1000.0 + k*5e-4:.9f} {200 + k} 0"
+                for k in range(20)
+            ]
+            (tlm_dir / f"psf_{bkey}_{skey}_12:00:00.000000.txt").write_text(
+                "\n".join(txt) + "\n", encoding="utf-8"
+            )
+
+    out_mp4 = rep_dir / "wfs_psf_short_evolution.mp4"
+    meta_out = rep_dir / "wfs_psf_short_evolution_meta.json"
+    res = subprocess.run(
+        [
+            "cacaosim-telemetry-video",
+            "--telemetry-dir",
+            str(tlm_dir),
+            "--report-dir",
+            str(rep_dir),
+            "--out",
+            str(out_mp4),
+            "--meta-out",
+            str(meta_out),
+            "--duration-ms",
+            "8.0",
+            "--fps",
+            "10",
+        ],
+        env=stack_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+    assert out_mp4.is_file() and out_mp4.stat().st_size > 1024
+    assert (rep_dir / "wfs_psf_short_evolution_poster.png").is_file()
+    vmeta = json.loads(meta_out.read_text(encoding="utf-8"))
+    assert vmeta["n_frames"] >= 10
+    assert vmeta["oversample"] == 4

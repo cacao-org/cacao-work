@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Olivier Guyon et al
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Subaru AO3k + SCExAO Two-Stage Cascaded Pyramid WFS Optical Bench
+# Subaru AO3k + SCExAO Two-Stage Cascaded Polychromatic Pyramid WFS Optical Bench
 #
-# Stage 1 (AO3k)  : 64x64 DM (D=60 act, dm01disp) + J-band (1.22 um) 160x160 PyWFS @ 1.0 kHz
-# Stage 2 (SCExAO): 50x50 DM (D=46 act, dm02disp) + Vis (0.75 um) 120x120 PyWFS @ 2.0 kHz
-# Science PSFs    : Simultaneous Visible (0.75 um) & Near-IR H-band (1.65 um)
+# Stage 1 (AO3k)  : 64x64 DM (D=60 act, dm01disp) + J-band (1.22 um, 20% BW, 2ch) 160x160 PyWFS 1kHz
+# Stage 2 (SCExAO): 50x50 DM (D=46 act, dm02disp) + Vis (0.75 um, 20% BW, 2ch) 120x120 PyWFS @ 2 kHz
+# Science PSFs    : Simultaneous Visible (0.75 um, 15% BW, 3ch) & Near-IR H (1.65 um, 18% BW, 3ch)
 #                   focal-plane cameras at Pre-AO, Post-Stage-1, and Final Stage-2.
 
 [bench]

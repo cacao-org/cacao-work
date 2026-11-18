@@ -18,6 +18,8 @@ ASSET_EXTS = {
     ".jpeg",
     ".svg",
     ".webp",
+    ".mp4",
+    ".webm",
     ".json",
     ".csv",
     ".tsv",
@@ -27,8 +29,12 @@ ASSET_EXTS = {
 }
 DATA_EXTS = {".json", ".csv", ".tsv", ".txt", ".dat", ".fits", ".bench"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".svg", ".webp"}
+VIDEO_EXTS = {".mp4", ".webm"}
 
 FRIENDLY_FIG_LABELS = {
+    "wfs_psf_short_evolution.mp4": (
+        "Short-Timescale Polychromatic PyWFS & Speckle PSF Evolution (Video)"
+    ),
     "cacaosim_gui_schematic.png": (
         "cacaosim-CTRL 2D Optical Bench Schematic & 32-Bin Polychromatic Spectra (F3:SCHEMATIC)"
     ),
@@ -41,17 +47,24 @@ FRIENDLY_FIG_LABELS = {
     "cacaosim_gui_status.png": (
         "cacaosim-CTRL Live Shared-Memory Streams & Active MILK FPS Units (F5:STATUS)"
     ),
-    "psf_comparison_2x3.png": "Long-Exposure PSF Comparison (2x3)",
+    "chromatic_passbands_2x1.png": (
+        "Optical Bench 32-Bin Spectra & Polychromatic Sensor Sub-Band Sampling (2x1)"
+    ),
+    "psf_comparison_2x3.png": "Long-Exposure Polychromatic PSF Comparison (2x3)",
     "psf_radial_profiles.png": "PSF Radial Profiles & Encircled Energy",
     "wf_strehl_timeseries_4x1.png": (
         "RMS Wavefront Error & Strehl Ratio Time Series with Sampled Instants (4x1)"
     ),
-    "psf_inst_vis_5x3.png": "Instantaneous Visible 0.75 um PSFs at Sampled Instants (5x3)",
-    "psf_inst_nir_5x3.png": "Instantaneous Near-IR H-Band 1.65 um PSFs at Sampled Instants (5x3)",
+    "psf_inst_vis_5x3.png": (
+        "Instantaneous Visible 0.75 um (15% BW, 3ch) PSFs at Sampled Instants (5x3)"
+    ),
+    "psf_inst_nir_5x3.png": (
+        "Instantaneous Near-IR H-Band 1.65 um (18% BW, 3ch) PSFs at Sampled Instants (5x3)"
+    ),
     "wf_stats_2x3.png": "Wavefront Mean & Temporal Std Dev (2x3)",
     "wf_samples_5x3.png": "Instantaneous Pupil Wavefront OPD Samples at Sampled Instants (5x3)",
     "wfs_samples_5x4.png": (
-        "Instantaneous Pyramid WFS Frames & Signals at Sampled Instants (5x4)"
+        "Instantaneous Polychromatic Pyramid WFS Frames & Signals at Sampled Instants (5x4)"
     ),
     "dm_samples_5x4.png": (
         "Instantaneous DM Actuator Commands & Pupil OPD Shapes at Sampled Instants (5x4)"
@@ -267,6 +280,13 @@ figure.report-figure img {
   height: auto;
   border-radius: 6px;
   background: #ffffff;
+}
+figure.report-figure video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: #0f172a;
 }
 figure.report-figure figcaption {
   margin-top: 0.5rem;
@@ -540,10 +560,11 @@ def render_inline(text: str, ctx: RenderContext) -> str:
 
 
 def render_figure_block(alt: str, raw_url: str, ctx: RenderContext) -> str:
-    """Render a standalone image as a clickable <figure> element."""
+    """Render a standalone image or video as a styled <figure> element."""
     resolved, is_ext, avail = ctx.resolve_local_url(raw_url)
     path_only = resolved.partition("#")[0]
-    if not is_ext and Path(path_only).suffix.lower() in IMAGE_EXTS:
+    suffix = Path(path_only).suffix.lower()
+    if not is_ext and suffix in (IMAGE_EXTS | VIDEO_EXTS):
         ctx.referenced_images.add(Path(path_only).name)
     if not avail:
         lbl = html.escape(alt or raw_url, quote=False)
@@ -554,6 +575,26 @@ def render_figure_block(alt: str, raw_url: str, ctx: RenderContext) -> str:
     src_esc = html.escape(resolved, quote=True)
     alt_esc = html.escape(alt, quote=True)
     cap_esc = html.escape(alt or friendly_figure_caption(Path(path_only).name), quote=False)
+    if suffix in VIDEO_EXTS:
+        mime = "video/webm" if suffix == ".webm" else "video/mp4"
+        poster_attr = ""
+        if not is_ext:
+            poster_name = f"{Path(path_only).stem}_poster.png"
+            if (ctx.out_slug_dir / poster_name).is_file():
+                ctx.referenced_images.add(poster_name)
+                poster_esc = html.escape(poster_name, quote=True)
+                poster_attr = f' poster="{poster_esc}"'
+        fmt_lbl = suffix.lstrip(".").upper()
+        return (
+            '<figure class="report-figure report-video">\n'
+            f"  <video controls loop autoplay muted playsinline "
+            f'preload="metadata"{poster_attr}>\n'
+            f'    <source src="{src_esc}" type="{mime}">\n'
+            f"  </video>\n"
+            f'  <figcaption>{cap_esc} &middot; '
+            f'<a href="{src_esc}" download>Download {fmt_lbl}</a></figcaption>\n'
+            "</figure>"
+        )
     return (
         '<figure class="report-figure">\n'
         f'  <a href="{src_esc}" target="_blank" rel="noopener">'
@@ -744,11 +785,19 @@ def build_extra_figures_section(
     staged_files: list[Path],
     ctx: RenderContext,
 ) -> str:
-    """Build HTML section for staged PNG figures not embedded in Markdown."""
+    """Build HTML section for staged figures/videos not embedded in Markdown."""
+    staged_names = {p.name for p in staged_files}
+    poster_companions = {
+        f"{p.stem}_poster.png"
+        for p in staged_files
+        if p.suffix.lower() in VIDEO_EXTS and f"{p.stem}_poster.png" in staged_names
+    }
     extra_imgs = [
         p
         for p in staged_files
-        if p.suffix.lower() in IMAGE_EXTS and p.name not in ctx.referenced_images
+        if p.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS)
+        and p.name not in ctx.referenced_images
+        and p.name not in poster_companions
     ]
     if not extra_imgs:
         return ""
@@ -768,7 +817,8 @@ def build_telemetry_files_section(staged_files: list[Path]) -> str:
     data_files = [
         p
         for p in staged_files
-        if p.suffix.lower() in DATA_EXTS and p.name != "report_meta.json"
+        if p.suffix.lower() in DATA_EXTS
+        and p.name not in ("report_meta.json", "wfs_psf_short_evolution_meta.json")
     ]
     if not data_files:
         return ""
@@ -979,7 +1029,7 @@ def write_root_indices_and_firebase(
         "cleanUrls": False,
         "headers": [
             {
-                "source": "**/*.@(png|jpg|jpeg|svg|webp)",
+                "source": "**/*.@(png|jpg|jpeg|svg|webp|mp4|webm)",
                 "headers": [
                     {"key": "Cache-Control", "value": "public, max-age=3600"}
                 ],

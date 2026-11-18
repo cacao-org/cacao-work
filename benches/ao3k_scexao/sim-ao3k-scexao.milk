@@ -136,13 +136,6 @@ fi
 MASTER_UNIT="csim_mkbeam"
 [[ "${BENCH_MODE}" == "fused" ]] && MASTER_UNIT="csim_htsim"
 
-# Fused csim_htsim sustains lossless 2-stage lockstep well above 640 Hz; the modular
-# 14-daemon SHM chain is benchmarked at its historical 160 Hz.
-if [[ -z "${WALL_RATE}" ]]; then
-    WALL_RATE="160"
-    [[ "${BENCH_MODE}" == "fused" ]] && WALL_RATE="640"
-fi
-
 case "${SAVE_TELEMETRY}" in
     none|standard|speckle|truth) ;;
     1|on|all) SAVE_TELEMETRY="standard" ;;
@@ -153,6 +146,20 @@ case "${SAVE_TELEMETRY}" in
         exit 2
         ;;
 esac
+
+# Fused csim_htsim sustains lossless 2-stage lockstep well above 640 Hz (or 360 Hz when
+# 18-21 streamFITSlog telemetry recorders are active alongside 4x polychromatic oversampling);
+# the modular 14-daemon SHM chain is benchmarked at its historical 160 Hz.
+if [[ -z "${WALL_RATE}" ]]; then
+    WALL_RATE="160"
+    if [[ "${BENCH_MODE}" == "fused" ]]; then
+        if [[ "${SAVE_TELEMETRY}" == "none" ]]; then
+            WALL_RATE="640"
+        else
+            WALL_RATE="360"
+        fi
+    fi
+fi
 
 EFF_PSF_NAVG=20
 if [[ "${SAVE_TELEMETRY}" == "speckle" || "${SAVE_TELEMETRY}" == "truth" ]]; then
@@ -226,7 +233,8 @@ if (( EFF_PSF_NAVG != 20 )) || [[ -n "${CLOCK_SKEW_US}" ]]; then
         sec == "[pyrwfs.wfs_vis]" && /^\[pyrwfs\.wfs_vis\]/ && skew != "" {
             print; printf "clock_offset_us = %s\n", skew; next
         }
-        (sec == "[fpcam.vis_final]" || sec == "[fpcam.nir_final]") &&
+        (sec == "[fpcam.vis_stg1]" || sec == "[fpcam.nir_stg1]" ||
+         sec == "[fpcam.vis_final]" || sec == "[fpcam.nir_final]") &&
         nv != 20 && /^(navg|rate_hz)[ \t]*=/ {
             printf "rate_hz       = %.4f\n", 2000.0 / nv; next
         }
@@ -243,6 +251,13 @@ declare -a TLM_SAVED_STREAMS=()
 
 cleanup_tlm_loggers() {
     if (( ${#TLM_UNITS[@]} > 0 )); then
+        local u
+        local -a off_args=()
+        for u in "${TLM_UNITS[@]}"; do
+            off_args+=("${u}.saveON=OFF")
+        done
+        milk-fps-set -q "${off_args[@]}" >/dev/null 2>&1 || true
+        sleep 1.2
         milk-fps-runstop -q "${TLM_UNITS[@]}" >/dev/null 2>&1 || true
         milk-fps-wait -q -t 120 "${TLM_UNITS[@]}" >/dev/null 2>&1 || true
         milk-fps-rm -f -q --ignore-missing "${TLM_UNITS[@]}" >/dev/null 2>&1 || true
@@ -271,8 +286,8 @@ start_tlm_loggers() {
         "csim_wfs_vis:${n_s2}:-1"
         "psf_vis_raw:${n_pd}:-1"
         "psf_nir_raw:${n_pd}:-1"
-        "psf_vis_stg1:${n_pd}:-1"
-        "psf_nir_stg1:${n_pd}:-1"
+        "psf_vis_stg1:${n_ps}:-1"
+        "psf_nir_stg1:${n_ps}:-1"
         "psf_vis_final:${n_ps}:-1"
         "psf_nir_final:${n_ps}:-1"
         "aol1_dmC:${n_s1}:-1"
@@ -296,7 +311,7 @@ start_tlm_loggers() {
 
     TLM_UNITS=()
     TLM_SAVED_STREAMS=()
-    local idx=0 entry sname exp_n zsl u csz
+    local idx=0 entry sname exp_n zsl u csz mfc
     for entry in "${specs[@]}"; do
         IFS=':' read -r sname exp_n zsl <<< "${entry}"
         if ! @exists "s.${sname}"; then
@@ -305,7 +320,9 @@ start_tlm_loggers() {
         printf -v u "tlog_%02d" "${idx}"
         idx=$(( idx + 1 ))
         csz=$(( exp_n + 64 ))
+        (( csz > 2500 )) && csz=2500
         (( csz < 32 )) && csz=32
+        mfc=$(( (exp_n + csz - 1) / csz + 8 ))
         milk-fps-rm -f -q --ignore-missing "${u}" >/dev/null 2>&1 || true
         milk-fps-init -q "${u}" milk-fpsexec-mem-streamFITSlog >/dev/null
         milk-fps-set -q \
@@ -313,7 +330,7 @@ start_tlm_loggers() {
             "${u}.dirname=${TLM_LINK}" \
             "${u}.cubesize=${csz}" \
             "${u}.maxframecnt=${exp_n}" \
-            "${u}.maxfilecnt=1" \
+            "${u}.maxfilecnt=${mfc}" \
             "${u}.zslice=${zsl}" \
             "${u}.saveON=ON" \
             "${u}.procinfo.loopcntMax=-1" \
@@ -807,7 +824,9 @@ REP_TICKS="${d_pha}"
 if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
     REP_TICKS="${d_wfs2}"
 fi
-cacaosim-ao-report \
+REP_TLM_DIR=""
+[[ "${SAVE_TELEMETRY}" != "none" ]] && REP_TLM_DIR="${TELEM_DIR}"
+CACAOSIM_TELEMETRY_DIR="${REP_TLM_DIR}" cacaosim-ao-report \
     "${WORK_ROOT}" \
     "${OUT_DIR}" \
     "${SEEING}" \
