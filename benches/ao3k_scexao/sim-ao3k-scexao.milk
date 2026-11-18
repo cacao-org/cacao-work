@@ -12,6 +12,7 @@ set -euo pipefail
 SEEING="0.6"
 PHYS_TIME="10.0"
 WALL_RATE=""
+USER_WALL_RATE_SET="0"
 CALIB_RATE=""
 FAST_CALIB="1"
 BENCH_MODE="fused"
@@ -88,7 +89,7 @@ while (( $# > 0 )); do
     case "$1" in
         --seeing)          SEEING="$2"; shift 2 ;;
         --phys-time)       PHYS_TIME="$2"; shift 2 ;;
-        --wall-rate)       WALL_RATE="$2"; shift 2 ;;
+        --wall-rate)       WALL_RATE="$2"; USER_WALL_RATE_SET="1"; shift 2 ;;
         --calib-rate)      CALIB_RATE="$2"; shift 2 ;;
         --no-fast-calib)   FAST_CALIB="0"; shift ;;
         --bench-mode)      BENCH_MODE="$2"; shift 2 ;;
@@ -147,16 +148,21 @@ case "${SAVE_TELEMETRY}" in
         ;;
 esac
 
-# Fused csim_htsim sustains lossless 2-stage lockstep well above 640 Hz (or 360 Hz when
-# 18-21 streamFITSlog telemetry recorders are active alongside 4x polychromatic oversampling);
-# the modular 14-daemon SHM chain is benchmarked at its historical 160 Hz.
+# Fused csim_htsim with graphed WFS + FPCAM & GPU long-exposure reductions sustains lossless
+# 2-stage lockstep at 720 Hz (600 Hz in standard 100 Hz PSF telemetry, 480 Hz with 2 kHz
+# 4-camera speckle telemetry + 18 streamFITSlog recorders, 440 Hz in beam-export truth mode);
+# modular 14-daemon SHM chain runs at 160 Hz.
 if [[ -z "${WALL_RATE}" ]]; then
     WALL_RATE="160"
     if [[ "${BENCH_MODE}" == "fused" ]]; then
         if [[ "${SAVE_TELEMETRY}" == "none" ]]; then
-            WALL_RATE="640"
+            WALL_RATE="720"
+        elif [[ "${SAVE_TELEMETRY}" == "standard" ]]; then
+            WALL_RATE="600"
+        elif [[ "${SAVE_TELEMETRY}" == "speckle" ]]; then
+            WALL_RATE="500"
         else
-            WALL_RATE="360"
+            WALL_RATE="440"
         fi
     fi
 fi
@@ -428,6 +434,9 @@ fpspipe.savefits "psf_nir_final_long" "${OUT_DIR}/psf_nir_dl.fits"
 for cam in vis_raw nir_raw vis_stg1 nir_stg1 vis_final nir_final; do
     fpspipe.savefits "psf_${cam}" "${OUT_DIR}/det_${cam}_dl.fits"
 done
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    @set "f.csim_htsim.enable_fpcam=OFF"
+fi
 
 sysmon.mark "deploy_loops" "Deploy Stage-1 (64x64) & Stage-2 (50x50) AO loops"
 echo "[ao3k-scexao] Step 3/7: Deploying Stage-1 (64x64) & Stage-2 (50x50) loops..."
@@ -500,23 +509,28 @@ if (( RUN_SELFRM )); then
     sysmon.mark "selfrm_calib" "Open-loop calibration selfRM (Stage 1 & 2)"
     echo "[ao3k-scexao] Step 4b/7: Acquiring calibration selfRM (no turbulence, open-loop)..."
     t_srmc_0="$(date +%s)"
+    declare -a SRMC_FAST_ARG=()
+    if [[ "${BENCH_MODE}" == "fused" ]] && (( FAST_CALIB )); then
+        SRMC_FAST_ARG=(--fast)
+    fi
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 selfrm \
         "${OUT_DIR}/selfRM_calib_stg1.fits" \
-        --nbmode "${SELFRM_MODES}" --ampl 0.015 --nbiter 1 --nbsettle 2
+        --nbmode "${SELFRM_MODES}" --ampl 0.015 --nbiter 1 --nbsettle 2 "${SRMC_FAST_ARG[@]}"
     cp -f "${OUT_DIR}/selfRM_calib_stg1.fits" "${STG1_ROOT}/conf/selfRM_calib.fits"
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
     milk-stream-wait -q -t 20 "csim_wfs_vis+15"
 
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 selfrm \
         "${OUT_DIR}/selfRM_calib_stg2.fits" \
-        --nbmode "${SELFRM_MODES}" --ampl 0.010 --nbiter 1 --nbsettle 2
+        --nbmode "${SELFRM_MODES}" --ampl 0.010 --nbiter 1 --nbsettle 2 "${SRMC_FAST_ARG[@]}"
     cp -f "${OUT_DIR}/selfRM_calib_stg2.fits" "${STG2_ROOT}/conf/selfRM_calib.fits"
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
     milk-stream-wait -q -t 20 "csim_wfs_vis+15"
 
     if [[ -n "${SAVE_RM_DIR}" ]]; then
-        CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 save-rm "${SAVE_RM_DIR}/stage1"
-        CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 save-rm "${SAVE_RM_DIR}/stage2"
+        mkdir -p "${SAVE_RM_DIR}/stage1" "${SAVE_RM_DIR}/stage2"
+        cp -f "${OUT_DIR}/selfRM_calib_stg1.fits" "${SAVE_RM_DIR}/stage1/selfRM_calib.fits"
+        cp -f "${OUT_DIR}/selfRM_calib_stg2.fits" "${SAVE_RM_DIR}/stage2/selfRM_calib.fits"
     fi
     t_srmc_1="$(date +%s)"
     echo "[ao3k-scexao]      Calibration selfRM done in $(( t_srmc_1 - t_srmc_0 )) s."
@@ -531,6 +545,9 @@ ATM_TRIG_DT="${WALL_DT}"
 if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
     ATM_STEP_S="$(awk -v k="${EFF_OV}" 'BEGIN { printf "%.8f", 0.0005 / k }')"
     ATM_TRIG_DT="$(awk -v d="${WALL_DT}" -v k="${EFF_OV}" 'BEGIN { printf "%.7f", d / k }')"
+fi
+if [[ "${BENCH_MODE}" == "fused" ]]; then
+    milk-fps-set -q "csim_htsim.enable_fpcam=ON"
 fi
 milk-fps-set -q \
     "csim_atmturb.seeing=${SEEING}" \
@@ -772,6 +789,13 @@ if (( RUN_SELFRM )); then
     sysmon.mark "selfrm_onsky" "Closed-loop on-sky selfRM probing (Stage 1 & 2)"
     echo "[ao3k-scexao] Step 6b/7: Acquiring on-sky closed-loop selfRM (${SEEING}\" seeing)..."
     t_srms_0="$(date +%s)"
+    if [[ "${BENCH_MODE}" == "fused" ]]; then
+        @set "f.csim_htsim.enable_fpcam=OFF"
+        if (( ! USER_WALL_RATE_SET )); then
+            SRM_ONSKY_DT="$(awk 'BEGIN { printf "%.7f", 1.0 / 720.0 }')"
+            milk-fps-set -q "csim_atmturb.procinfo.triggerdelay=${SRM_ONSKY_DT}"
+        fi
+    fi
     milk-fps-runstart -q csim_atmturb
     milk-stream-wait -q -t 30 "csim_wfs_vis+40"
 
@@ -785,6 +809,12 @@ if (( RUN_SELFRM )); then
         --nbmode "${SELFRM_MODES}" --ampl 0.020 --nbiter "${SELFRM_ONSKY_ITER}" --nbsettle 6
 
     milk-fps-runstop -q csim_atmturb
+    if [[ "${BENCH_MODE}" == "fused" ]]; then
+        if (( ! USER_WALL_RATE_SET )); then
+            milk-fps-set -q "csim_atmturb.procinfo.triggerdelay=${ATM_TRIG_DT}"
+        fi
+        @set "f.csim_htsim.enable_fpcam=ON"
+    fi
     t_srms_1="$(date +%s)"
     echo "[ao3k-scexao]      On-sky selfRM done in $(( t_srms_1 - t_srms_0 )) s."
 fi
@@ -806,7 +836,7 @@ if [[ "${SAVE_TELEMETRY}" != "none" ]] && (( RUN_TLM_ANALYSIS )) && \
    command -v milk-mlt-aotlm >/dev/null 2>&1; then
     sysmon.mark "tlm_analysis" "Run milk-mltools C AO optimization & PSF reconstruction"
     echo "[ao3k-scexao] Running milk-mlt-aotlm C analysis on ${TELEM_DIR}..."
-    milk-mlt-aotlm "${TELEM_DIR}" "${TELEM_DIR}/analysis" 4 || true
+    OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 milk-mlt-aotlm "${TELEM_DIR}" "${TELEM_DIR}/analysis" 4 || true
 fi
 
 sysmon.mark "ao_report" "Compile AO optical report & figures (cacaosim-ao-report)"

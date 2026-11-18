@@ -109,7 +109,7 @@ Usage:
   ${SCRIPT_NAME} [--stage 1|2] takeref [nframes]
   ${SCRIPT_NAME} [--stage 1|2] mlat [nbiter]
   ${SCRIPT_NAME} [--stage 1|2] setmgains [alpha [floor [mgainTT]]]
-  ${SCRIPT_NAME} [--stage 1|2] selfrm <out.fits> [--nbmode M] [--ampl A] [--nbiter K]
+  ${SCRIPT_NAME} [--stage 1|2] selfrm <out.fits> [--nbmode M] [--ampl A] [--nbiter K] [--fast]
   ${SCRIPT_NAME} [--stage 1|2] close [gain]
   ${SCRIPT_NAME} [--stage 1|2] open
   ${SCRIPT_NAME} [--stage 1|2] zero
@@ -542,7 +542,7 @@ EOF
         "compstrCM-${N}.wfsmask=../conf/wfsmask.fits" \
         "compstrCM-${N}.CMmodesDM=../conf/CMmodesDM.fits" \
         "compstrCM-${N}.CMmodesWFS=../conf/CMmodesWFS.fits"
-    milk-fps-runstart -q "compstrCM-${N}"
+    OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 milk-fps-runstart -q "compstrCM-${N}"
     milk-fps-wait -q -t 600 "compstrCM-${N}"
     t3="$(date +%s.%N)"
     LAST_COMPSTRCM_S="$(elapsed_s "${t2}" "${t3}")"
@@ -940,7 +940,7 @@ cmd_selfrm() {
         echo "${SCRIPT_NAME}: 'selfrm' requires <out.fits>" >&2
         return 2
     fi
-    local out_fits nbmode=2000 ampl="${POKE_AMPL}" nbiter=1 nbsettle=2 timeout=1800
+    local out_fits nbmode=2000 ampl="${POKE_AMPL}" nbiter=1 nbsettle=2 timeout=1800 fast_srm=0
     out_fits="$(resolve_caller_path "$1")"
     shift
     while (( $# > 0 )); do
@@ -950,6 +950,7 @@ cmd_selfrm() {
             --nbiter)   nbiter="$2"; shift 2 ;;
             --nbsettle) nbsettle="$2"; shift 2 ;;
             --timeout)  timeout="$2"; shift 2 ;;
+            --fast)     fast_srm=1; shift ;;
             *) echo "${SCRIPT_NAME}: unknown selfrm option '$1'" >&2; return 2 ;;
         esac
     done
@@ -957,28 +958,39 @@ cmd_selfrm() {
     enter_workdir 0
     fpspipe.commit
 
-    rm -f "selfRM.fits"
+    local armed_fast=0 srm_rc=0
+    if (( fast_srm )) && @exists "f.${HTSIM_UNIT}"; then
+        milk-fps-set -q \
+            "${HTSIM_UNIT}.calib_wfs=${WFS_STREAM}" \
+            "${HTSIM_UNIT}.calib_trig=dm${DM}disp" \
+            "${HTSIM_UNIT}.calib_poke_offset=0.0" \
+            "${HTSIM_UNIT}.calib_temporal=ON" \
+            "${HTSIM_UNIT}.calib_ring=ON" \
+            "${HTSIM_UNIT}.calib_fast=ON"
+        armed_fast=1
+    fi
+
     milk-fps-set -q \
+        "mfilt-${N}.selfRM.saveFITS=OFF" \
         "mfilt-${N}.selfRM.NBmode=${nbmode}" \
         "mfilt-${N}.selfRM.pokeampl=${ampl}" \
         "mfilt-${N}.selfRM.nbiter=${nbiter}" \
         "mfilt-${N}.selfRM.nbsettle=${nbsettle}" \
         "mfilt-${N}.selfRM.enable=ON"
-    milk-stream-wait -q -t "${timeout}" "${PFX}mfiltselfRM+1"
+    milk-stream-wait -q -t "${timeout}" "${PFX}mfiltselfRM+1" || srm_rc=$?
 
-    for _ in $(seq 1 50); do
-        [[ -f "selfRM.fits" ]] && break
-        sleep 0.05
-    done
-    mkdir -p "$(dirname "${out_fits}")"
-    if [[ -f "selfRM.fits" ]]; then
-        cp -f "selfRM.fits" "${out_fits}"
-    else
-        local sfps="savesrm-${N}-$$"
-        milk-fpsexec-iofits-saveFITS --no-procinfo -n "${sfps}" exec \
-            "${PFX}mfiltselfRM" "!${out_fits}" >/dev/null
-        milk-fps-rm -f -q --ignore-missing "${sfps}" >/dev/null 2>&1 || true
+    if (( armed_fast )); then
+        milk-fps-set -q \
+            "${HTSIM_UNIT}.calib_fast=OFF" \
+            "${HTSIM_UNIT}.calib_ring=OFF" \
+            "${HTSIM_UNIT}.calib_temporal=OFF" \
+            "${HTSIM_UNIT}.calib_trig=none" \
+            "${HTSIM_UNIT}.calib_wfs=none"
     fi
+    (( srm_rc == 0 )) || return "${srm_rc}"
+
+    mkdir -p "$(dirname "${out_fits}")"
+    fpspipe.savefits "${PFX}mfiltselfRM" "${out_fits}"
 }
 
 cmd_setmgains() {
