@@ -350,7 +350,104 @@ pre.mermaid {
   color: var(--text);
   border: 1px solid var(--border);
 }
+.wrap-cell {
+  white-space: normal;
+  min-width: 220px;
+}
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.55rem 0;
+}
+.metric-pill {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
 """
+
+DEFAULT_REPOS: list[dict[str, str]] = [
+    {
+        "name": "cacao-work",
+        "url": "https://github.com/cacao-org/cacao-work",
+        "branch": "main",
+        "role": (
+            "Integration workspace, AO3k+SCExAO bench & runner, pytest suite, "
+            "and static web report builder"
+        ),
+    },
+    {
+        "name": "cacaosim",
+        "url": "https://github.com/cacao-org/cacaosim",
+        "branch": "main",
+        "role": (
+            "GPU-fused & modular polychromatic AO hardware simulator, "
+            "multi-rate sub-stepping, TUI, and report generator"
+        ),
+    },
+    {
+        "name": "cacao",
+        "url": "https://github.com/cacao-org/cacao",
+        "branch": "feat/bash-engine",
+        "role": (
+            "Compute and Control for Adaptive Optics (acquireWFS, mlat, "
+            "Hadamard RM, SVD CM, modalfilter)"
+        ),
+    },
+    {
+        "name": "milk",
+        "url": "https://github.com/milk-org/milk",
+        "branch": "feat/bash-engine",
+        "role": (
+            "Core FPS shared-memory engine, milk-script orchestrator, "
+            "streamFITSlog telemetry, and milk-perf-report"
+        ),
+    },
+    {
+        "name": "ImageStreamIO",
+        "url": "https://github.com/milk-org/ImageStreamIO",
+        "branch": "dev",
+        "role": "Low-latency POSIX/CUDA shared-memory stream transport (milk submodule)",
+    },
+    {
+        "name": "milk-mltools",
+        "url": "https://github.com/milk-org/milk-mltools",
+        "branch": "main",
+        "role": (
+            "C telemetry indexing & sync, @calc JIT extensions, AO loop "
+            "optimizer, and polychromatic PSF reconstruction"
+        ),
+    },
+    {
+        "name": "AtmosphericTurbulenceSimul",
+        "url": "https://github.com/oguyon/AtmosphericTurbulenceSimul",
+        "branch": "feat/bash-engine",
+        "role": "Multi-layer Maunakea frozen-flow & boiling turbulence generator (milkatmturb)",
+    },
+    {
+        "name": "OpticsMaterials",
+        "url": "https://github.com/milk-org/OpticsMaterials",
+        "branch": "feat/bash-engine",
+        "role": "Optical material dispersion & air refractive-index library for milk",
+    },
+    {
+        "name": "WFpropagate",
+        "url": "https://github.com/milk-org/WFpropagate",
+        "branch": "feat/bash-engine",
+        "role": "Fresnel & angular-spectrum wavefront propagation library for milk",
+    },
+]
+
+DEFAULT_RUN_COMMAND = (
+    "./scripts/run-ao3k-scexao.sh --seeing 0.60 --phys-time 10.0 --oversample 4 "
+    "--bench-mode fused --save-rm _work/ao3k_scexao_rm --save-telemetry speckle"
+)
 
 
 def human_bytes(nbytes: int) -> str:
@@ -848,6 +945,7 @@ def render_page_shell(
     slug: str,
     active_page: str,
     has_compute_report: bool,
+    has_repro_section: bool,
     body_html: str,
     has_mermaid: bool,
     updated_utc: str,
@@ -857,14 +955,26 @@ def render_page_shell(
     slug_esc = html.escape(slug, quote=False)
     opt_cls = ' class="active"' if active_page == "optical" else ""
     cmp_cls = ' class="active"' if active_page == "compute" else ""
+    repro_href = (
+        "index.html#reproducibility-github-provenance"
+        if has_repro_section
+        else "../index.html#reproduce-results"
+    )
     nav_links = [
+        '<a href="../index.html">Front Page</a>',
         f'<a href="index.html"{opt_cls}>Optical &amp; Control Report</a>',
     ]
     if has_compute_report:
         nav_links.append(
             f'<a href="compute_report.html"{cmp_cls}>Compute &amp; Optimization Report</a>'
         )
-    nav_links.append('<a href="../reports.html">All Reports</a>')
+    nav_links.extend(
+        [
+            f'<a href="{repro_href}">Reproduce</a>',
+            '<a href="https://github.com/cacao-org/cacao-work" '
+            'target="_blank" rel="noopener">GitHub</a>',
+        ]
+    )
 
     mermaid_script = ""
     if has_mermaid:
@@ -889,7 +999,7 @@ def render_page_shell(
 <body>
 <header class="site-header">
   <div class="nav-inner">
-    <a class="brand" href="index.html">cacao-work AO Report &middot; {slug_esc}</a>
+    <a class="brand" href="../index.html">cacao-work AO Report &middot; {slug_esc}</a>
     <nav class="nav-links">
       {"".join(nav_links)}
     </nav>
@@ -899,7 +1009,9 @@ def render_page_shell(
 {body_html}
 </main>
 <footer class="site-footer">
-  <span>Generated from <code>{slug_esc}</code> by <code>cacao-work</code></span>
+  <span>Generated from <code>{slug_esc}</code> by
+    <a href="https://github.com/cacao-org/cacao-work"
+       target="_blank" rel="noopener"><code>cacao-work</code></a></span>
   <span>Updated {html.escape(updated_utc, quote=False)}</span>
 </footer>{mermaid_script}
 </body>
@@ -930,12 +1042,332 @@ def stage_assets(
     return staged
 
 
+def extract_metrics_highlights(
+    out_slug_dir: Path,
+) -> tuple[list[str], dict[str, object] | None]:
+    """Extract summary metric badges and reproducibility info from staged metrics JSON."""
+    cands = [out_slug_dir / "ao3k_scexao_metrics.json"]
+    cands.extend(sorted(out_slug_dir.glob("*_metrics.json")))
+    metrics_path = next((p for p in cands if p.is_file()), None)
+    if metrics_path is None:
+        return [], None
+    try:
+        data = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], None
+    if not isinstance(data, dict):
+        return [], None
+
+    badges: list[str] = []
+    sa = data.get("star_and_atmosphere")
+    if isinstance(sa, dict):
+        if "seeing_arcsec_500nm" in sa:
+            badges.append(f'Seeing {float(sa["seeing_arcsec_500nm"]):.2f}"')
+        if "internal_bench_hz" in sa and "internal_dt_us" in sa:
+            badges.append(
+                f'{float(sa["internal_bench_hz"]) / 1000.0:.1f} kHz '
+                f'({float(sa["internal_dt_us"]):.0f} us)'
+            )
+        if "physical_time_s" in sa:
+            badges.append(f'{float(sa["physical_time_s"]):.1f} s phys')
+    pm = data.get("psf_metrics")
+    if isinstance(pm, dict):
+        vis_f = pm.get("vis", {}).get("final", {}) if isinstance(pm.get("vis"), dict) else {}
+        nir_f = pm.get("nir", {}).get("final", {}) if isinstance(pm.get("nir"), dict) else {}
+        if isinstance(vis_f, dict) and "strehl_peak" in vis_f:
+            badges.append(f'Vis SR {float(vis_f["strehl_peak"]) * 100.0:.1f}%')
+        if isinstance(nir_f, dict) and "strehl_peak" in nir_f:
+            badges.append(f'H SR {float(nir_f["strehl_peak"]) * 100.0:.1f}%')
+    wm = data.get("wavefront_metrics")
+    if isinstance(wm, dict):
+        locs = wm.get("locations")
+        if isinstance(locs, dict) and isinstance(locs.get("final"), dict):
+            fin_l = locs["final"]
+            if "quad_total_rms_nm" in fin_l:
+                badges.append(f'WFE {float(fin_l["quad_total_rms_nm"]):.1f} nm')
+
+    repro = data.get("reproducibility")
+    repro_dict = repro if isinstance(repro, dict) else None
+    return badges, repro_dict
+
+
+def build_front_page_html(metas: list[dict[str, object]]) -> str:
+    """Render the root Front Page with intro, report cards, GitHub repos, and CLI recipe."""
+    latest_repro: dict[str, object] | None = None
+    primary_slug = ""
+    for meta in metas:
+        if not primary_slug:
+            primary_slug = str(meta.get("slug", ""))
+        rep = meta.get("reproducibility")
+        if isinstance(rep, dict) and rep.get("repositories"):
+            latest_repro = rep
+            primary_slug = str(meta.get("slug", primary_slug))
+
+    repo_by_name: dict[str, dict[str, str]] = {r["name"]: dict(r) for r in DEFAULT_REPOS}
+    repo_list: list[dict[str, str]] = [dict(r) for r in DEFAULT_REPOS]
+    if latest_repro and isinstance(latest_repro.get("repositories"), list):
+        merged_list: list[dict[str, str]] = []
+        for item in latest_repro["repositories"]:
+            if not isinstance(item, dict) or "name" not in item:
+                continue
+            rname = str(item["name"])
+            base = dict(repo_by_name.get(rname, {}))
+            for k in ("name", "url", "branch", "commit", "short_commit", "role"):
+                if item.get(k):
+                    base[k] = str(item[k])
+            repo_by_name[rname] = base
+            merged_list.append(base)
+        if merged_list:
+            repo_list = merged_list
+
+    cards: list[str] = ['<div class="report-card-grid">']
+    for meta in metas:
+        slug = str(meta.get("slug", ""))
+        title = str(meta.get("title", slug))
+        has_cmp = bool(meta.get("has_compute_report", False))
+        has_repro = bool(meta.get("has_repro_section", False))
+        sz = human_bytes(int(meta.get("total_bytes", 0)))
+        nfiles = int(meta.get("file_count", 0))
+        upd = str(meta.get("updated_utc", ""))
+        raw_badges = meta.get("badges", [])
+        badge_items = raw_badges if isinstance(raw_badges, list) else []
+        badge_html = ""
+        if badge_items:
+            pills = "".join(
+                f'<span class="metric-pill">{html.escape(str(b), quote=False)}</span>'
+                for b in badge_items
+            )
+            badge_html = f'  <div class="badge-row">{pills}</div>\n'
+        slug_esc = html.escape(slug, quote=True)
+        title_esc = html.escape(title, quote=False)
+        repro_link = (
+            f"./{slug_esc}/index.html#reproducibility-github-provenance"
+            if has_repro
+            else "#reproduce-results"
+        )
+        links = [
+            f'<a class="btn" href="./{slug_esc}/index.html">'
+            "Optical &amp; Control Report</a>"
+        ]
+        if has_cmp:
+            links.append(
+                f'<a class="btn btn-secondary" '
+                f'href="./{slug_esc}/compute_report.html">Compute Report</a>'
+            )
+        links.append(
+            f'<a class="btn btn-secondary" href="{repro_link}">Reproduce</a>'
+        )
+        cards.append(
+            '<div class="report-card">\n'
+            f"  <h3>{title_esc}</h3>\n"
+            f"{badge_html}"
+            f'  <p class="muted"><code>{html.escape(slug, quote=False)}</code> &middot; '
+            f"{nfiles} files ({sz})<br>Updated {html.escape(upd, quote=False)}</p>\n"
+            f'  <div class="card-links">{"".join(links)}</div>\n'
+            "</div>"
+        )
+    cards.append("</div>")
+
+    repo_rows: list[str] = [
+        '<div class="table-wrap">',
+        "<table>",
+        "<thead><tr>"
+        '<th style="text-align: left;">Repository</th>'
+        '<th style="text-align: center;">Branch</th>'
+        '<th style="text-align: center;">Commit</th>'
+        '<th style="text-align: left;">Role in Simulation Stack</th>'
+        "</tr></thead>",
+        "<tbody>",
+    ]
+    for r in repo_list:
+        rname = html.escape(r.get("name", ""), quote=False)
+        rurl = html.escape(r.get("url", ""), quote=True)
+        rbr = html.escape(r.get("branch", "main"), quote=False)
+        rsha = r.get("commit", "")
+        rshort = r.get("short_commit", rsha[:7] if rsha else "")
+        rrole = html.escape(r.get("role", ""), quote=False)
+        if rsha and rshort:
+            c_url = html.escape(f"{r.get('url', '')}/commit/{rsha}", quote=True)
+            sha_html = (
+                f'<a href="{c_url}" target="_blank" rel="noopener">'
+                f"<code>{html.escape(rshort, quote=False)}</code></a>"
+            )
+        else:
+            sha_html = "<code>HEAD</code>"
+        repo_rows.append(
+            "<tr>"
+            f'<td><a href="{rurl}" target="_blank" rel="noopener">'
+            f"<strong>{rname}</strong></a></td>"
+            f'<td style="text-align: center;"><code>{rbr}</code></td>'
+            f'<td style="text-align: center;">{sha_html}</td>'
+            f'<td class="wrap-cell">{rrole}</td>'
+            "</tr>"
+        )
+    repo_rows.extend(["</tbody>", "</table>", "</div>"])
+
+    def clone_cmd(rname: str) -> str:
+        info = repo_by_name.get(rname, {"url": f"https://github.com/milk-org/{rname}"})
+        url = info.get("url", "").rstrip("/") + ".git"
+        br = info.get("branch", "main")
+        sha = info.get("commit", "")
+        line = f"git clone -b {br} {url} {rname}"
+        if sha:
+            line += f" && git -C {rname} checkout -q {sha}"
+        return line
+
+    isio_sha = repo_by_name.get("ImageStreamIO", {}).get("commit", "")
+    isio_cmd = "git -C milk submodule update --init src/engine/ImageStreamIO"
+    if isio_sha:
+        isio_cmd += f" && git -C milk/src/engine/ImageStreamIO checkout -q {isio_sha}"
+
+    run_cmd = (
+        str(latest_repro.get("run_command", DEFAULT_RUN_COMMAND))
+        if latest_repro
+        else DEFAULT_RUN_COMMAND
+    )
+    stage_slug = primary_slug or "ao3k_scexao"
+    artifact_note = ""
+    if latest_repro and primary_slug:
+        bfile = html.escape(str(latest_repro.get("bench_file", "ao3k_scexao.bench")))
+        mfile = html.escape(
+            str(latest_repro.get("metrics_file", "ao3k_scexao_metrics.json"))
+        )
+        p_esc = html.escape(primary_slug, quote=True)
+        artifact_note = (
+            "<li><strong>Machine-Readable Bench &amp; Provenance Manifest</strong>: "
+            f'<a href="./{p_esc}/{bfile}"><code>{bfile}</code></a> and '
+            f'<a href="./{p_esc}/{mfile}"><code>{mfile}</code></a> '
+            "(records exact optical parameters, calibrated loop metrics, and repository "
+            "commit SHAs).</li>\n"
+        )
+
+    bash_recipe = "\n".join(
+        [
+            "# 1. Clone all open-source stack repositories into ~/src",
+            "mkdir -p ~/src && cd ~/src",
+            clone_cmd("milk"),
+            isio_cmd,
+            clone_cmd("cacao"),
+            clone_cmd("milk-mltools"),
+            clone_cmd("OpticsMaterials"),
+            clone_cmd("WFpropagate"),
+            clone_cmd("AtmosphericTurbulenceSimul"),
+            clone_cmd("cacaosim"),
+            clone_cmd("cacao-work"),
+            "",
+            "# 2. Configure, compile, install into milk/_install, and run isolated sanity tests",
+            "cd ~/src/cacao-work",
+            "source env.sh",
+            "./scripts/build-all.sh",
+            "pytest -v tests/test_00_stack_sanity.py tests/test_05_ao_web_report.py",
+            "",
+            "# 3. Run closed-loop Subaru AO3k + SCExAO simulation, telemetry, video & reports",
+            run_cmd,
+            "",
+            "# 4. Stage static HTML website locally under _work/_web_site/public/",
+            f"./scripts/publish-ao-report.sh --build-only _work/{stage_slug}",
+        ]
+    )
+    bash_esc = html.escape(bash_recipe, quote=False)
+
+    body = (
+        "<h1>cacao-work &middot; Closed-Loop Adaptive Optics Simulation &amp; Control</h1>\n"
+        "<p>Open-source hardware-in-the-loop adaptive optics simulation and real-time control "
+        "benchmark suite coupling "
+        '<a href="https://github.com/cacao-org/cacao" target="_blank" rel="noopener">'
+        "<strong>cacao</strong></a> real-time wavefront control, "
+        '<a href="https://github.com/milk-org/milk" target="_blank" rel="noopener">'
+        "<strong>milk</strong></a> / "
+        '<a href="https://github.com/milk-org/ImageStreamIO" target="_blank" rel="noopener">'
+        "<strong>ImageStreamIO</strong></a> POSIX &amp; CUDA shared-memory pipelines "
+        "(<code>fpspipe</code> / <code>milk-script</code>), "
+        '<a href="https://github.com/cacao-org/cacaosim" target="_blank" rel="noopener">'
+        "<strong>cacaosim</strong></a> GPU polychromatic multi-rate optical propagation, "
+        '<a href="https://github.com/oguyon/AtmosphericTurbulenceSimul" '
+        'target="_blank" rel="noopener"><strong>milkatmturb</strong></a> multi-layer '
+        "atmospheric turbulence, and "
+        '<a href="https://github.com/milk-org/milk-mltools" target="_blank" rel="noopener">'
+        "<strong>milk-mltools</strong></a> synchronized telemetry &amp; PSF reconstruction, "
+        "orchestrated end-to-end by "
+        '<a href="https://github.com/cacao-org/cacao-work" target="_blank" rel="noopener">'
+        "<strong>cacao-work</strong></a> without any terminal multiplexer.</p>\n"
+        '<blockquote class="callout"><p><strong>AI &amp; CLI Reproducible</strong>: '
+        "Every simulation executes real CACAO real-time processes in isolated "
+        "<code>/dev/shm/cacao_*</code> sandboxes (measured hardware latency <code>mlat</code>, "
+        "Hadamard response matrices, SVD modal control, lossless telemetry cubes, and "
+        "short-timescale WFS/PSF video rendering). Jump directly to "
+        '<a href="#github-repositories">GitHub Repositories</a> or the copy-pasteable '
+        '<a href="#reproduce-results">End-to-End Reproduction Guide</a>.</p></blockquote>\n'
+        '<h2 id="published-reports">Published Simulation Reports</h2>\n'
+        + "\n".join(cards)
+        + '\n\n<h2 id="github-repositories">Open-Source GitHub Repositories</h2>\n'
+        "<p>All source repositories below are public on GitHub and build into a single "
+        "relocatable prefix (<code>milk/_install/milk-&lt;version&gt;</code>) via "
+        "<code>./scripts/build-all.sh</code>:</p>\n"
+        + "\n".join(repo_rows)
+        + '\n\n<h2 id="reproduce-results">'
+        "End-to-End Reproduction Guide (CLI &amp; AI Agent Ready)</h2>\n"
+        "<p>An autonomous AI coding agent or human operator can reproduce the full closed-loop "
+        "simulation, telemetry cubes, short-timescale WFS/PSF video, and static HTML reports "
+        "from a clean Linux workspace using the specification below:</p>\n"
+        "<ul>\n"
+        "<li><strong>System Prerequisites</strong>: Linux <code>x86_64</code> with "
+        "<code>/dev/shm</code> (<code>tmpfs</code>), GCC/G++ with OpenMP, CMake &ge; 3.20, "
+        "<code>pkg-config</code>, CFITSIO, FFTW3 (<code>fftw3</code> &amp; <code>fftw3f</code>), "
+        "OpenBLAS + LAPACKE, <code>ncurses</code>, NVIDIA CUDA Toolkit (<code>nvcc</code>, "
+        "<code>cufft</code>, <code>cublas</code>; CPU fallback also supported), and Python &ge; "
+        "3.10 with <code>numpy</code>, <code>astropy</code>, <code>matplotlib</code>, "
+        "<code>pillow</code>, <code>imageio-ffmpeg</code>, and <code>pytest</code>.</li>\n"
+        "<li><strong>Submodule Note</strong>: Initialize only "
+        "<code>milk/src/engine/ImageStreamIO</code> (as shown below) rather than "
+        "<code>git clone --recurse-submodules</code>, because <code>milk-extra-src</code> "
+        "modules are tracked in-tree on <code>feat/bash-engine</code>.</li>\n"
+        f"{artifact_note}"
+        "</ul>\n"
+        f"<pre><code>{bash_esc}</code></pre>\n"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cacao-work &middot; AO Simulation Reports &amp; Reproduction Guide</title>
+<style>
+{CSS_STYLES}
+</style>
+</head>
+<body>
+<header class="site-header">
+  <div class="nav-inner">
+    <a class="brand" href="./index.html">cacao-work &middot; AO Simulation Suite</a>
+    <nav class="nav-links">
+      <a href="#published-reports">Reports</a>
+      <a href="#github-repositories">GitHub Repos</a>
+      <a href="#reproduce-results">Reproduce</a>
+      <a href="https://github.com/cacao-org/cacao-work" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main class="container">
+{body}</main>
+<footer class="site-footer">
+  <span>Open-source AO stack:
+    <a href="https://github.com/cacao-org/cacao-work"
+       target="_blank" rel="noopener"><code>cacao-org/cacao-work</code></a></span>
+  <span>Self-contained static bundle for human &amp; AI reproduction</span>
+</footer>
+</body>
+</html>
+"""
+
+
 def write_root_indices_and_firebase(
     site_dir: Path,
     project_id: str | None,
     site_id: str | None,
 ) -> None:
-    """Build reports.html, root index.html redirect/index, and firebase.json."""
+    """Build Front Page at public/index.html & reports.html, plus firebase.json."""
     public_dir = site_dir / "public"
     metas: list[dict[str, object]] = []
     for meta_path in sorted(public_dir.glob("*/report_meta.json")):
@@ -944,84 +1376,9 @@ def write_root_indices_and_firebase(
         except (OSError, json.JSONDecodeError):
             continue
 
-    cards: list[str] = ['<div class="report-card-grid">']
-    for meta in metas:
-        slug = str(meta.get("slug", ""))
-        title = str(meta.get("title", slug))
-        has_cmp = bool(meta.get("has_compute_report", False))
-        sz = human_bytes(int(meta.get("total_bytes", 0)))
-        nfiles = int(meta.get("file_count", 0))
-        upd = str(meta.get("updated_utc", ""))
-        slug_esc = html.escape(slug, quote=True)
-        title_esc = html.escape(title, quote=False)
-        links = [f'<a class="btn" href="./{slug_esc}/index.html">Optical Report</a>']
-        if has_cmp:
-            links.append(
-                f'<a class="btn btn-secondary" '
-                f'href="./{slug_esc}/compute_report.html">Compute Report</a>'
-            )
-        cards.append(
-            '<div class="report-card">\n'
-            f"  <h3>{title_esc}</h3>\n"
-            f'  <p class="muted"><code>{html.escape(slug, quote=False)}</code> &middot; '
-            f"{nfiles} files ({sz})<br>Updated {html.escape(upd, quote=False)}</p>\n"
-            f'  <div class="card-links">{"".join(links)}</div>\n'
-            "</div>"
-        )
-    cards.append("</div>")
-    reports_body = (
-        "<h1>AO Simulation Reports</h1>\n"
-        "<p>Published optical, control, and systems performance reports from "
-        "<code>cacao-work</code>.</p>\n"
-        + "\n".join(cards)
-    )
-    reports_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AO Simulation Reports</title>
-<style>
-{CSS_STYLES}
-</style>
-</head>
-<body>
-<header class="site-header">
-  <div class="nav-inner">
-    <span class="brand">cacao-work AO Simulation Reports</span>
-  </div>
-</header>
-<main class="container">
-{reports_body}
-</main>
-</body>
-</html>
-"""
-    (public_dir / "reports.html").write_text(reports_html, encoding="utf-8")
-
-    redirects: list[dict[str, object]] = []
-    if len(metas) == 1:
-        only_slug = str(metas[0]["slug"])
-        only_esc = html.escape(only_slug, quote=True)
-        redirect_html = (
-            "<!DOCTYPE html>\n"
-            '<html lang="en">\n'
-            "<head>\n"
-            '<meta charset="utf-8">\n'
-            f'<meta http-equiv="refresh" content="0; url=./{only_esc}/">\n'
-            f'<title>Redirecting to {only_esc}</title>\n'
-            "</head>\n"
-            "<body>\n"
-            f'<p>Redirecting to <a href="./{only_esc}/">./{only_esc}/</a>...</p>\n'
-            "</body>\n"
-            "</html>\n"
-        )
-        (public_dir / "index.html").write_text(redirect_html, encoding="utf-8")
-        redirects.append(
-            {"source": "/", "destination": f"/{only_slug}/", "type": 302}
-        )
-    else:
-        (public_dir / "index.html").write_text(reports_html, encoding="utf-8")
+    front_html = build_front_page_html(metas)
+    (public_dir / "reports.html").write_text(front_html, encoding="utf-8")
+    (public_dir / "index.html").write_text(front_html, encoding="utf-8")
 
     hosting_cfg: dict[str, object] = {
         "public": "public",
@@ -1044,8 +1401,6 @@ def write_root_indices_and_firebase(
     }
     if site_id:
         hosting_cfg["site"] = site_id
-    if redirects:
-        hosting_cfg["redirects"] = redirects
 
     firebase_json = {"hosting": hosting_cfg}
     (site_dir / "firebase.json").write_text(
@@ -1101,6 +1456,7 @@ def build_site(
     )
     report_mermaid = ctx.has_mermaid
     report_title = det_rtitle or f"AO Simulation Report ({slug})"
+    has_repro_section = 'id="reproducibility-github-provenance"' in report_body
 
     extra_figs_html = build_extra_figures_section(staged_files, ctx)
     data_files_html = build_telemetry_files_section(staged_files)
@@ -1113,6 +1469,7 @@ def build_site(
         slug=slug,
         active_page="optical",
         has_compute_report=has_compute,
+        has_repro_section=has_repro_section,
         body_html=full_report_body,
         has_mermaid=report_mermaid,
         updated_utc=updated_utc,
@@ -1125,6 +1482,7 @@ def build_site(
             slug=slug,
             active_page="compute",
             has_compute_report=True,
+            has_repro_section=has_repro_section,
             body_html=compute_body,
             has_mermaid=compute_mermaid,
             updated_utc=updated_utc,
@@ -1133,16 +1491,21 @@ def build_site(
             compute_html, encoding="utf-8"
         )
 
+    badges, repro_dict = extract_metrics_highlights(out_slug_dir)
     all_slug_files = [p for p in out_slug_dir.iterdir() if p.is_file()]
     total_bytes = sum(p.stat().st_size for p in all_slug_files)
-    meta = {
+    meta: dict[str, object] = {
         "title": report_title,
         "slug": slug,
         "has_compute_report": has_compute,
+        "has_repro_section": has_repro_section,
+        "badges": badges,
         "updated_utc": updated_utc,
         "total_bytes": total_bytes,
         "file_count": len(all_slug_files) + 1,
     }
+    if repro_dict is not None:
+        meta["reproducibility"] = repro_dict
     (out_slug_dir / "report_meta.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )

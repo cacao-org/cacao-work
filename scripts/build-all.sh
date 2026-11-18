@@ -55,6 +55,58 @@ check_branch_safety() {
     fi
 }
 
+configure_if_needed() {
+    local src_dir="$1"
+    local label="$2"
+    local build_dir="${src_dir}/_build"
+    [[ -f "${build_dir}/CMakeCache.txt" ]] && return 0
+
+    local cuda_on="OFF"
+    if command -v nvcc >/dev/null 2>&1 || [[ -x /usr/local/cuda/bin/nvcc ]]; then
+        cuda_on="ON"
+    fi
+
+    echo "[build-all] Configuring ${label} in ${build_dir} (CUDA=${cuda_on})..."
+    if [[ "${src_dir}" == "${MILK_SRC_DIR}" ]]; then
+        mkdir -p "${MILK_SRC_DIR}/plugins"
+        if [[ -d "${CACAO_SRC_DIR}" && ! -e "${MILK_SRC_DIR}/plugins/cacao-src" ]]; then
+            ln -s "${CACAO_SRC_DIR}" "${MILK_SRC_DIR}/plugins/cacao-src"
+        fi
+        local mlt_dir="${MILK_MLTOOLS_SRC_DIR:-$(cd "${CACAO_WORK_ROOT}/.." && pwd)/milk-mltools}"
+        if [[ -d "${mlt_dir}" && ! -e "${MILK_SRC_DIR}/plugins/milk-mltools-src" ]]; then
+            ln -s "${mlt_dir}" "${MILK_SRC_DIR}/plugins/milk-mltools-src"
+        fi
+        cmake -S "${src_dir}" -B "${build_dir}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${MILK_SRC_DIR}/_install" \
+            -DUSE_CUDA="${cuda_on}" \
+            -Dbuild_python_module=OFF
+    elif [[ "${src_dir}" == "${CACAOSIM_SRC_DIR}" ]]; then
+        cmake -S "${src_dir}" -B "${build_dir}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMILK_ROOT="${MILK_INSTALL_ROOT}" \
+            -DCMAKE_INSTALL_PREFIX="${MILK_INSTALL_ROOT}" \
+            -DCACAOSIM_ENABLE_CUDA="${cuda_on}"
+    else
+        cmake -S "${src_dir}" -B "${build_dir}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMILK_ROOT="${MILK_INSTALL_ROOT}" \
+            -DCMAKE_INSTALL_PREFIX="${MILK_INSTALL_ROOT}" \
+            -DUSE_CUDA="${cuda_on}"
+    fi
+}
+
+refresh_milk_install_root() {
+    local cand
+    for cand in "${MILK_SRC_DIR}"/_install/milk-*; do
+        if [[ -x "${cand}/bin/milk-cli" ]]; then
+            export MILK_INSTALL_ROOT="${cand}"
+            export MILK_INSTALLDIR="${cand}"
+            export MILK_ROOT="${cand}"
+        fi
+    done
+}
+
 build_and_install_repo() {
     local src_dir="$1"
     local label="$2"
@@ -63,15 +115,15 @@ build_and_install_repo() {
         echo "[build-all] SKIP ${label}: source directory not found (${src_dir})"
         return 0
     fi
-    if [[ ! -d "${build_dir}" ]]; then
-        echo "[build-all] ERROR: ${label} missing CMake build dir ${build_dir}" >&2
-        exit 1
-    fi
     check_branch_safety "${src_dir}" "${label}"
+    configure_if_needed "${src_dir}" "${label}"
     echo "[build-all] Building ${label} (-j${JOBS})..."
     cmake --build "${build_dir}" -j "${JOBS}"
     echo "[build-all] Installing ${label} -> ${MILK_INSTALL_ROOT}..."
     cmake --install "${build_dir}"
+    if [[ "${src_dir}" == "${MILK_SRC_DIR}" ]]; then
+        refresh_milk_install_root
+    fi
 }
 
 verify_install() {

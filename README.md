@@ -5,15 +5,33 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # cacao-work
 
-Integrated Adaptive Optics (AO) closed-loop testing workspace wiring four local checkouts into one
-shared install prefix (`$MILK_INSTALL_ROOT`, typically `$MILK_SRC_DIR/_install/milk-<version>`):
+Open-source Adaptive Optics (AO) hardware-in-the-loop simulation, real-time control, and
+benchmarking workspace wiring the complete MILK/CACAO ecosystem into one relocatable install
+prefix (`$MILK_INSTALL_ROOT`, typically `$MILK_SRC_DIR/_install/milk-<version>`):
 
-- `milk` (`$MILK_SRC_DIR`, auto-detected at `../milk` or `~/src/milk`)
-- `cacao` (`$CACAO_SRC_DIR`, auto-detected at `../cacao` or `~/src/cacao`)
-- `cacaosim` (`$CACAOSIM_SRC_DIR`, auto-detected at `../cacaosim` or `~/src/cacaosim`)
-- `AtmosphericTurbulenceSimul` / `milkatmturb` (`$ATMTURB_SRC_DIR`, auto-detected at
-  `../AtmosphericTurbulenceSimul` or `~/src/AtmosphericTurbulenceSimul`, alongside
-  `OpticsMaterials` and `WFpropagate`)
+| Repository | Branch | Role in Simulation Stack |
+| :--- | :---: | :--- |
+| [cacao-work][r-cw] | `main` | Workspace, benches, pytest suite & web report publisher |
+| [cacaosim][r-cs] | `main` | GPU polychromatic AO simulator, TUI & report engine |
+| [cacao][r-ca] | `feat/bash-engine` | Real-time AO control (`mlat`, Hadamard RM, SVD CM) |
+| [milk][r-mk] | `feat/bash-engine` | FPS SHM engine, `milk-script`, `streamFITSlog` & perf |
+| [ImageStreamIO][r-is] | `dev` | POSIX/CUDA SHM stream transport (`milk` submodule) |
+| [milk-mltools][r-ml] | `main` | Telemetry sync, `@calc` JIT, AO opt & PSF recon |
+| [AtmosphericTurbulenceSimul][r-at] | `feat/bash-engine` | Maunakea turbulence (`milkatmturb`) |
+| [OpticsMaterials][r-om] | `feat/bash-engine` | Material dispersion & air refractive index |
+| [WFpropagate][r-wf] | `feat/bash-engine` | Fresnel & angular-spectrum wavefront propagation |
+
+[r-cw]: https://github.com/cacao-org/cacao-work
+[r-cs]: https://github.com/cacao-org/cacaosim
+[r-ca]: https://github.com/cacao-org/cacao
+[r-mk]: https://github.com/milk-org/milk
+[r-is]: https://github.com/milk-org/ImageStreamIO
+[r-ml]: https://github.com/milk-org/milk-mltools
+[r-at]: https://github.com/oguyon/AtmosphericTurbulenceSimul
+[r-om]: https://github.com/milk-org/OpticsMaterials
+[r-wf]: https://github.com/milk-org/WFpropagate
+
+Published live simulation reports & reproduction guide: <https://scexao-og.web.app/>
 
 Override any checkout or install path in the environment before sourcing `env.sh` when using a
 custom directory layout.
@@ -21,6 +39,27 @@ custom directory layout.
 Every test and automated run isolates shared memory and process registries under
 `/dev/shm/cacao_*` via `MILK_SHM_DIR` and `MILK_PROC_DIR`, sets `MILK_ROOT` and `CACAOSIM_WORKDIR`,
 and leaves `/milk/shm` untouched.
+
+## End-to-End Clone & Build (Clean Workspace / AI Agent Ready)
+
+```bash
+mkdir -p ~/src && cd ~/src
+git clone -b feat/bash-engine https://github.com/milk-org/milk.git milk
+git -C milk submodule update --init src/engine/ImageStreamIO
+git clone -b feat/bash-engine https://github.com/cacao-org/cacao.git cacao
+git clone -b main https://github.com/milk-org/milk-mltools.git milk-mltools
+git clone -b feat/bash-engine https://github.com/milk-org/OpticsMaterials.git OpticsMaterials
+git clone -b feat/bash-engine https://github.com/milk-org/WFpropagate.git WFpropagate
+git clone -b feat/bash-engine \
+    https://github.com/oguyon/AtmosphericTurbulenceSimul.git AtmosphericTurbulenceSimul
+git clone -b main https://github.com/cacao-org/cacaosim.git cacaosim
+git clone -b main https://github.com/cacao-org/cacao-work.git cacao-work
+
+cd ~/src/cacao-work
+source env.sh
+./scripts/build-all.sh                   # configure, build & install all checkouts
+pytest -v                                # run full isolated integration test suite
+```
 
 ## Optical & AO Control Architecture
 
@@ -137,31 +176,35 @@ Or connect manually in any shell with `eval "$(./scripts/live-bench.sh env)"`.
 
 Bench [`ao3k_scexao`](benches/ao3k_scexao/ao3k_scexao.bench) and controller
 [`cacaoloop-ao3k-scexao.milk`](benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk) model a cascaded
-two-stage AO system on an 8.2 m telescope:
+two-stage polychromatic AO system on an 8.2 m telescope (`8.0 kHz` / `125 us` sub-stepping):
 
-- Stage 1 (`ao3k`, `aol1`): 16x16 DM (`dm01disp`) + J-band (1.22 um) Pyramid WFS at 1.0 kHz
-- Stage 2 (`scexao`, `aol2`): 24x24 DM (`dm02disp`) + Visible (0.75 um) Pyramid WFS at 2.0 kHz
-- Simultaneous Visible (0.75 um) and H-band (1.65 um) PSFs at Raw, Stage-1, and Final planes
+- Stage 1 (`ao3k`, `aol1`): 64x64 DM (`dm01disp`, D=60) + 160x160 J-band (1.22 um, 20% BW) PyWFS
+  at 1.0 kHz
+- Stage 2 (`scexao`, `aol2`): 50x50 DM (`dm02disp`, D=46) + 120x120 Vis (0.75 um, 20% BW) PyWFS
+  at 2.0 kHz
+- Simultaneous polychromatic Visible (0.75 um, 15% BW) and H-band (1.65 um, 18% BW) PSFs at Raw,
+  Stage-1, and Final planes
 
 ```bash
 source env.sh
 ./scripts/run-ao3k-scexao.sh --phys-time 2.0 --save-rm _work/ao3k_scexao_rm
 ./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm
 ./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm \
-    --save-telemetry standard
+    --save-telemetry speckle
 ```
 
-Outputs (integrated FITS PSFs, wavefront stats, metrics JSON, and diagnostic plots) are written
-under `_work/ao3k_scexao` (or `--outdir`). Passing `--save-telemetry [standard|speckle|truth]`
-buffers all closed-loop WFS, PSF, DM, and modal (`WFS`, `DM`, `OL`) streams in `/dev/shm`, flushes
-paired `.fits`/`.txt` cubes into `_work/ao3k_scexao/telemetry` (erasing and overwriting prior files
-by default unless `--keep-telemetry` is passed), and runs `milk-mlt-aotlm` (`mlt.aoopt` +
-`mlt.psfrecon`) to generate `_work/ao3k_scexao/telemetry/analysis/TELEMETRY_REPORT.md`.
+Outputs (integrated FITS PSFs, wavefront stats, metrics JSON, diagnostic plots, and `REPORT.md` /
+`COMPUTE_REPORT.md`) are written under `_work/ao3k_scexao` (or `--outdir`). Passing
+`--save-telemetry [standard|speckle|truth]` flushes paired `.fits`/`.txt` cubes into
+`_work/ao3k_scexao/telemetry` (`speckle` also records 2.0 kHz Stage-1/Final science PSFs and renders
+`wfs_psf_short_evolution.mp4`), and runs `milk-mlt-aotlm` (`mlt.aoopt` + `mlt.psfrecon`) to
+generate `_work/ao3k_scexao/telemetry/analysis/TELEMETRY_REPORT.md`.
 
 #### Publishing Reports to Firebase Hosting
 
-Build static HTML pages (`REPORT.md`, `COMPUTE_REPORT.md`, diagnostic PNGs, and JSON/CSV telemetry)
-under `_work/_web_site` and publish publicly under a Firebase-enabled GCP project:
+Build static HTML pages (Front Page with GitHub provenance & CLI/AI reproduction guide,
+`REPORT.md`, `COMPUTE_REPORT.md`, diagnostic PNGs/MP4, and JSON/CSV telemetry) under
+`_work/_web_site` and publish publicly under a Firebase-enabled GCP project:
 
 ```bash
 ./scripts/publish-ao-report.sh --build-only

@@ -42,6 +42,50 @@ def _create_synthetic_report(report_dir: Path) -> None:
     (report_dir / "ao3k_scexao.bench").write_text(
         '[bench]\nname = "subaru_ao3k_scexao"\n', encoding="utf-8"
     )
+    (report_dir / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(
+            {
+                "star_and_atmosphere": {
+                    "seeing_arcsec_500nm": 0.60,
+                    "internal_bench_hz": 8000.0,
+                    "internal_dt_us": 125.0,
+                    "physical_time_s": 10.0,
+                },
+                "psf_metrics": {
+                    "vis": {"final": {"strehl_peak": 0.828}},
+                    "nir": {"final": {"strehl_peak": 0.953}},
+                },
+                "wavefront_metrics": {
+                    "locations": {"final": {"quad_total_rms_nm": 50.1}}
+                },
+                "reproducibility": {
+                    "bench_file": "ao3k_scexao.bench",
+                    "metrics_file": "ao3k_scexao_metrics.json",
+                    "run_command": "./scripts/run-ao3k-scexao.sh --save-telemetry speckle",
+                    "repositories": [
+                        {
+                            "name": "cacao-work",
+                            "url": "https://github.com/cacao-org/cacao-work",
+                            "branch": "main",
+                            "commit": "1111111222222233333334444444555555566666",
+                            "short_commit": "1111111",
+                            "role": "Integration workspace & web report builder",
+                        },
+                        {
+                            "name": "milk",
+                            "url": "https://github.com/milk-org/milk",
+                            "branch": "feat/bash-engine",
+                            "commit": "abcdef0123456789abcdef0123456789abcdef01",
+                            "short_commit": "abcdef0",
+                            "role": "Core FPS shared-memory engine",
+                        },
+                    ],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (report_dir / "metrics.json").write_text('{"strehl": 0.36}\n', encoding="utf-8")
     (report_dir / "wf_timeseries.csv").write_text(
         "frame,t_phys_s,rms_raw_nm,rms_stg1_nm,rms_final_nm\n1,0.0005,900.0,300.0,150.0\n",
@@ -113,6 +157,12 @@ def _create_synthetic_report(report_dir: Path) -> None:
             "- [strehl_timeseries.csv](strehl_timeseries.csv)",
             "- [cube.fits](cube.fits)",
             "- [rm_dir](../ao3k_scexao_rm)",
+            "",
+            "## Reproducibility & GitHub Provenance",
+            "",
+            "- [cacao-work](https://github.com/cacao-org/cacao-work) "
+            "([`1111111`](https://github.com/cacao-org/cacao-work/commit/"
+            "1111111222222233333334444444555555566666))",
         ]
     )
     compute_md = "\n".join(
@@ -225,10 +275,32 @@ def test_build_ao_web_report_markdown_and_staging(
     assert 'href="strehl_timeseries.csv"' in index_html
     assert "(local artifact, omitted from web bundle)" in index_html
 
-    # Single-slug redirect & mp4 cache headers configured in firebase.json.
+    # Report page includes nav links to Front Page, Reproduce anchor, and GitHub.
+    assert 'href="../index.html">Front Page</a>' in index_html
+    assert 'href="index.html#reproducibility-github-provenance">Reproduce</a>' in index_html
+    assert 'id="reproducibility-github-provenance"' in index_html
+    assert (
+        'href="https://github.com/cacao-org/cacao-work/commit/'
+        '1111111222222233333334444444555555566666"'
+    ) in index_html
+
+    # Root Front Page is served directly at / (no 302 redirect) with intro, repos & CLI recipe.
     fb_cfg = json.loads((site_dir / "firebase.json").read_text(encoding="utf-8"))
-    assert fb_cfg["hosting"]["redirects"][0]["destination"] == "/demo_run/"
+    assert "redirects" not in fb_cfg["hosting"]
     assert "mp4" in fb_cfg["hosting"]["headers"][0]["source"]
+
+    front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
+    reports_html = (site_dir / "public" / "reports.html").read_text(encoding="utf-8")
+    assert front_html == reports_html
+    assert "Closed-Loop Adaptive Optics Simulation" in front_html
+    assert "https://github.com/cacao-org/cacao-work" in front_html
+    assert "https://github.com/milk-org/milk" in front_html
+    assert "git -C milk submodule update --init src/engine/ImageStreamIO" in front_html
+    assert "./scripts/build-all.sh" in front_html
+    assert "./scripts/run-ao3k-scexao.sh --save-telemetry speckle" in front_html
+    assert "Vis SR 82.8%" in front_html
+    assert "H SR 95.3%" in front_html
+    assert './demo_run/index.html#reproducibility-github-provenance' in front_html
 
 
 def test_publish_ao_report_build_only_and_include_fits(
