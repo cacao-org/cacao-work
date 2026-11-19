@@ -111,6 +111,15 @@ FRIENDLY_FIG_LABELS = {
     "calib_2wfs1dm_summary_2x2.png": (
         "Joint 2-WFS + Inter-Stage DM Telemetry Calibration Summary (2x2)"
     ),
+    "calib_2wfs1dm_whitening_lag_regimes_2x2.png": (
+        "2-WFS + 1-DM Calibration Sweeps: Whitening Order, Lag Surface, Regimes & Convergence (2x2)"
+    ),
+    "calib_2wfs1dm_offload_and_zpo_2x3.png": (
+        "Virtual DM2->DM1 Offload Fidelity & Stage-2/Stage-3 ZPO Wind-Up Diagnosis (2x3)"
+    ),
+    "calib_2wfs1dm_method_comparison_2x2.png": (
+        "Beyond W(z): Exact-Window Frequency-Domain AO-Dynamics vs AR(4) W(z) & OLS (2x2)"
+    ),
     "compute_timeline_4x1.png": "Compute & Power Timeline (4x1)",
     "compute_process_breakdown_2x2.png": "Per-Process CPU & Latency Breakdown (2x2)",
     "compute_shm_and_calib_2x2.png": "SHM Bandwidth & Calibration Breakdown (2x2)",
@@ -2076,6 +2085,12 @@ def build_front_page_html(metas: list[dict[str, object]]) -> str:
                 ["", "# 3b. Compile comparative Predictive Control Report",
                  "${PYTHON_BIN} ./scripts/build-predictive-control-report.py"]
                 if any(m.get("slug") == "predictive_control_report" for m in study_metas)
+                else []
+            ),
+            *(
+                ["", "# 3c. Compile 2-WFS + 1-DM Telemetry Calibration Study Report",
+                 "${PYTHON_BIN} ./scripts/build-calib-2wfs1dm-report.py"]
+                if any(m.get("slug") == "calib_2wfs1dm_report" for m in study_metas)
                 else []
             ),
             "",
