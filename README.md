@@ -172,25 +172,29 @@ Once a live bench is running, connect directly to any milk/cacao/cacaosim TUI:
 
 Or connect manually in any shell with `eval "$(./scripts/live-bench.sh env)"`.
 
-### 4. Two-Stage Subaru AO3k + SCExAO Simulation (`run-ao3k-scexao.sh`)
+### 4. Cascaded Subaru AO3k + SCExAO + Lyot Coronagraph & LLOWFS (`run-ao3k-scexao.sh`)
 
 Bench [`ao3k_scexao`](benches/ao3k_scexao/ao3k_scexao.bench) and controller
-[`cacaoloop-ao3k-scexao.milk`](benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk) model a cascaded
-two-stage polychromatic AO system on an 8.2 m telescope (`8.0 kHz` / `125 us` sub-stepping):
+[`cacaoloop-ao3k-scexao.milk`](benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk) model the Subaru
+Nasmyth-IR (`7.95 m`, `cobs = 30.7%`, off-center `51.75 deg` V-spiders, `20%` optical throughput)
+multi-stage AO and coronagraphic system (`8.0 kHz` / `125 us` sub-stepping):
 
 - Stage 1 (`ao3k`, `aol1`): 64x64 DM (`dm01disp`, D=60) + 160x160 J-band (1.22 um, 20% BW) PyWFS
   at 1.0 kHz
 - Stage 2 (`scexao`, `aol2`): 50x50 DM (`dm02disp`, D=46) + 120x120 Vis (0.75 um, 20% BW) PyWFS
-  at 2.0 kHz
+  at 2.0 kHz with real-time zero-point offset (`zpo-2`: `aol2_dmzpo -> aol2_wfszpo`)
+- Stage 3 (`llowfs`, `aol3`): 14 low-order Zernike modes (`Z2..Z15`) on `dm02disp04`, driven at
+  500 Hz by a 64x64 H-band defocused (`+200 nm` RMS `Z4`) camera fed by light reflected off the
+  coronagraph pupil-plane Lyot stop (`lowfs_mode = "lyot_refl"`)
 - Simultaneous polychromatic Visible (0.75 um, 15% BW) and H-band (1.65 um, 18% BW) PSFs at Raw,
-  Stage-1, and Final planes
+  Stage-1, Final unocculted, and post-Lyot coronagraphic (`3.0 lambda/D` spot) focal planes
 
 ```bash
 source env.sh
 ./scripts/run-ao3k-scexao.sh --phys-time 2.0 --save-rm _work/ao3k_scexao_rm
 ./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm
 ./scripts/run-ao3k-scexao.sh --phys-time 10.0 --load-rm _work/ao3k_scexao_rm \
-    --save-telemetry speckle
+    --predictive --calib-2wfs1dm --save-telemetry speckle
 ```
 
 Outputs (integrated FITS PSFs, wavefront stats, metrics JSON, diagnostic plots, and `REPORT.md` /
@@ -198,7 +202,10 @@ Outputs (integrated FITS PSFs, wavefront stats, metrics JSON, diagnostic plots, 
 `--save-telemetry [standard|speckle|truth]` flushes paired `.fits`/`.txt` cubes into
 `_work/ao3k_scexao/telemetry` (`speckle` also records 2.0 kHz Stage-1/Final science PSFs and renders
 `wfs_psf_short_evolution.mp4`), and runs `milk-mlt-aotlm` (`mlt.aoopt` + `mlt.psfrecon`) to
-generate `_work/ao3k_scexao/telemetry/analysis/TELEMETRY_REPORT.md`.
+generate `_work/ao3k_scexao/telemetry/analysis/TELEMETRY_REPORT.md`. Passing `--calib-2wfs1dm`
+activates post-loop 2-WFS + inter-stage DM telemetry calibration (`milk-mlt-calib2wfs1dm` /
+`mlt.sysid`) to solve `B = Mab A + Mdb D + b0` and virtual upstream `A = Mba B - Mda_virt D + a0`,
+rendering `calib_2wfs1dm_summary_2x2.png` and its full section in `REPORT.md`.
 
 #### Publishing Reports to Firebase Hosting
 

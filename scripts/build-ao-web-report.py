@@ -52,6 +52,15 @@ FRIENDLY_FIG_LABELS = {
     ),
     "psf_comparison_2x3.png": "Long-Exposure Polychromatic PSF Comparison (2x3)",
     "psf_radial_profiles.png": "PSF Radial Profiles & Encircled Energy",
+    "coro_before_after_psf.png": (
+        "H-Band Focal-Plane PSF Before vs After Lyot Coronagraph (2x3)"
+    ),
+    "coro_lyot_stop_illumination.png": (
+        "Light Incident on Pupil-Plane Lyot Stop & Reflective-Lyot LOWFS Power Budget (2x3)"
+    ),
+    "coro_lowfs_summary.png": (
+        "Subaru H-Band Lyot Coronagraph & Reflective-Lyot Defocused LLOWFS Summary (2x3)"
+    ),
     "wf_strehl_timeseries_4x1.png": (
         "RMS Wavefront Error & Strehl Ratio Time Series with Sampled Instants (4x1)"
     ),
@@ -72,6 +81,36 @@ FRIENDLY_FIG_LABELS = {
     "mlat_latency_1x2.png": "Hardware Latency Measurement (mlat)",
     "modal_gains_1x2.png": "Modal Loop Gain Curves",
     "selfrm_summary_2x4.png": "Modal Self-Response Matrix Summary (selfRM)",
+    "predictive_control_summary_2x2.png": (
+        "PSOL Auto-Regressive Predictive Control Filter & Modal Residual Summary (2x2)"
+    ),
+    "ar_order_optical_coro_summary_2x3.png": (
+        "Optical, Wavefront & Lyot Coronagraph Performance vs. AR Predictive Order (2x3)"
+    ),
+    "ar_order_timeseries_and_petals_2x3.png": (
+        "Synchronized 5.0 s Time Series & Subaru V-Spider Petal OPD Maps (2x3)"
+    ),
+    "ar_order_filter_weights_and_freq_2x2.png": (
+        "Learned AR(P) Filter Impulse Responses, Cauchy-Schwarz Phase Lead & Freq Response (2x2)"
+    ),
+    "ar_order_modal_and_psd_2x2.png": (
+        "Closed-Loop 1 kHz / 2 kHz Temporal PSDs & Spatial Modal Residual Spectra (2x2)"
+    ),
+    "ar_order_bias_variance_sample_complexity_2x2.png": (
+        "Walk-Forward Bias-Variance Tradeoff & Sample-Complexity Scaling (2x2)"
+    ),
+    "ar_order_psf_and_compute_2x3.png": (
+        "H-Band Coronagraphic PSFs, Real-Time Compute Scaling & Pareto Frontier (2x3)"
+    ),
+    "eof_vs_ar_offline_20s_2x2.png": (
+        "Cross-Mode Block-EOF vs. Diagonal AR(16): 20 s Walk-Forward Scaling & Coupling (2x2)"
+    ),
+    "eof_vs_ar_closed_loop_2x3.png": (
+        "Cross-Mode Block-EOF vs. Diagonal AR(16): Closed-Loop Optical, Coro & Compute (2x3)"
+    ),
+    "calib_2wfs1dm_summary_2x2.png": (
+        "Joint 2-WFS + Inter-Stage DM Telemetry Calibration Summary (2x2)"
+    ),
     "compute_timeline_4x1.png": "Compute & Power Timeline (4x1)",
     "compute_process_breakdown_2x2.png": "Per-Process CPU & Latency Breakdown (2x2)",
     "compute_shm_and_calib_2x2.png": "SHM Bandwidth & Calibration Breakdown (2x2)",
@@ -333,6 +372,15 @@ pre.mermaid {
   padding: 1.1rem;
   background: var(--surface-alt);
 }
+.study-card {
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  padding: 1.25rem 1.35rem;
+  background: var(--accent-soft);
+  margin: 1rem 0 1.5rem;
+}
+.study-card h3 { margin-top: 0; font-size: 1.2rem; }
+.study-card p.study-summary { margin: 0.45rem 0 0.75rem; font-size: 0.94rem; }
 .report-card h3 { margin-top: 0; font-size: 1.1rem; }
 .card-links { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.75rem; }
 .btn {
@@ -369,6 +417,47 @@ pre.mermaid {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
+}
+.param-cell {
+  white-space: normal;
+  min-width: 230px;
+  max-width: 400px;
+}
+.param-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.param-pill {
+  display: inline-block;
+  padding: 0.12rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.param-pill-diff {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.param-pill-base {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-weight: 600;
+}
+.shared-params {
+  margin: -0.9rem 0 1.4rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.5;
 }
 """
 
@@ -580,9 +669,15 @@ class RenderContext:
         cand = (self.out_slug_dir / mapped).resolve()
         try:
             cand.relative_to(self.out_slug_dir)
+            return final_url, False, cand.is_file()
         except ValueError:
-            return final_url, False, False
-        return final_url, False, cand.is_file()
+            # Allow relative links to sibling published reports inside <site_dir>/public/
+            public_root = self.out_slug_dir.parent.resolve()
+            try:
+                cand.relative_to(public_root)
+                return final_url, False, cand.is_file()
+            except ValueError:
+                return final_url, False, False
 
 
 def apply_emph(escaped_text: str) -> str:
@@ -915,7 +1010,12 @@ def build_telemetry_files_section(staged_files: list[Path]) -> str:
         p
         for p in staged_files
         if p.suffix.lower() in DATA_EXTS
-        and p.name not in ("report_meta.json", "wfs_psf_short_evolution_meta.json")
+        and p.name
+        not in (
+            "report_meta.json",
+            "study_meta.json",
+            "wfs_psf_short_evolution_meta.json",
+        )
     ]
     if not data_files:
         return ""
@@ -949,12 +1049,14 @@ def render_page_shell(
     body_html: str,
     has_mermaid: bool,
     updated_utc: str,
+    primary_nav_label: str = "Optical & Control Report",
 ) -> str:
     """Wrap rendered article HTML inside the responsive site layout."""
     title_esc = html.escape(title, quote=False)
     slug_esc = html.escape(slug, quote=False)
     opt_cls = ' class="active"' if active_page == "optical" else ""
     cmp_cls = ' class="active"' if active_page == "compute" else ""
+    primary_lbl_esc = html.escape(primary_nav_label, quote=False)
     repro_href = (
         "index.html#reproducibility-github-provenance"
         if has_repro_section
@@ -962,7 +1064,7 @@ def render_page_shell(
     )
     nav_links = [
         '<a href="../index.html">Front Page</a>',
-        f'<a href="index.html"{opt_cls}>Optical &amp; Control Report</a>',
+        f'<a href="index.html"{opt_cls}>{primary_lbl_esc}</a>',
     ]
     if has_compute_report:
         nav_links.append(
@@ -1042,23 +1144,228 @@ def stage_assets(
     return staged
 
 
+TRACKED_PARAMS: list[tuple[str, str]] = [
+    ("control_law", "Control Law"),
+    ("llowfs", "LLOWFS"),
+    ("calib_2wfs1dm", "2-WFS/1-DM Calib"),
+    ("seeing", "Seeing"),
+    ("star_mag", "Star Mag"),
+    ("phys_time", "Phys Time"),
+    ("oversample", "Oversample"),
+    ("bench_mode", "Bench"),
+    ("gain1", "Gain1"),
+    ("gain2", "Gain2"),
+    ("gain3", "Gain3"),
+    ("mult1", "Mult1"),
+    ("mult2", "Mult2"),
+    ("mult3", "Mult3"),
+    ("mgain_alpha", "mgain α"),
+    ("mgain_floor", "mgain floor"),
+    ("mgain_tt", "mgain TT"),
+    ("svdlim1", "SVDlim1"),
+    ("svdlim2", "SVDlim2"),
+    ("svdlim3", "SVDlim3"),
+    ("pf_mix", "PF Mix"),
+    ("pf_reg", "PF Reg"),
+    ("pf_mgain_exp", "PF mgain exp"),
+    ("pf_ntrain", "PF N_train"),
+    ("telemetry", "Telemetry"),
+]
+
+
+def _parse_cmd_flag(cmd: str, flag: str) -> str | None:
+    """Extract the value following a CLI --flag token in a saved run_command string."""
+    if not cmd:
+        return None
+    m = re.search(rf"(?:^|\s){re.escape(flag)}\s+(\S+)", cmd)
+    return m.group(1) if m else None
+
+
+def extract_run_parameters(data: dict[str, object]) -> dict[str, str]:
+    """Extract normalized simulation parameters from a metrics JSON dictionary."""
+    params: dict[str, str] = {}
+    sa = data.get("star_and_atmosphere")
+    repro = data.get("reproducibility")
+    cmd = str(repro.get("run_command", "")) if isinstance(repro, dict) else ""
+    loops = data.get("loops") if isinstance(data.get("loops"), dict) else {}
+    l1 = loops.get("stage1_ao3k") if isinstance(loops.get("stage1_ao3k"), dict) else {}
+    l2 = loops.get("stage2_scexao") if isinstance(loops.get("stage2_scexao"), dict) else {}
+    l3 = loops.get("stage3_llowfs") if isinstance(loops.get("stage3_llowfs"), dict) else {}
+    cm = data.get("coronagraph_metrics")
+    lo = cm.get("llowfs") if isinstance(cm, dict) and isinstance(cm.get("llowfs"), dict) else None
+    pc = data.get("predictive_control")
+    pc_on = bool(isinstance(pc, dict) and pc.get("enabled"))
+    c2d = data.get("calib_2wfs1dm")
+    c2d_on = bool(isinstance(c2d, dict) and c2d.get("enabled"))
+
+    has_ao_cfg = bool(loops or lo is not None or isinstance(pc, dict) or isinstance(c2d, dict))
+    if has_ao_cfg:
+        if pc_on and isinstance(pc, dict):
+            pf_mode = str(pc.get("pf_mode", "ar")).lower()
+            pf_blk = int(pc.get("pf_blocksize", 128))
+            pf_ord = int(pc.get("pf_order", 8))
+            if pf_mode == "eof":
+                params["control_law"] = f"PSOL Block-EOF(B={pf_blk}, P={pf_ord})"
+            else:
+                params["control_law"] = f"PSOL AR({pf_ord}) Predictive"
+            if "pf_mix" in pc:
+                params["pf_mix"] = f'{float(pc["pf_mix"]):.2f}'
+            if "pf_reg" in pc:
+                params["pf_reg"] = f'{float(pc["pf_reg"]):g}'
+            if "pf_mgain_exp" in pc:
+                params["pf_mgain_exp"] = f'{float(pc["pf_mgain_exp"]):.2f}'
+            s1_pc = pc.get("stage1")
+            if isinstance(s1_pc, dict) and s1_pc.get("n_samples"):
+                params["pf_ntrain"] = str(int(s1_pc["n_samples"]))
+        else:
+            params["control_law"] = "Modal Integrator"
+
+    lo_closed: bool | None = None
+    if lo is not None:
+        lo_closed = bool(lo.get("enabled_closed_loop", True))
+        params["llowfs"] = "CLOSED" if lo_closed else "OPEN"
+
+    if has_ao_cfg:
+        if c2d_on and isinstance(c2d, dict):
+            db = int(c2d.get("dim_b", 40))
+            wo = int(c2d.get("whiten_order", 4))
+            params["calib_2wfs1dm"] = f"ON ({db}m, AR({wo}))"
+        else:
+            params["calib_2wfs1dm"] = "OFF"
+
+    if isinstance(sa, dict):
+        if "seeing_arcsec_500nm" in sa and sa["seeing_arcsec_500nm"] is not None:
+            params["seeing"] = f'{float(sa["seeing_arcsec_500nm"]):.2f}"'
+        if "star_mV" in sa and "star_mH" in sa:
+            params["star_mag"] = f'mV={float(sa["star_mV"]):.1f}/mH={float(sa["star_mH"]):.1f}'
+        if "physical_time_s" in sa and sa["physical_time_s"] is not None:
+            params["phys_time"] = f'{float(sa["physical_time_s"]):.1f} s'
+        if "oversample" in sa and sa["oversample"] is not None:
+            params["oversample"] = f'{int(sa["oversample"])}x'
+    if "oversample" not in params:
+        ov_f = _parse_cmd_flag(cmd, "--oversample")
+        if ov_f:
+            params["oversample"] = f"{ov_f}x"
+
+    bmode = _parse_cmd_flag(cmd, "--bench-mode")
+    if bmode:
+        params["bench_mode"] = bmode
+
+    if isinstance(l1, dict):
+        if "gain" in l1 and l1["gain"] is not None:
+            params["gain1"] = f'{float(l1["gain"]):.2f}'
+        if "mult" in l1 and l1["mult"] is not None:
+            params["mult1"] = f'{float(l1["mult"]):.2f}'
+        if "mgain_alpha" in l1 and l1["mgain_alpha"] is not None:
+            params["mgain_alpha"] = f'{float(l1["mgain_alpha"]):.2f}'
+        if "mgain_floor" in l1 and l1["mgain_floor"] is not None:
+            params["mgain_floor"] = f'{float(l1["mgain_floor"]):.2f}'
+        if "mgain_tt_factor" in l1 and l1["mgain_tt_factor"] is not None:
+            params["mgain_tt"] = f'{float(l1["mgain_tt_factor"]):.2f}'
+        if "svdlim" in l1 and l1["svdlim"] is not None:
+            params["svdlim1"] = f'{float(l1["svdlim"]):g}'
+    if isinstance(l2, dict):
+        if "gain" in l2 and l2["gain"] is not None:
+            params["gain2"] = f'{float(l2["gain"]):.2f}'
+        if "mult" in l2 and l2["mult"] is not None:
+            params["mult2"] = f'{float(l2["mult"]):.2f}'
+        if "svdlim" in l2 and l2["svdlim"] is not None:
+            params["svdlim2"] = f'{float(l2["svdlim"]):g}'
+    if isinstance(l3, dict) and lo_closed is not False:
+        if "gain" in l3 and l3["gain"] is not None:
+            params["gain3"] = f'{float(l3["gain"]):.2f}'
+        if "mult" in l3 and l3["mult"] is not None:
+            params["mult3"] = f'{float(l3["mult"]):.3f}'
+        if "svdlim" in l3 and l3["svdlim"] is not None:
+            params["svdlim3"] = f'{float(l3["svdlim"]):g}'
+
+    tlm_mode = None
+    if isinstance(repro, dict) and repro.get("telemetry_mode"):
+        tlm_mode = str(repro["telemetry_mode"])
+    else:
+        tlm_mode = _parse_cmd_flag(cmd, "--save-telemetry")
+    if tlm_mode:
+        params["telemetry"] = tlm_mode
+
+    return params
+
+
+def _resolve_run_parameters(meta: dict[str, object]) -> dict[str, str]:
+    """Return normalized parameter dict for a staged report meta (with legacy fallback)."""
+    raw_p = meta.get("parameters")
+    if isinstance(raw_p, dict) and raw_p:
+        return {str(k): str(v) for k, v in raw_p.items() if v is not None}
+
+    params: dict[str, str] = {}
+    cmp_d = meta.get("comparison")
+    if isinstance(cmp_d, dict):
+        pc_on = bool(cmp_d.get("predictive_enabled", False))
+        p_ord = int(cmp_d.get("pf_order", 8)) if pc_on else 0
+        params["control_law"] = (
+            f"PSOL AR({p_ord}) Predictive" if pc_on else "Modal Integrator"
+        )
+        if cmp_d.get("has_coro", "llowfs_closed" in cmp_d):
+            params["llowfs"] = "CLOSED" if cmp_d.get("llowfs_closed", True) else "OPEN"
+        c2d_on = bool(cmp_d.get("calib_2wfs1dm_enabled", False))
+        if c2d_on:
+            db = int(cmp_d.get("calib_2wfs1dm_dim_b", 40))
+            wo = int(cmp_d.get("calib_2wfs1dm_whiten_order", 4))
+            params["calib_2wfs1dm"] = f"ON ({db}m, AR({wo}))"
+        else:
+            params["calib_2wfs1dm"] = "OFF"
+    repro = meta.get("reproducibility")
+    cmd = str(repro.get("run_command", "")) if isinstance(repro, dict) else ""
+    flag_map = (
+        ("seeing", "--seeing", lambda s: f'{float(s):.2f}"'),
+        ("phys_time", "--phys-time", lambda s: f"{float(s):.1f} s"),
+        ("oversample", "--oversample", lambda s: f"{int(s)}x"),
+        ("bench_mode", "--bench-mode", str),
+        ("gain1", "--gain1", lambda s: f"{float(s):.2f}"),
+        ("gain2", "--gain2", lambda s: f"{float(s):.2f}"),
+        ("mult1", "--mult1", lambda s: f"{float(s):.2f}"),
+        ("mult2", "--mult2", lambda s: f"{float(s):.2f}"),
+        ("mgain_alpha", "--mgain-alpha", lambda s: f"{float(s):.2f}"),
+        ("mgain_floor", "--mgain-floor", lambda s: f"{float(s):.2f}"),
+        ("mgain_tt", "--mgain-tt", lambda s: f"{float(s):.2f}"),
+        ("svdlim1", "--svdlim1", lambda s: f"{float(s):g}"),
+        ("svdlim2", "--svdlim2", lambda s: f"{float(s):g}"),
+        ("telemetry", "--save-telemetry", str),
+    )
+    for key, flag, fmt in flag_map:
+        val = _parse_cmd_flag(cmd, flag)
+        if val is not None:
+            try:
+                params[key] = fmt(val)
+            except ValueError:
+                params[key] = val
+    return params
+
+
 def extract_metrics_highlights(
     out_slug_dir: Path,
-) -> tuple[list[str], dict[str, object] | None]:
-    """Extract summary metric badges and reproducibility info from staged metrics JSON."""
+) -> tuple[
+    list[str],
+    dict[str, object] | None,
+    dict[str, object] | None,
+    dict[str, str],
+]:
+    """Extract badges, reproducibility, comparison stats, and normalized run parameters."""
     cands = [out_slug_dir / "ao3k_scexao_metrics.json"]
     cands.extend(sorted(out_slug_dir.glob("*_metrics.json")))
     metrics_path = next((p for p in cands if p.is_file()), None)
     if metrics_path is None:
-        return [], None
+        return [], None, None, {}
     try:
         data = json.loads(metrics_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return [], None
+        return [], None, None, {}
     if not isinstance(data, dict):
-        return [], None
+        return [], None, None, {}
 
     badges: list[str] = []
+    vis_sr_pct: float | None = None
+    nir_sr_pct: float | None = None
+    wfe_nm: float | None = None
     sa = data.get("star_and_atmosphere")
     if isinstance(sa, dict):
         if "seeing_arcsec_500nm" in sa:
@@ -1075,33 +1382,251 @@ def extract_metrics_highlights(
         vis_f = pm.get("vis", {}).get("final", {}) if isinstance(pm.get("vis"), dict) else {}
         nir_f = pm.get("nir", {}).get("final", {}) if isinstance(pm.get("nir"), dict) else {}
         if isinstance(vis_f, dict) and "strehl_peak" in vis_f:
-            badges.append(f'Vis SR {float(vis_f["strehl_peak"]) * 100.0:.1f}%')
+            vis_sr_pct = float(vis_f["strehl_peak"]) * 100.0
+            badges.append(f"Vis SR {vis_sr_pct:.1f}%")
         if isinstance(nir_f, dict) and "strehl_peak" in nir_f:
-            badges.append(f'H SR {float(nir_f["strehl_peak"]) * 100.0:.1f}%')
+            nir_sr_pct = float(nir_f["strehl_peak"]) * 100.0
+            badges.append(f"H SR {nir_sr_pct:.1f}%")
+    stg1_wfe_nm: float | None = None
     wm = data.get("wavefront_metrics")
     if isinstance(wm, dict):
         locs = wm.get("locations")
-        if isinstance(locs, dict) and isinstance(locs.get("final"), dict):
-            fin_l = locs["final"]
-            if "quad_total_rms_nm" in fin_l:
-                badges.append(f'WFE {float(fin_l["quad_total_rms_nm"]):.1f} nm')
+        if isinstance(locs, dict):
+            if isinstance(locs.get("stg1"), dict) and "quad_total_rms_nm" in locs["stg1"]:
+                stg1_wfe_nm = float(locs["stg1"]["quad_total_rms_nm"])
+            if isinstance(locs.get("final"), dict) and "quad_total_rms_nm" in locs["final"]:
+                wfe_nm = float(locs["final"]["quad_total_rms_nm"])
+                badges.append(f"WFE {wfe_nm:.1f} nm")
+
+    pc = data.get("predictive_control")
+    pc_on = bool(isinstance(pc, dict) and pc.get("enabled"))
+    pf_mode = str(pc.get("pf_mode", "ar")).lower() if isinstance(pc, dict) and pc_on else "ar"
+    pf_blocksize = int(pc.get("pf_blocksize", 128)) if isinstance(pc, dict) and pc_on else 1
+    pf_order = int(pc.get("pf_order", 8)) if isinstance(pc, dict) and pc_on else 0
+    pf_mix = float(pc.get("pf_mix", 0.90)) if isinstance(pc, dict) and pc_on else 0.0
+    pf_vr1: float | None = None
+    pf_vr2: float | None = None
+    if isinstance(pc, dict) and pc_on:
+        s1_pc = pc.get("stage1")
+        s2_pc = pc.get("stage2")
+        if isinstance(s1_pc, dict) and "var_red_pct" in s1_pc:
+            pf_vr1 = float(s1_pc["var_red_pct"])
+        if isinstance(s2_pc, dict) and "var_red_pct" in s2_pc:
+            pf_vr2 = float(s2_pc["var_red_pct"])
+
+    c2d = data.get("calib_2wfs1dm")
+    c2d_on = bool(isinstance(c2d, dict) and c2d.get("enabled"))
+    c2d_dim_b = int(c2d.get("dim_b", 40)) if isinstance(c2d, dict) and c2d_on else 0
+    c2d_w_ord = int(c2d.get("whiten_order", 4)) if isinstance(c2d, dict) and c2d_on else 0
+    c2d_mdb_raw = (
+        c2d.get("mdb_diag_med")
+        if isinstance(c2d, dict) and c2d_on and c2d.get("mdb_diag_med") is not None
+        else (
+            c2d.get("mdb_diag_white_med")
+            if isinstance(c2d, dict) and c2d_on
+            else None
+        )
+    )
+    c2d_mdb = float(c2d_mdb_raw) if c2d_mdb_raw is not None else None
+    c2d_r2a = (
+        float(c2d["r2_a_raw_med"])
+        if isinstance(c2d, dict) and c2d_on and c2d.get("r2_a_raw_med") is not None
+        else None
+    )
+    c2d_srm_raw = None
+    if isinstance(c2d, dict) and c2d_on:
+        if c2d.get("has_selfrm", True):
+            if c2d.get("selfrm_rel_err") is not None:
+                c2d_srm_raw = c2d["selfrm_rel_err"]
+            elif c2d.get("mdb_vs_selfrm_rel_err") is not None:
+                c2d_srm_raw = c2d["mdb_vs_selfrm_rel_err"]
+    c2d_srm_err = float(c2d_srm_raw) * 100.0 if c2d_srm_raw is not None else None
+    c2d_eta_w = (
+        float(c2d["eta_d_white_med"])
+        if isinstance(c2d, dict) and c2d_on and c2d.get("eta_d_white_med") is not None
+        else None
+    )
+
+    cmp_dict: dict[str, object] | None = None
+    cm = data.get("coronagraph_metrics")
+    has_coro = isinstance(cm, dict)
+    lo_on = True
+    dm3_rms_nm = 0.0
+    coro_leak_pct: float | None = None
+    p310_val: float | None = None
+    c5_pl: float | None = None
+    c5_5s: float | None = None
+    lowfs_coro_pct: float | None = None
+    lowfs_hpup_pct: float | None = None
+    if isinstance(cm, dict):
+        lo = cm.get("llowfs") if isinstance(cm.get("llowfs"), dict) else {}
+        cl = cm.get("closed_loop") if isinstance(cm.get("closed_loop"), dict) else {}
+        lb = cm.get("lowfs_light_budget")
+        bcl = lb.get("closed_loop") if isinstance(lb, dict) else {}
+        bcl = bcl if isinstance(bcl, dict) else {}
+        lo_on = bool(lo.get("enabled_closed_loop", True))
+        dm3_rms_nm = float(lo.get("dm3_stroke_rms_nm", 0.0))
+        badges.insert(0, "LLOWFS CLOSED" if lo_on else "LLOWFS OPEN")
+        if "mean_planet_contrast_3_10ld" in cl:
+            p310_val = float(cl["mean_planet_contrast_3_10ld"])
+            badges.append(f"Coro 3-10 l/D {p310_val:.2e}")
+        if "total_leakage_frac" in cl:
+            coro_leak_pct = float(cl["total_leakage_frac"]) * 100.0
+        if "frac_coro_in_reaching_lowfs_cam_fov" in bcl:
+            lowfs_coro_pct = float(bcl["frac_coro_in_reaching_lowfs_cam_fov"]) * 100.0
+            badges.append(f"LOWFS Light {lowfs_coro_pct:.2f}%")
+        if "frac_entrance_pup_h_reaching_lowfs_cam_fov" in bcl:
+            lowfs_hpup_pct = float(bcl["frac_entrance_pup_h_reaching_lowfs_cam_fov"]) * 100.0
+
+        ctbl = cm.get("contrast_table")
+        if isinstance(ctbl, list):
+            for row in ctbl:
+                if isinstance(row, dict) and abs(float(row.get("sep_ld", 0.0)) - 5.0) < 0.5:
+                    c5_pl = float(row.get("cl_planet_contrast", 0.0))
+                    c5_5s = float(row.get("cl_5sigma_planet_contrast", 0.0))
+                    break
+
+    if c2d_on:
+        badges.insert(0, "2-WFS/1-DM CALIB")
+        if c2d_mdb is not None:
+            badges.append(f"Mdb {c2d_mdb:.2f}")
+        if c2d_r2a is not None:
+            badges.append(f"R2_A {c2d_r2a:.2f}")
+    if pc_on:
+        if pf_mode == "eof":
+            badges.insert(0, f"PSOL BLOCK-EOF(B={pf_blocksize}, P={pf_order})")
+        else:
+            badges.insert(0, f"PSOL AR({pf_order}) PREDICTIVE")
+
+    if any(
+        v is not None
+        for v in (vis_sr_pct, nir_sr_pct, stg1_wfe_nm, wfe_nm)
+    ) or has_coro or pc_on or c2d_on:
+        cmp_dict = {
+            "has_coro": has_coro,
+            "predictive_enabled": pc_on,
+            "pf_mode": pf_mode,
+            "pf_blocksize": pf_blocksize,
+            "pf_order": pf_order,
+            "pf_mix": pf_mix,
+            "pf_var_red_stg1_pct": pf_vr1,
+            "pf_var_red_stg2_pct": pf_vr2,
+            "llowfs_closed": lo_on,
+            "dm3_rms_nm": dm3_rms_nm,
+            "vis_sr_pct": vis_sr_pct,
+            "nir_sr_pct": nir_sr_pct,
+            "stg1_wfe_nm": stg1_wfe_nm,
+            "wfe_nm": wfe_nm,
+            "coro_leak_pct": coro_leak_pct,
+            "planet_contrast_3_10ld": p310_val,
+            "planet_contrast_5ld": c5_pl,
+            "speckle_5sig_5ld": c5_5s,
+            "lowfs_cam_coro_pct": lowfs_coro_pct,
+            "lowfs_cam_hpup_pct": lowfs_hpup_pct,
+            "calib_2wfs1dm_enabled": c2d_on,
+            "calib_2wfs1dm_dim_b": c2d_dim_b,
+            "calib_2wfs1dm_whiten_order": c2d_w_ord,
+            "calib_2wfs1dm_mdb_diag": c2d_mdb,
+            "calib_2wfs1dm_r2_a": c2d_r2a,
+            "calib_2wfs1dm_selfrm_err_pct": c2d_srm_err,
+            "calib_2wfs1dm_eta_white": c2d_eta_w,
+        }
 
     repro = data.get("reproducibility")
     repro_dict = repro if isinstance(repro, dict) else None
-    return badges, repro_dict
+    params_dict = extract_run_parameters(data)
+    return badges, repro_dict, cmp_dict, params_dict
+
+
+def _meta_sort_key(meta: dict[str, object]) -> tuple[int, int, str]:
+    if meta.get("report_type") == "study":
+        return (-1, 0, str(meta.get("slug", "")))
+    cmp_d = meta.get("comparison")
+    slug = str(meta.get("slug", ""))
+    if isinstance(cmp_d, dict):
+        has_coro = bool(cmp_d.get("has_coro", "llowfs_closed" in cmp_d))
+        lo_on = bool(cmp_d.get("llowfs_closed", True)) if has_coro else True
+        pc_on = bool(cmp_d.get("predictive_enabled", False))
+        c2d_on = bool(cmp_d.get("calib_2wfs1dm_enabled", False))
+        p_ord = int(cmp_d.get("pf_order", 0) or 0)
+        p_mode = str(cmp_d.get("pf_mode", "ar")).lower()
+        p_blk = int(cmp_d.get("pf_blocksize", 1) or 1)
+        if not lo_on:
+            tier = 0
+        elif not pc_on and not c2d_on:
+            tier = 1
+        elif pc_on and not c2d_on:
+            tier = 2
+            if p_mode == "eof":
+                return (tier, 200 + p_blk, slug)
+            if "w14s" in slug:
+                return (tier, 100 + p_ord, slug)
+        else:
+            tier = 3
+        return (tier, p_ord, slug)
+    return (4, 0, slug)
+
+
+def _format_param_pill(
+    key: str,
+    label: str,
+    val: str,
+    is_diff: bool,
+    cmp_d: dict[str, object] | None,
+) -> str:
+    """Format a single parameter key=value pill for the Front Page table."""
+    lbl_esc = html.escape(label, quote=False)
+    val_esc = html.escape(val, quote=False)
+    cls = "param-pill param-pill-diff" if is_diff else "param-pill"
+
+    if key == "control_law":
+        if val.startswith("PSOL "):
+            v_html = f"<strong>{val_esc}</strong>"
+        else:
+            v_html = val_esc
+        return f'<span class="{cls}">{lbl_esc}: {v_html}</span>'
+    if key == "llowfs":
+        if val == "CLOSED":
+            dm3 = float((cmp_d or {}).get("dm3_rms_nm") or 0.0)
+            extra = f" (<code>{dm3:.1f} nm</code>)" if dm3 > 0.0 else ""
+            v_html = f"<strong>CLOSED</strong>{extra}"
+        else:
+            v_html = "OPEN (<code>--no-lowfs</code>)"
+        return f'<span class="{cls}">{lbl_esc}: {v_html}</span>'
+    if key == "calib_2wfs1dm":
+        if val.startswith("ON"):
+            rest = val[2:].strip()
+            extra = f" <code>{html.escape(rest, quote=False)}</code>" if rest else ""
+            v_html = f"<strong>ON</strong>{extra}"
+        else:
+            v_html = val_esc
+        return f'<span class="{cls}">{lbl_esc}: {v_html}</span>'
+
+    v_html = f"<strong><code>{val_esc}</code></strong>" if is_diff else f"<code>{val_esc}</code>"
+    return f'<span class="{cls}">{lbl_esc}: {v_html}</span>'
 
 
 def build_front_page_html(metas: list[dict[str, object]]) -> str:
     """Render the root Front Page with intro, report cards, GitHub repos, and CLI recipe."""
+    metas = sorted(metas, key=_meta_sort_key)
     latest_repro: dict[str, object] | None = None
     primary_slug = ""
     for meta in metas:
+        if meta.get("report_type") == "study":
+            continue
         if not primary_slug:
             primary_slug = str(meta.get("slug", ""))
         rep = meta.get("reproducibility")
         if isinstance(rep, dict) and rep.get("repositories"):
             latest_repro = rep
             primary_slug = str(meta.get("slug", primary_slug))
+    if not latest_repro:
+        for meta in metas:
+            rep = meta.get("reproducibility")
+            if isinstance(rep, dict) and rep.get("repositories"):
+                latest_repro = rep
+                if not primary_slug:
+                    primary_slug = str(meta.get("slug", ""))
 
     repo_by_name: dict[str, dict[str, str]] = {r["name"]: dict(r) for r in DEFAULT_REPOS}
     repo_list: list[dict[str, str]] = [dict(r) for r in DEFAULT_REPOS]
@@ -1120,8 +1645,64 @@ def build_front_page_html(metas: list[dict[str, object]]) -> str:
         if merged_list:
             repo_list = merged_list
 
+    study_metas = [m for m in metas if m.get("report_type") == "study"]
+    run_metas = [m for m in metas if m.get("report_type") != "study"]
+
+    featured_html = ""
+    study_nav_links: list[str] = []
+    if study_metas:
+        f_blocks: list[str] = ['<h2 id="featured-reports">Featured Technical Reports</h2>']
+        for meta in study_metas:
+            slug = str(meta.get("slug", ""))
+            title = str(meta.get("title", slug))
+            summary_txt = str(meta.get("summary", ""))
+            nav_lbl = str(meta.get("nav_label", title))
+            btn_lbl = str(meta.get("button_label", "Read Technical Report"))
+            has_repro = bool(meta.get("has_repro_section", False))
+            sz = human_bytes(int(meta.get("total_bytes", 0)))
+            nfiles = int(meta.get("file_count", 0))
+            upd = str(meta.get("updated_utc", ""))
+            raw_badges = meta.get("badges", [])
+            badge_items = raw_badges if isinstance(raw_badges, list) else []
+            badge_html = ""
+            if badge_items:
+                pills = "".join(
+                    f'<span class="metric-pill">{html.escape(str(b), quote=False)}</span>'
+                    for b in badge_items
+                )
+                badge_html = f'  <div class="badge-row">{pills}</div>\n'
+            slug_esc = html.escape(slug, quote=True)
+            title_esc = html.escape(title, quote=False)
+            nav_esc = html.escape(nav_lbl, quote=False)
+            btn_esc = html.escape(btn_lbl, quote=False)
+            study_nav_links.append(f'<a href="./{slug_esc}/index.html">{nav_esc}</a>')
+            repro_link = (
+                f"./{slug_esc}/index.html#reproducibility-github-provenance"
+                if has_repro
+                else "#reproduce-results"
+            )
+            sum_html = (
+                f'  <p class="study-summary">{html.escape(summary_txt, quote=False)}</p>\n'
+                if summary_txt
+                else ""
+            )
+            f_blocks.append(
+                '<div class="study-card">\n'
+                f"  <h3>{title_esc}</h3>\n"
+                f"{sum_html}"
+                f"{badge_html}"
+                f'  <p class="muted"><code>{html.escape(slug, quote=False)}</code> &middot; '
+                f"{nfiles} files ({sz}) &middot; Updated {html.escape(upd, quote=False)}</p>\n"
+                f'  <div class="card-links">'
+                f'<a class="btn" href="./{slug_esc}/index.html">{btn_esc}</a>'
+                f'<a class="btn btn-secondary" href="{repro_link}">Reproduce</a>'
+                "</div>\n"
+                "</div>"
+            )
+        featured_html = "\n".join(f_blocks) + "\n"
+
     cards: list[str] = ['<div class="report-card-grid">']
-    for meta in metas:
+    for meta in run_metas:
         slug = str(meta.get("slug", ""))
         title = str(meta.get("title", slug))
         has_cmp = bool(meta.get("has_compute_report", False))
@@ -1167,6 +1748,220 @@ def build_front_page_html(metas: list[dict[str, object]]) -> str:
             "</div>"
         )
     cards.append("</div>")
+
+    cmp_metas = [m for m in metas if isinstance(m.get("comparison"), dict)]
+    cmp_html = ""
+    if len(cmp_metas) >= 2:
+        param_dicts = [_resolve_run_parameters(m) for m in cmp_metas]
+        changed_specs: list[tuple[str, str]] = []
+        shared_items: list[tuple[str, str]] = []
+        for pkey, plabel in TRACKED_PARAMS:
+            present = [pd[pkey] for pd in param_dicts if pkey in pd]
+            if len(set(present)) >= 2:
+                changed_specs.append((pkey, plabel))
+            elif len(present) == len(cmp_metas) and len(set(present)) == 1:
+                shared_items.append((plabel, present[0]))
+
+        ref_vals: dict[str, str] = {}
+        for pkey, _ in changed_specs:
+            ref_v = param_dicts[0].get(pkey)
+            if ref_v is None:
+                ref_v = next((pd[pkey] for pd in param_dicts if pkey in pd), "")
+            ref_vals[pkey] = ref_v
+
+        has_any_pred = any(
+            bool((m.get("comparison") or {}).get("predictive_enabled", False))
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+        has_any_c2d = any(
+            bool((m.get("comparison") or {}).get("calib_2wfs1dm_enabled", False))
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+        has_any_coro = any(
+            bool((m.get("comparison") or {}).get("has_coro", False))
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+        has_any_s1wfe = any(
+            (m.get("comparison") or {}).get("stg1_wfe_nm") is not None
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+        has_any_wfe = any(
+            (m.get("comparison") or {}).get("wfe_nm") is not None
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+        has_any_vsr = any(
+            (m.get("comparison") or {}).get("vis_sr_pct") is not None
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+        has_any_nsr = any(
+            (m.get("comparison") or {}).get("nir_sr_pct") is not None
+            for m in cmp_metas
+            if isinstance(m.get("comparison"), dict)
+        )
+
+        if has_any_pred and has_any_c2d:
+            cmp_heading = (
+                "Side-by-Side Benchmark Comparison "
+                "(Open LLOWFS vs. Closed LLOWFS vs. PSOL Predictive Control "
+                "&amp; 2-WFS/1-DM Telemetry Calibration)"
+            )
+        elif has_any_pred:
+            cmp_heading = (
+                "Side-by-Side Benchmark Comparison "
+                "(Open LLOWFS vs. Closed LLOWFS vs. PSOL Predictive Control)"
+            )
+        elif has_any_coro:
+            cmp_heading = "Side-by-Side Comparison (Stage-3 LLOWFS Closed vs. Open)"
+        else:
+            cmp_heading = "Simulation Runs Comparison"
+
+        hdr_cells = [
+            '<th style="text-align: left;">Simulation</th>',
+            '<th style="text-align: left;">Changed Parameters</th>',
+        ]
+        if has_any_s1wfe:
+            hdr_cells.append('<th style="text-align: right;">Post-AO3k WFE</th>')
+        if has_any_wfe:
+            hdr_cells.append('<th style="text-align: right;">Post-SCExAO WFE</th>')
+        if has_any_vsr:
+            hdr_cells.append('<th style="text-align: right;">Vis 0.75 um SR</th>')
+        if has_any_nsr:
+            hdr_cells.append('<th style="text-align: right;">H 1.65 um SR</th>')
+        if has_any_coro:
+            hdr_cells.extend(
+                [
+                    '<th style="text-align: right;">Coro Leakage</th>',
+                    '<th style="text-align: right;">Planet 3-10 l/D</th>',
+                    '<th style="text-align: right;">5-sig @ 5 l/D</th>',
+                ]
+            )
+        if has_any_c2d:
+            hdr_cells.append('<th style="text-align: right;">2-WFS/1-DM Calib</th>')
+
+        crows: list[str] = [
+            f"\n<h3>{cmp_heading}</h3>",
+            '<div class="table-wrap">',
+            "<table>",
+            f'<thead><tr>{"".join(hdr_cells)}</tr></thead>',
+            "<tbody>",
+        ]
+        compact_diff_only = len(changed_specs) > 4
+        for row_idx, (m, pd) in enumerate(zip(cmp_metas, param_dicts)):
+            c = m["comparison"]
+            assert isinstance(c, dict)
+            mslug = html.escape(str(m.get("slug", "")), quote=True)
+            mslug_lbl = html.escape(str(m.get("slug", "")), quote=False)
+
+            if not changed_specs:
+                param_cell_html = '<span class="muted">Identical parameters</span>'
+            else:
+                pills_out: list[str] = []
+                if compact_diff_only and row_idx == 0:
+                    pills_out.append('<span class="param-pill param-pill-base">Baseline</span>')
+                for pkey, plabel in changed_specs:
+                    if pkey not in pd:
+                        continue
+                    val = pd[pkey]
+                    is_diff = val != ref_vals.get(pkey)
+                    if compact_diff_only and row_idx > 0 and not is_diff:
+                        continue
+                    pills_out.append(_format_param_pill(pkey, plabel, val, is_diff, c))
+                if not pills_out:
+                    pills_out.append(
+                        '<span class="param-pill param-pill-base">Same as baseline</span>'
+                    )
+                param_cell_html = f'<div class="param-list">{"".join(pills_out)}</div>'
+
+            row_cells = [
+                f'<td><a href="./{mslug}/index.html"><code>{mslug_lbl}</code></a></td>',
+                f'<td class="param-cell">{param_cell_html}</td>',
+            ]
+            if has_any_s1wfe:
+                s1_wfe_s = (
+                    f'<code>{float(c["stg1_wfe_nm"]):.1f} nm</code>'
+                    if c.get("stg1_wfe_nm") is not None
+                    else "&mdash;"
+                )
+                row_cells.append(f'<td style="text-align: right;">{s1_wfe_s}</td>')
+            if has_any_wfe:
+                wfe_s = (
+                    f'<code>{float(c["wfe_nm"]):.1f} nm</code>'
+                    if c.get("wfe_nm") is not None
+                    else "&mdash;"
+                )
+                row_cells.append(f'<td style="text-align: right;">{wfe_s}</td>')
+            if has_any_vsr:
+                vsr_s = (
+                    f'<code>{float(c["vis_sr_pct"]):.1f}%</code>'
+                    if c.get("vis_sr_pct") is not None
+                    else "&mdash;"
+                )
+                row_cells.append(f'<td style="text-align: right;">{vsr_s}</td>')
+            if has_any_nsr:
+                nsr_s = (
+                    f'<strong><code>{float(c["nir_sr_pct"]):.1f}%</code></strong>'
+                    if c.get("nir_sr_pct") is not None
+                    else "&mdash;"
+                )
+                row_cells.append(f'<td style="text-align: right;">{nsr_s}</td>')
+            if has_any_coro:
+                leak_s = (
+                    f'<code>{float(c["coro_leak_pct"]):.2f}%</code>'
+                    if c.get("coro_leak_pct") is not None
+                    else "&mdash;"
+                )
+                p310_s = (
+                    f'<code>{float(c["planet_contrast_3_10ld"]):.2e}</code>'
+                    if c.get("planet_contrast_3_10ld") is not None
+                    else "&mdash;"
+                )
+                s5_s = (
+                    f'<code>{float(c["speckle_5sig_5ld"]):.2e}</code>'
+                    if c.get("speckle_5sig_5ld") is not None
+                    else "&mdash;"
+                )
+                row_cells.extend(
+                    [
+                        f'<td style="text-align: right;">{leak_s}</td>',
+                        f'<td style="text-align: right;">{p310_s}</td>',
+                        f'<td style="text-align: right;">{s5_s}</td>',
+                    ]
+                )
+            if has_any_c2d:
+                if c.get("calib_2wfs1dm_enabled"):
+                    c2d_parts: list[str] = []
+                    if c.get("calib_2wfs1dm_mdb_diag") is not None:
+                        mdb_s = f'<code>Mdb={float(c["calib_2wfs1dm_mdb_diag"]):.2f}</code>'
+                        if c.get("calib_2wfs1dm_selfrm_err_pct") is not None:
+                            mdb_s += (
+                                f' ({float(c["calib_2wfs1dm_selfrm_err_pct"]):.1f}% selfRM)'
+                            )
+                        c2d_parts.append(mdb_s)
+                    if c.get("calib_2wfs1dm_r2_a") is not None:
+                        c2d_parts.append(f'<code>R&sup2;_A={float(c["calib_2wfs1dm_r2_a"]):.2f}</code>')
+                    c2d_cell = ", ".join(c2d_parts) if c2d_parts else "<strong>ON</strong>"
+                else:
+                    c2d_cell = "&mdash;"
+                row_cells.append(f'<td style="text-align: right;">{c2d_cell}</td>')
+
+            crows.append(f'<tr>{"".join(row_cells)}</tr>')
+        crows.extend(["</tbody>", "</table>", "</div>"])
+        if shared_items:
+            shared_html = " &middot; ".join(
+                f"{html.escape(lbl, quote=False)}=<code>{html.escape(val, quote=False)}</code>"
+                for lbl, val in shared_items
+            )
+            crows.append(
+                f'<div class="shared-params"><strong>Shared parameters across all '
+                f"{len(cmp_metas)} runs:</strong> {shared_html}</div>"
+            )
+        cmp_html = "\n".join(crows)
 
     repo_rows: list[str] = [
         '<div class="table-wrap">',
@@ -1262,10 +2057,38 @@ def build_front_page_html(metas: list[dict[str, object]]) -> str:
             "pytest -v tests/test_00_stack_sanity.py tests/test_05_ao_web_report.py",
             "",
             "# 3. Run closed-loop Subaru AO3k + SCExAO simulation, telemetry, video & reports",
-            run_cmd,
+            *(
+                [
+                    str((m.get("reproducibility") or {}).get("run_command", run_cmd))
+                    for m in run_metas
+                    if isinstance(m.get("reproducibility"), dict)
+                    and (m.get("reproducibility") or {}).get("run_command")
+                ]
+                if len(run_metas) >= 2
+                and any(
+                    isinstance(m.get("reproducibility"), dict)
+                    and (m.get("reproducibility") or {}).get("run_command")
+                    for m in run_metas
+                )
+                else [run_cmd]
+            ),
+            *(
+                ["", "# 3b. Compile comparative Predictive Control Report",
+                 "${PYTHON_BIN} ./scripts/build-predictive-control-report.py"]
+                if any(m.get("slug") == "predictive_control_report" for m in study_metas)
+                else []
+            ),
             "",
             "# 4. Stage static HTML website locally under _work/_web_site/public/",
-            f"./scripts/publish-ao-report.sh --build-only _work/{stage_slug}",
+            *(
+                [
+                    f"./scripts/publish-ao-report.sh --build-only _work/{m.get('slug')}"
+                    for m in metas
+                    if m.get("slug")
+                ]
+                if len(metas) >= 2
+                else [f"./scripts/publish-ao-report.sh --build-only _work/{stage_slug}"]
+            ),
         ]
     )
     bash_esc = html.escape(bash_recipe, quote=False)
@@ -1298,8 +2121,10 @@ def build_front_page_html(metas: list[dict[str, object]]) -> str:
         "short-timescale WFS/PSF video rendering). Jump directly to "
         '<a href="#github-repositories">GitHub Repositories</a> or the copy-pasteable '
         '<a href="#reproduce-results">End-to-End Reproduction Guide</a>.</p></blockquote>\n'
-        '<h2 id="published-reports">Published Simulation Reports</h2>\n'
+        + featured_html
+        + '<h2 id="published-reports">Published Simulation Reports</h2>\n'
         + "\n".join(cards)
+        + cmp_html
         + '\n\n<h2 id="github-repositories">Open-Source GitHub Repositories</h2>\n'
         "<p>All source repositories below are public on GitHub and build into a single "
         "relocatable prefix (<code>milk/_install/milk-&lt;version&gt;</code>) via "
@@ -1342,6 +2167,7 @@ def build_front_page_html(metas: list[dict[str, object]]) -> str:
   <div class="nav-inner">
     <a class="brand" href="./index.html">cacao-work &middot; AO Simulation Suite</a>
     <nav class="nav-links">
+      {"".join(study_nav_links)}
       <a href="#published-reports">Reports</a>
       <a href="#github-repositories">GitHub Repos</a>
       <a href="#reproduce-results">Reproduce</a>
@@ -1388,13 +2214,13 @@ def write_root_indices_and_firebase(
             {
                 "source": "**/*.@(png|jpg|jpeg|svg|webp|mp4|webm)",
                 "headers": [
-                    {"key": "Cache-Control", "value": "public, max-age=3600"}
+                    {"key": "Cache-Control", "value": "no-cache"}
                 ],
             },
             {
-                "source": "**/*.@(html|json)",
+                "source": "**/*.@(html|json|csv|tsv|txt|dat|bench)",
                 "headers": [
-                    {"key": "Cache-Control", "value": "public, max-age=300"}
+                    {"key": "Cache-Control", "value": "no-cache"}
                 ],
             },
         ],
@@ -1464,6 +2290,17 @@ def build_site(
         p for p in (report_body, extra_figs_html, data_files_html) if p
     )
 
+    study_meta_path = out_slug_dir / "study_meta.json"
+    study_meta: dict[str, object] = {}
+    if study_meta_path.is_file():
+        try:
+            loaded = json.loads(study_meta_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                study_meta = loaded
+        except (OSError, json.JSONDecodeError):
+            study_meta = {}
+
+    primary_nav_label = str(study_meta.get("nav_label") or "Optical & Control Report")
     index_html = render_page_shell(
         title=report_title,
         slug=slug,
@@ -1473,6 +2310,7 @@ def build_site(
         body_html=full_report_body,
         has_mermaid=report_mermaid,
         updated_utc=updated_utc,
+        primary_nav_label=primary_nav_label,
     )
     (out_slug_dir / "index.html").write_text(index_html, encoding="utf-8")
 
@@ -1486,12 +2324,21 @@ def build_site(
             body_html=compute_body,
             has_mermaid=compute_mermaid,
             updated_utc=updated_utc,
+            primary_nav_label=primary_nav_label,
         )
         (out_slug_dir / "compute_report.html").write_text(
             compute_html, encoding="utf-8"
         )
+        (out_slug_dir / "compute.html").write_text(
+            compute_html, encoding="utf-8"
+        )
 
-    badges, repro_dict = extract_metrics_highlights(out_slug_dir)
+    badges, repro_dict, cmp_dict, params_dict = extract_metrics_highlights(out_slug_dir)
+    if not badges and isinstance(study_meta.get("badges"), list):
+        badges = [str(b) for b in study_meta["badges"]]
+    if repro_dict is None and isinstance(study_meta.get("reproducibility"), dict):
+        repro_dict = study_meta["reproducibility"]
+
     all_slug_files = [p for p in out_slug_dir.iterdir() if p.is_file()]
     total_bytes = sum(p.stat().st_size for p in all_slug_files)
     meta: dict[str, object] = {
@@ -1504,8 +2351,15 @@ def build_site(
         "total_bytes": total_bytes,
         "file_count": len(all_slug_files) + 1,
     }
+    for skey in ("report_type", "nav_label", "button_label", "summary"):
+        if study_meta.get(skey):
+            meta[skey] = str(study_meta[skey])
     if repro_dict is not None:
         meta["reproducibility"] = repro_dict
+    if cmp_dict is not None:
+        meta["comparison"] = cmp_dict
+    if params_dict:
+        meta["parameters"] = params_dict
     (out_slug_dir / "report_meta.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )

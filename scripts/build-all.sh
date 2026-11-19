@@ -159,8 +159,10 @@ verify_install() {
         milk-fpsexec-mlt-tlmsave
         milk-fpsexec-mlt-aoopt
         milk-fpsexec-mlt-psfrecon
+        milk-fpsexec-mlt-sysid
         milk-mlt-aoopt
         milk-mlt-psfrecon
+        milk-mlt-calib2wfs1dm
         milk-mlt-aotlm
         cacao-setDMnolink
         cacao-mkDMpokemodes
@@ -181,6 +183,8 @@ verify_install() {
         cacao-fpsexec-cacaoiot-acquireWFS
         cacao-fpsexec-mfilt
         cacao-fpsexec-modalCTRLstats
+        cacao-fpsexec-cacaopc-mkARPF
+        cacao-fpsexec-cacaopc-applyARPF
         cacao-fpsexec-cacaopt-mlat
         cacao-fpsexec-cacaoac-measlinresp
         cacao-fpsexec-cacaocc-compstrcm
@@ -208,6 +212,7 @@ verify_install() {
         libmilklinalgebra.so
         libmilkmltools.so
         libcacaoAOloopControl.so
+        libcacaoAOloopControlPredictiveControl.so
         libmilkOpticsMaterials.so
         libmilkWFpropagate.so
         libmilkcacaosim.so

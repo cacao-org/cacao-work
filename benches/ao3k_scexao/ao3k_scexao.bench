@@ -1,33 +1,38 @@
 # SPDX-FileCopyrightText: 2026 Olivier Guyon et al
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Subaru AO3k + SCExAO Two-Stage Cascaded Polychromatic Pyramid WFS Optical Bench
+# Subaru Telescope (7.95 m Nasmyth-IR Pupil) AO3k + SCExAO + Lyot Coronagraph + LLOWFS Bench
 #
+# Entrance Pupil  : Subaru Nasmyth-IR (D=7.95 m, cobs=0.307, 4 offset-V spiders @ +/-51.75 deg,
+#                   offset=0.08289 D, width=0.02314 D), end-to-end telescope throughput = 20%
 # Stage 1 (AO3k)  : 64x64 DM (D=60 act, dm01disp) + J-band (1.22 um, 20% BW, 2ch) 160x160 PyWFS 1kHz
 # Stage 2 (SCExAO): 50x50 DM (D=46 act, dm02disp) + Vis (0.75 um, 20% BW, 2ch) 120x120 PyWFS @ 2 kHz
-# Science PSFs    : Simultaneous Visible (0.75 um, 15% BW, 3ch) & Near-IR H (1.65 um, 18% BW, 3ch)
-#                   focal-plane cameras at Pre-AO, Post-Stage-1, and Final Stage-2.
+# Stage 3 (LLOWFS): H-band (1.65 um, 18% BW, 3ch) 3.0 l/D Lyot coronagraph with reflective Lyot stop
+#                   feeding a defocused (200 nm Z4) 64x64 focal-plane LLOWFS @ 500 Hz (ZPO -> Stg2)
+# Science PSFs    : Simultaneous Visible (0.75 um, 15% BW, 3ch), Near-IR H (1.65 um, 18% BW, 3ch)
+#                   unocculted cameras (Pre-AO, Post-Stg1, Final Stg2) + Post-Lyot H-band Coro Cam.
 
 [bench]
-name       = "subaru_ao3k_scexao"
-nwf        = 256
-pup_diam   = 0.9375
-cobs       = 0.30
-nspider    = 4
-spider_w   = 0.012
-spider_deg = 45.0
-tel_diam_m = 8.2
-star_mag   = 6.0
-star_teff  = 9600.0
-tput_tel   = 0.75
-master_hz  = 2000.0
-oversample = 4
-in_wf      = "outarraypha"
-in_pup     = "csim_pup"
-out_beam   = "b_pup"
-wf_unit    = 1
-ref_lambda = 0.50
-turb_gain  = 0.0
+name          = "subaru_ao3k_scexao"
+nwf           = 256
+pup_diam      = 0.9375
+cobs          = 0.307
+nspider       = 4
+spider_w      = 0.02314
+spider_deg    = 51.75
+spider_offset = 0.08289
+tel_diam_m    = 7.95
+star_mag      = 6.0
+star_teff     = 9600.0
+tput_tel      = 0.20
+master_hz     = 2000.0
+oversample    = 4
+in_wf         = "outarraypha"
+in_pup        = "csim_pup"
+out_beam      = "b_pup"
+wf_unit       = 1
+ref_lambda    = 0.50
+turb_gain     = 0.0
 
 # --- Stage 0: Uncorrected Entrance Pupil PSFs (Visible & Near-IR) ---
 [fpcam.vis_raw]
@@ -219,6 +224,72 @@ qe            = 0.85
 pixscale_ld   = 2.50
 use_beam_flux = 1
 rate_hz       = 100.0
+ron_e         = 0.5
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+# --- Stage 3: H-Band Lyot Coronagraph + Reflective-Lyot Defocused Focal-Plane LLOWFS (500 Hz) ---
+[coro.coro_nir]
+in                 = "b_nir_sci"
+out                = "b_nir_coro"
+out_lowfs          = "b_lowfs"
+out_pre_lyot       = "coro_pre_lyot"
+out_pre_lyot_long  = "coro_pre_lyot_long"
+mode               = "lyot_spot"
+lambda_um          = 1.65
+bw_frac            = 0.18
+nlambda            = 3
+fpm_rad_ld         = 3.0
+fpm_amp            = 0.0
+lowfs_mode         = "lyot_refl"
+lowfs_refl         = 0.95
+tput               = 0.92
+lyot_outer         = 0.85
+lyot_obs           = 0.38
+lyot_nspider       = 4
+lyot_spider_w      = 0.040
+lyot_spider_deg    = 51.75
+lyot_spider_offset = 0.08289
+
+[fpcam.nir_coro]
+in            = "b_nir_coro"
+out_cam       = "psf_nir_coro"
+out_long      = "psf_nir_coro_long"
+ncam          = 256
+prop_mode     = "mft"
+lambda_um     = 1.65
+bw_frac       = 0.18
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.50
+use_beam_flux = 1
+rate_hz       = 100.0
+ron_e         = 0.5
+sat_adu       = 1.0e9
+out_dtype     = "float32"
+
+[wfe.lowfs_defoc]
+in         = "b_lowfs"
+out        = "b_lowfs_defoc"
+in_wfe     = "csim_lowfs_defoc"
+rms_nm     = 0.0
+defocus_nm = 200.0
+wfe_gain   = 1.0
+tput       = 0.98
+
+[fpcam.wfs_lowfs]
+in            = "b_lowfs_defoc"
+out_cam       = "csim_wfs_lowfs"
+is_wfs        = 1
+ncam          = 64
+prop_mode     = "mft"
+lambda_um     = 1.65
+bw_frac       = 0.18
+nlambda       = 3
+qe            = 0.85
+pixscale_ld   = 2.00
+use_beam_flux = 1
+rate_hz       = 500.0
 ron_e         = 0.5
 sat_adu       = 1.0e9
 out_dtype     = "float32"

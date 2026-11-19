@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Olivier Guyon et al
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Thin sandbox wrapper for Subaru 8.2m AO3k + SCExAO two-stage simulation.
+# Thin sandbox wrapper for Subaru 7.95m AO3k + SCExAO + Lyot Coronagraph + LLOWFS simulation.
 # Simulation, telemetry profiling, and report generation run natively via
 # milk-script (benches/ao3k_scexao/sim-ao3k-scexao.milk), sysmon, cacaosim-ao-report,
 # and milk-perf-report.

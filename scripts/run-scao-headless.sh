@@ -26,6 +26,8 @@ EVAL_FRAMES="240"
 METRICS_OUT=""
 SAVE_RM_DIR=""
 LOAD_RM_DIR=""
+PREDICTIVE=0
+PF_MIX="0.90"
 KEEP_RUNNING=0
 
 usage() {
@@ -45,6 +47,8 @@ Options:
   --eval-frames <int>     Frames per open/closed-loop evaluation (default: 240)
   --save-rm <dir>         Save calibrated response matrix & masks to <dir>
   --load-rm <dir>         Reuse saved response matrix from <dir> (skip poking)
+  --predictive            Also enable PSOL AR predictive control and evaluate cl_pf
+  --pf-mix <float>        Predictive control mixing coefficient (default: 0.90)
   --metrics-out <file>    Write combined dl/ol/cl metrics JSON to file
   --keep-running          Keep simulator and AO FPS daemons running on exit
   -h, --help              Show this help message
@@ -65,6 +69,8 @@ while [[ $# -gt 0 ]]; do
         --eval-frames) EVAL_FRAMES="$2"; shift 2 ;;
         --save-rm) SAVE_RM_DIR="$2"; shift 2 ;;
         --load-rm) LOAD_RM_DIR="$2"; shift 2 ;;
+        --predictive) PREDICTIVE=1; shift ;;
+        --pf-mix) PF_MIX="$2"; shift 2 ;;
         --metrics-out) METRICS_OUT="$2"; shift 2 ;;
         --keep-running) KEEP_RUNNING=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -175,9 +181,32 @@ csim_reset_long
 shm_wait_frames "csim_wfs" "${EVAL_FRAMES}" 30
 compute_ao_metrics "cl" "${SANDBOX_WORK_DIR}/metrics_cl.json"
 
+PF_JSON=""
+if [[ "${PREDICTIVE}" -eq 1 ]]; then
+    echo "[fpspipe] 6b/7 Enabling PSOL AR predictive control (pf-mix=${PF_MIX})..."
+    "${LOOP_CTRL}" pf-on "${PF_MIX}"
+    shm_wait_frames "aol1_arPFmat" 1 25
+    shm_wait_frames "csim_wfs" 120 25
+    csim_reset_long
+    shm_wait_frames "csim_wfs" "${EVAL_FRAMES}" 30
+    compute_ao_metrics "cl_pf" "${SANDBOX_WORK_DIR}/metrics_cl_pf.json"
+    PF_JSON="$(milk-script -q <<'MS'
+@get nu="f.mkARPF-1.out.n_updates" ns="f.mkARPF-1.out.n_samples" \
+     rol="f.mkARPF-1.out.rms_ol" rz="f.mkARPF-1.out.rms_zoh" \
+     rp="f.mkARPF-1.out.rms_pred" vr="f.mkARPF-1.out.var_red_pct" \
+     af="f.applyARPF-1.out.active_frames" to="f.mfilt-1.PF.timeout_cnt"
+printf '{"n_updates":%s,"n_samples":%s,"rms_ol":%s,"rms_zoh":%s,' \
+    "${nu:-0}" "${ns:-0}" "${rol:-0}" "${rz:-0}"
+printf '"rms_pred":%s,"var_red_pct":%s,"active_frames":%s,"timeout_cnt":%s}\n' \
+    "${rp:-0}" "${vr:-0}" "${af:-0}" "${to:-0}"
+MS
+    )"
+fi
+
 echo "[fpspipe] 7/7 Summarizing metrics..."
 "${PYTHON_BIN}" - "${SANDBOX_WORK_DIR}" "${METRICS_OUT}" "${MODE}" "${RATE}" "${SEEING}" \
-    "${GAIN}" "${MULT}" "${SVDLIM}" "${SAVE_RM_DIR}" "${LOAD_RM_DIR}" <<'PY'
+    "${GAIN}" "${MULT}" "${SVDLIM}" "${SAVE_RM_DIR}" "${LOAD_RM_DIR}" \
+    "${PREDICTIVE}" "${PF_MIX}" "${PF_JSON}" <<'PY'
 import json
 import os
 import re
@@ -196,7 +225,10 @@ from astropy.io import fits
     svdlim,
     save_rm_dir,
     load_rm_dir,
-) = sys.argv[1:11]
+    pred_flag,
+    pf_mix,
+    pf_json_str,
+) = sys.argv[1:14]
 
 def load(stage):
     with open(os.path.join(work_dir, f"metrics_{stage}.json"), "r", encoding="utf-8") as fh:
@@ -205,6 +237,8 @@ def load(stage):
 dl = load("dl")
 ol = load("ol")
 cl = load("cl")
+cl_pf = load("cl_pf") if int(pred_flag) == 1 else None
+pf_stats = json.loads(pf_json_str) if pf_json_str else None
 
 conf_dir = os.path.join(work_dir, "scao_pyr", "conf")
 calib = {
@@ -248,6 +282,9 @@ summary = {
     "ol": ol,
     "cl": cl,
 }
+if cl_pf is not None:
+    summary["cl_pf"] = cl_pf
+    summary["predictive"] = {"enabled": True, "pf_mix": float(pf_mix), "stats": pf_stats}
 
 if metrics_out:
     out_dir = os.path.dirname(os.path.abspath(metrics_out))
@@ -281,6 +318,19 @@ print(
     f"fps_ave={cl['strehl_fps_ave']:.4f}, wfs_rms={cl['wfs_rms']:.5f}, "
     f"mval_rms={cl['mval_rms']:.5f}, dm_rms={cl['dm_rms']:.5f}"
 )
+if cl_pf is not None:
+    print(
+        f"  Predictive   : strehl_peak={cl_pf['strehl_peak']:.4f}, "
+        f"fps_ave={cl_pf['strehl_fps_ave']:.4f}, wfs_rms={cl_pf['wfs_rms']:.5f}, "
+        f"mval_rms={cl_pf['mval_rms']:.5f}, dm_rms={cl_pf['dm_rms']:.5f}"
+    )
+    if pf_stats:
+        print(
+            f"  AR Predictor : updates={pf_stats.get('n_updates')}, "
+            f"samples={pf_stats.get('n_samples')}, "
+            f"var_red={pf_stats.get('var_red_pct', 0):.1f}%, "
+            f"timeouts={pf_stats.get('timeout_cnt')}"
+        )
 if save_rm_dir:
     print(f"  Saved RM     : {save_rm_dir}")
 

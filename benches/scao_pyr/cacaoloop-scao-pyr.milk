@@ -22,6 +22,15 @@ ROOTDIR="${CACAO_LOOPROOTDIR:-${PWD}/${LOOPNAME}-rootdir}"
 GPUINDEX="${CACAO_GPUINDEX:-99}"
 RATE="${CACAO_WFSFRATE:-400}"
 LAT_FR="${CACAO_LATENCYHARDWFR:-1.5}"
+SOFT_LAT_FR="${CACAO_LATENCYSOFTWFR:-0.6}"
+PSOL_WFSFACT="${CACAO_PSOL_WFSFACT:-1.0}"
+TBUFF_SIZE="${CACAO_TBUFF_SIZE:-128}"
+PF_ORDER="${CACAO_PF_ORDER:-8}"
+PF_MIX="${CACAO_PF_MIX:-0.90}"
+PF_NBTRAIN="${CACAO_PF_NBTRAIN:-1024}"
+PF_MINSAMPLES="${CACAO_PF_MINSAMPLES:-128}"
+PF_REG="${CACAO_PF_REG:-0.005}"
+PF_MAXWAITUS="${CACAO_PF_MAXWAITUS:-2500}"
 GAIN="${CACAO_LOOPGAIN:-0.35}"
 MULT="${CACAO_LOOPMULT:-0.98}"
 SVDLIM="${CACAO_SVDLIM:-0.05}"
@@ -41,6 +50,9 @@ Usage:
   ${SCRIPT_NAME} load-rm <dir> [--svdlim F] [--takeref] [--nframes N]
   ${SCRIPT_NAME} takeref [nframes]
   ${SCRIPT_NAME} close [gain]
+  ${SCRIPT_NAME} pf-on [mixcoeff [pflatency]]
+  ${SCRIPT_NAME} pf-off
+  ${SCRIPT_NAME} testol [mode [ampl [nbsample]]]
   ${SCRIPT_NAME} open
   ${SCRIPT_NAME} zero
   ${SCRIPT_NAME} status
@@ -78,6 +90,8 @@ ALL_UNITS=(
     "measlinresp-${N}"
     "compstrCM-${N}"
     "mctrlstats-${N}"
+    "mkARPF-${N}"
+    "applyARPF-${N}"
 )
 
 ensure_stream_zeros() {
@@ -221,7 +235,12 @@ mlat-${N}             cacao-fpsexec-cacaopt-mlat
 measlinresp-${N}      cacao-fpsexec-cacaoac-measlinresp
 compstrCM-${N}        cacao-fpsexec-cacaocc-compstrcm
 mctrlstats-${N}       cacao-fpsexec-modalCTRLstats
+mkARPF-${N}           cacao-fpsexec-cacaopc-mkARPF
+applyARPF-${N}        cacao-fpsexec-cacaopc-applyARPF
 EOF
+
+    local pf_lat
+    pf_lat="$(awk -v h="${LAT_FR}" -v s="${SOFT_LAT_FR}" 'BEGIN { printf "%.3f", h + s }')"
 
     # 3. Apply all parameters in one C transaction (skipping active units)
     fpspipe.setparams <<EOF
@@ -270,10 +289,42 @@ mfilt-${N}.loopON                     = OFF
 mfilt-${N}.loopgain                   = ${GAIN}
 mfilt-${N}.loopmult                   = ${MULT}
 mfilt-${N}.looplimit                  = 5.0
+mfilt-${N}.comp.OLmodes               = ON
+mfilt-${N}.comp.WFSfact               = ${PSOL_WFSFACT}
 mfilt-${N}.comp.latencyhardwfr        = ${LAT_FR}
+mfilt-${N}.comp.latencysoftwfr        = ${SOFT_LAT_FR}
+mfilt-${N}.comp.tbuff                 = ON
+mfilt-${N}.comp.tbuffsize             = ${TBUFF_SIZE}
+mfilt-${N}.PF.enable                  = OFF
+mfilt-${N}.PF.NBblock                 = 1
+mfilt-${N}.PF.maxwaitus               = ${PF_MAXWAITUS}
+mfilt-${N}.PF.mixcoeff                = ${PF_MIX}
 mfilt-${N}.procinfo.loopcntMax        = -1
 mfilt-${N}.procinfo.triggermode       = 3
 mfilt-${N}.procinfo.triggersname      = ${PFX}modevalWFS
+
+mkARPF-${N}.AOloopindex               = ${N}
+mkARPF-${N}.inbuff                    = ${PFX}modevalOL_buff
+mkARPF-${N}.outPF                     = ${PFX}arPFmat
+mkARPF-${N}.PForder                   = ${PF_ORDER}
+mkARPF-${N}.PFlatency                 = ${pf_lat}
+mkARPF-${N}.NBtrain                   = ${PF_NBTRAIN}
+mkARPF-${N}.minsamples                = ${PF_MINSAMPLES}
+mkARPF-${N}.reglambda                 = ${PF_REG}
+mkARPF-${N}.procinfo.loopcntMax       = -1
+mkARPF-${N}.procinfo.triggermode      = 3
+mkARPF-${N}.procinfo.triggersname     = ${PFX}modevalOL_buff
+
+applyARPF-${N}.AOloopindex            = ${N}
+applyARPF-${N}.indata                 = ${PFX}modevalOL
+applyARPF-${N}.PFmat                  = ${PFX}arPFmat
+applyARPF-${N}.outdata                = ${PFX}modevalPF
+applyARPF-${N}.outPFstat              = ${PFX}outPFstat
+applyARPF-${N}.PForder                = ${PF_ORDER}
+applyARPF-${N}.rampsteps              = 32
+applyARPF-${N}.procinfo.loopcntMax    = -1
+applyARPF-${N}.procinfo.triggermode   = 3
+applyARPF-${N}.procinfo.triggersname  = ${PFX}modevalOL
 
 mvalC2dm-${N}.GPUindex                = ${GPUINDEX}
 mvalC2dm-${N}.insname                 = ${PFX}modevalDM
@@ -384,17 +435,27 @@ build_and_load_cm() {
     milk-fps-runstart -q "compstrCM-${N}"
     milk-fps-wait -q -t 30 "compstrCM-${N}"
 
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
     milk-fps-runstop -q "mvalC2dm-${N}" "mfilt-${N}" "wfs2cmodeval-${N}"
-    milk-stream-rm -q --ignore-missing \
-        "${PFX}CMmodesWFS" "${PFX}CMmodesDM" "${PFX}modevalWFS" "${PFX}modevalDM"
+    milk-stream-rm -r -f -q --ignore-missing \
+        "^${PFX}(CMmodes|modeval|mWFSfact|outPFstat|mPFmix|mgain|mmult|mlimit)" \
+        "^${PFX}(mzeropoint|offload|mval|mfiltselfRM|arPFmat)"
     fpspipe.loadfits CMmodesWFS ../conf/CMmodesWFS .force=1
     fpspipe.loadfits CMmodesDM  ../conf/CMmodesDM  .force=1
 
+    local pf_lat
+    pf_lat="$(awk -v h="${lat_fr}" -v s="${SOFT_LAT_FR}" 'BEGIN { printf "%.3f", h + s }')"
     milk-fps-runstart -q "wfs2cmodeval-${N}"
     milk-stream-wait -q -t 10 "${PFX}modevalWFS+1"
-    milk-fps-set -q "mfilt-${N}.comp.latencyhardwfr=${lat_fr}"
+    milk-fps-set -q \
+        "mfilt-${N}.comp.OLmodes=ON" \
+        "mfilt-${N}.comp.tbuff=ON" \
+        "mfilt-${N}.comp.WFSfact=${PSOL_WFSFACT}" \
+        "mfilt-${N}.comp.latencyhardwfr=${lat_fr}" \
+        "mfilt-${N}.comp.latencysoftwfr=${SOFT_LAT_FR}" \
+        "mkARPF-${N}.PFlatency=${pf_lat}"
     milk-fps-runstart -q "mfilt-${N}"
-    milk-stream-wait -q -t 10 "${PFX}modevalDM"
+    milk-stream-wait -q -t 10 "${PFX}modevalDM" "${PFX}modevalOL" "${PFX}modevalOL_buff"
     milk-fps-runstart -q "mvalC2dm-${N}"
     milk-stream-wait -q -t 10 "${PFX}dmC"
 }
@@ -650,12 +711,50 @@ cmd_close() {
     @set "f.mfilt-${N}.loopON=ON"
 }
 
+cmd_pf_on() {
+    local mix="${1:-${PF_MIX}}" pflat="${2:-}"
+    milk-fps-set -q \
+        "mfilt-${N}.comp.OLmodes=ON" \
+        "mfilt-${N}.comp.tbuff=ON" \
+        "mfilt-${N}.PF.NBblock=1" \
+        "mfilt-${N}.PF.mixcoeff=${mix}"
+    if [[ -n "${pflat}" ]]; then
+        milk-fps-set -q "mkARPF-${N}.PFlatency=${pflat}"
+    fi
+    milk-fps-runstart -q "applyARPF-${N}" "mkARPF-${N}"
+    milk-stream-wait -q -t 10 "${PFX}modevalPF" "${PFX}arPFmat"
+    @set "f.mfilt-${N}.PF.enable=ON"
+}
+
+cmd_pf_off() {
+    @set "f.mfilt-${N}.PF.enable=OFF"
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
+}
+
+cmd_testol() {
+    local tmode="${1:-2}" tampl="${2:-0.015}" tnbspl="${3:-240}" tgain="${4:-1.0}"
+    milk-fps-set -q \
+        "mfilt-${N}.comp.OLmodes=ON" \
+        "mfilt-${N}.testOL.mode=${tmode}" \
+        "mfilt-${N}.testOL.ampl=${tampl}" \
+        "mfilt-${N}.testOL.nbsample=${tnbspl}" \
+        "mfilt-${N}.testOL.updategain=${tgain}" \
+        "mfilt-${N}.testOL.enable=ON"
+    milk-stream-wait -q -t 30 "${PFX}modevalOL+$(( tnbspl + 10 ))"
+    local hlat=0.0 slat=0.0 pflat=0.0
+    @get hlat="f.mfilt-${N}.comp.latencyhardwfr" slat="f.mfilt-${N}.comp.latencysoftwfr"
+    pflat="$(awk -v h="${hlat}" -v s="${slat}" 'BEGIN { printf "%.3f", h + s }')"
+    milk-fps-set -q "mkARPF-${N}.PFlatency=${pflat}"
+}
+
 cmd_open() {
-    @set "f.mfilt-${N}.loopON=OFF"
+    @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF"
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
 }
 
 cmd_zero() {
-    @set "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
+    @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
     if @exists "s.${PFX}dmC"; then
         @calc "s.${PFX}dmC = s.${PFX}dmC * 0.0"
     fi
@@ -707,6 +806,9 @@ case "${subcmd}" in
     load-rm)   cmd_load_rm "$@" ;;
     takeref)   cmd_takeref "$@" ;;
     close)     cmd_close "$@" ;;
+    pf-on)     cmd_pf_on "$@" ;;
+    pf-off)    cmd_pf_off "$@" ;;
+    testol)    cmd_testol "$@" ;;
     open)      cmd_open "$@" ;;
     zero)      cmd_zero "$@" ;;
     status)    cmd_status "$@" ;;
