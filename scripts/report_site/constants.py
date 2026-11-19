@@ -131,7 +131,7 @@ FRIENDLY_FIG_LABELS: dict[str, str] = {
         "2-WFS + 1-DM Calibration Sweeps: Whitening Order, Lag Surface, Regimes & Convergence (2x2)"
     ),
     "calib_2wfs1dm_offload_and_zpo_2x3.png": (
-        "Virtual DM2->DM1 Offload Fidelity & Stage-2/Stage-3 ZPO Wind-Up Diagnosis (2x3)"
+        "DM2->DM1 Offload Matrix vs Actuator Geometry & Stage-2/Stage-3 Channel Activity (2x3)"
     ),
     "calib_2wfs1dm_method_comparison_2x2.png": (
         "Beyond W(z): Exact-Window Frequency-Domain AO-Dynamics vs AR(4) W(z) & OLS (2x2)"

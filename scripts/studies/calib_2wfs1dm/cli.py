@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Olivier Guyon et al
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""CLI entrypoint for the 2-WFS + Inter-Stage DM calibration study generator."""
+"""CLI entrypoint for the 2-WFS + Inter-Stage DM calibration study generator.
+
+All inputs are simulated telemetry from three cacaosim runs (integrator with LLOWFS open,
+integrator with LLOWFS closed, PSOL predictive with --calib-2wfs1dm).
+"""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from .analysis import compute_method_benchmarks, compute_offload_and_zpo, run_all_sweeps
+from .analysis import (
+    compute_method_benchmarks,
+    compute_offload,
+    compute_stage3_transient,
+    load_run_metrics,
+    run_all_sweeps,
+)
 from .markdown import write_outputs
 from .plots import render_all_figures
 
@@ -39,20 +49,24 @@ def main(argv: list[str] | None = None) -> int:
         if not (p / "telemetry").is_dir():
             raise FileNotFoundError(f"Missing required telemetry directory: {p / 'telemetry'}")
 
+    run = load_run_metrics(base_cal, base_op, base_cl)
+    phys_time = float(run["phys_time"])
+
     print("[calib-report] Step 1/5: Loading/running W(z) AR(p) sweeps & regime calibrations...")
     sweeps = run_all_sweeps(base_cal, base_op, base_cl, cache_dir)
 
     print("[calib-report] Step 2/5: Computing geometric DM2->DM1 offload & ZPO diagnostics...")
-    offload = compute_offload_and_zpo(base_cal, sweeps)
+    offload = compute_offload(base_cal, sweeps)
+    transient = compute_stage3_transient(base_cal, base_cl, run, sweeps, offload["dm2m"])
 
     print("[calib-report] Step 3/5: Running Exact-Window Frequency-Domain AO-Dynamics benchmarks...")
-    method_bench = compute_method_benchmarks(base_cal, base_op, base_cl, sweeps)
+    method_bench = compute_method_benchmarks(base_cal, base_op, base_cl, sweeps, phys_time)
 
     print("[calib-report] Step 4/5: Rendering 4 publication-grade diagnostic figures...")
-    render_all_figures(base_cal, out_dir, sweeps, offload, method_bench)
+    render_all_figures(base_cal, out_dir, sweeps, offload, method_bench, transient, phys_time)
 
     print("[calib-report] Step 5/5: Writing CSV, JSON, study_meta.json, and REPORT.md...")
-    write_outputs(base_cal, out_dir, sweeps, offload["offload_stats"], method_bench)
+    write_outputs(out_dir, cache_dir, run, sweeps, offload, method_bench, transient)
 
     print(f"[calib-report] Done -> {out_dir / 'REPORT.md'}")
     return 0

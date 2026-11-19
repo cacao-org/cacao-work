@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Olivier Guyon et al
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Telemetry loaders, resampling, and milk-mlt-calib2wfs1dm runner."""
+"""Telemetry loaders, selfRM references, git provenance, and milk-mlt-calib2wfs1dm runner."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 from typing import Any
 
 from astropy.io import fits
@@ -71,13 +72,106 @@ def sync_window(
     return out, ok
 
 
-def load_selfrm_og(base_dir: Path, n_modes: int = 40) -> np.ndarray:
-    """Compute on-sky/calibration active selfRM modal optical gain vector."""
-    sc = fits.getdata(base_dir / "selfRM_calib_stg2.fits").astype(np.float64)
-    ss = fits.getdata(base_dir / "selfRM_onsky_stg2.fits").astype(np.float64)
-    zc = int(np.argmax([np.mean(np.abs(np.diag(sc[z, :n_modes, :n_modes]))) for z in range(len(sc))]))
-    zs = int(np.argmax([np.mean(np.abs(np.diag(ss[z, :n_modes, :n_modes]))) for z in range(len(ss))]))
-    return np.diag(ss[zs, :n_modes, :n_modes]) / np.maximum(np.diag(sc[zc, :n_modes, :n_modes]), 1e-6)
+def load_selfrm_og(base_dir: Path, n_modes: int = 40, stage: int = 2) -> np.ndarray:
+    """Same-lag-slice selfRM modal optical gain (simulated on-sky / calibration ratio).
+
+    One lag slice is chosen per cube (largest mean |diag|) and used for every mode, and the
+    signed diagonals are divided. This is the ALTERNATE reference; the primary one is the
+    per-mode peak-|diag| ratio written by milk-mlt-calib2wfs1dm (og_selfrm.fits). Returns an
+    empty vector when the selfRM cubes are absent.
+    """
+    p_cal = base_dir / f"selfRM_calib_stg{stage}.fits"
+    p_sky = base_dir / f"selfRM_onsky_stg{stage}.fits"
+    if not (p_cal.is_file() and p_sky.is_file()):
+        return np.zeros(0)
+    sc = fits.getdata(p_cal).astype(np.float64)
+    ss = fits.getdata(p_sky).astype(np.float64)
+    n = min(n_modes, sc.shape[1], sc.shape[2], ss.shape[1], ss.shape[2])
+    zc = int(np.argmax([np.mean(np.abs(np.diag(s[:n, :n]))) for s in sc]))
+    zs = int(np.argmax([np.mean(np.abs(np.diag(s[:n, :n]))) for s in ss]))
+    return np.diag(ss[zs, :n, :n]) / np.maximum(np.diag(sc[zc, :n, :n]), 1e-6)
+
+
+def load_reference_og(
+    base_dir: Path, calib_dir: Path, n_modes: int = 40
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Return (primary, alternate, primary_kind) selfRM optical-gain reference vectors.
+
+    Every error in the report is measured against the PRIMARY vector so that tables, figures
+    and prose share a single reference. The primary is og_selfrm.fits from the calibration
+    tool (per-mode peak ratio, kind "peak"), which is also what the live run summary plots;
+    the alternate is the same-lag-slice ratio. Their spread is reported as the reference
+    uncertainty. Falls back to the same-slice ratio (kind "slice") if og_selfrm.fits is absent.
+    """
+    alt = load_selfrm_og(base_dir, n_modes)
+    p_og = calib_dir / "og_selfrm.fits"
+    if p_og.is_file():
+        pri = fits.getdata(p_og).astype(np.float64).ravel()[:n_modes]
+        if pri.size == n_modes and np.any(pri > 1e-6):
+            return pri, (alt if alt.size == n_modes else pri), "peak"
+    if alt.size != n_modes:
+        raise FileNotFoundError(f"No usable selfRM optical-gain reference under {base_dir}")
+    return alt, alt, "slice"
+
+
+def load_vec(path: Path) -> np.ndarray | None:
+    """Load a FITS vector as float64, or None when the file does not exist."""
+    return fits.getdata(path).astype(np.float64).ravel() if path.is_file() else None
+
+
+def git_state(repo_dir: Path) -> dict[str, Any]:
+    """Commit, branch and uncommitted-change flag of a git checkout (blank if not a repo)."""
+
+    def query(*args: str) -> str | None:
+        try:
+            res = subprocess.run(
+                ["git", "-C", str(repo_dir), *args],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return res.stdout.strip() if res.returncode == 0 else None
+
+    sha = query("rev-parse", "HEAD") or ""
+    status = query("status", "--porcelain", "--untracked-files=no") if sha else None
+    return {
+        "commit": sha,
+        "short_commit": sha[:7],
+        "branch": query("rev-parse", "--abbrev-ref", "HEAD") or "",
+        "dirty": None if status is None else bool(status),
+    }
+
+
+def flags_missing_at_commit(repo_dir: Path, sha: str, run_cmd: str) -> list[str]:
+    """Options used in `run_cmd` that do not exist anywhere in scripts/ or benches/ at `sha`.
+
+    A non-empty result means the run was launched from a working tree newer than the recorded
+    commit. Returns [] when the commit is not available locally.
+    """
+    if not sha or not run_cmd:
+        return []
+    flags = sorted({tok for tok in run_cmd.split() if tok.startswith("--") and len(tok) > 2})
+    missing: list[str] = []
+    for flag in flags:
+        try:
+            res = subprocess.run(
+                ["git", "-C", str(repo_dir), "grep", "-q", "-F", "-e", flag, sha, "--"]
+                + ["scripts", "benches"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if res.returncode == 1:
+            missing.append(flag)
+        elif res.returncode != 0:
+            return []
+    return missing
 
 
 def resample_dm2_to_dm1(
@@ -152,7 +246,11 @@ def run_calib2wfs1dm_cli(
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "16"
         env["OPENBLAS_NUM_THREADS"] = "1"
+        t_cli = time.perf_counter()
         res = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
         if res.returncode != 0:
             raise RuntimeError(f"milk-mlt-calib2wfs1dm failed:\n{res.stderr}\n{res.stdout}")
+        (out_dir / "cli_elapsed_s.txt").write_text(
+            f"{time.perf_counter() - t_cli:.3f}\n", encoding="utf-8"
+        )
     return json.loads(sum_json.read_text(encoding="utf-8"))
