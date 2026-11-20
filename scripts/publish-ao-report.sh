@@ -13,6 +13,7 @@ source "${SCRIPT_DIR}/../env.sh"
 REPORT_DIR="${CACAO_WORK_ROOT}/_work/ao3k_scexao"
 SITE_DIR="${CACAO_WORK_ROOT}/_work/_web_site"
 SLUG=""
+REBUILD_ALL=""
 PROJECT_TARGET="${FIREBASE_PROJECT:-}"
 HOSTING_SITE_ID=""
 INCLUDE_FITS=0
@@ -28,6 +29,7 @@ optional COMPUTE_REPORT.md + PNG/JSON/CSV assets) and publish to Firebase Hostin
 
 Options:
   --slug <slug>           Subpath under public/<slug>/ (default: basename of REPORT_DIR)
+  --rebuild-all <dir>     Rebuild all staged slugs in --site-dir from <dir>
   --site-dir <dir>        Firebase Hosting staging root (default: _work/_web_site)
   --project <id_or_name>  Target GCP/Firebase project (or set FIREBASE_PROJECT)
   --hosting-site <id>     Explicit Firebase Hosting site ID (default: auto-detect/create)
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --slug)
             SLUG="$2"
+            shift 2
+            ;;
+        --rebuild-all)
+            REBUILD_ALL="$2"
             shift 2
             ;;
         --site-dir)
@@ -85,25 +91,35 @@ if [[ ${#POSITIONAL[@]} -gt 1 ]]; then
     exit 2
 fi
 
-if [[ ${#POSITIONAL[@]} -eq 1 ]]; then
-    REPORT_DIR="${POSITIONAL[0]}"
+if [[ -n "${REBUILD_ALL}" ]]; then
+    if [[ ! -d "${REBUILD_ALL}" ]]; then
+        echo "Work root not found: ${REBUILD_ALL}" >&2
+        exit 1
+    fi
+    REBUILD_ALL="$(cd "${REBUILD_ALL}" && pwd)"
+    BUILD_ARGS=(
+        --rebuild-all "${REBUILD_ALL}"
+        --site-dir "${SITE_DIR}"
+    )
+else
+    if [[ ${#POSITIONAL[@]} -eq 1 ]]; then
+        REPORT_DIR="${POSITIONAL[0]}"
+    fi
+    if [[ ! -d "${REPORT_DIR}" ]]; then
+        echo "Report directory not found: ${REPORT_DIR}" >&2
+        exit 1
+    fi
+    REPORT_DIR="$(cd "${REPORT_DIR}" && pwd)"
+    if [[ -z "${SLUG}" ]]; then
+        SLUG="$(basename "${REPORT_DIR}")"
+    fi
+    BUILD_ARGS=(
+        --report-dir "${REPORT_DIR}"
+        --site-dir "${SITE_DIR}"
+        --slug "${SLUG}"
+    )
 fi
 
-if [[ ! -d "${REPORT_DIR}" ]]; then
-    echo "Report directory not found: ${REPORT_DIR}" >&2
-    exit 1
-fi
-REPORT_DIR="$(cd "${REPORT_DIR}" && pwd)"
-
-if [[ -z "${SLUG}" ]]; then
-    SLUG="$(basename "${REPORT_DIR}")"
-fi
-
-BUILD_ARGS=(
-    --report-dir "${REPORT_DIR}"
-    --site-dir "${SITE_DIR}"
-    --slug "${SLUG}"
-)
 if [[ ${INCLUDE_FITS} -eq 1 ]]; then
     BUILD_ARGS+=(--include-fits)
 fi
@@ -111,10 +127,14 @@ fi
 "${PYTHON_BIN}" "${SCRIPT_DIR}/build-ao-web-report.py" "${BUILD_ARGS[@]}"
 
 if [[ ${BUILD_ONLY} -eq 1 ]]; then
-    "${PYTHON_BIN}" - "${SITE_DIR}/public/${SLUG}" <<'PY'
+    SUMMARY_DIR="${SITE_DIR}/public"
+    if [[ -n "${SLUG}" ]]; then
+        SUMMARY_DIR="${SITE_DIR}/public/${SLUG}"
+    fi
+    "${PYTHON_BIN}" - "${SUMMARY_DIR}" <<'PY'
 import pathlib, sys
 d = pathlib.Path(sys.argv[1])
-files = [p for p in d.iterdir() if p.is_file()]
+files = [p for p in d.rglob("*") if p.is_file()]
 tot = sum(p.stat().st_size for p in files)
 print(f"[publish-ao-report] Build-only summary: {len(files)} files, {tot / 1048576:.2f} MiB")
 PY
@@ -257,4 +277,6 @@ echo "[publish-ao-report] Using Hosting site: ${RESOLVED_SITE_ID}"
 echo ""
 echo "[publish-ao-report] Live URLs:"
 echo "  Root   : https://${RESOLVED_SITE_ID}.web.app/"
-echo "  Report : https://${RESOLVED_SITE_ID}.web.app/${SLUG}/"
+if [[ -n "${SLUG}" ]]; then
+    echo "  Report : https://${RESOLVED_SITE_ID}.web.app/${SLUG}/"
+fi

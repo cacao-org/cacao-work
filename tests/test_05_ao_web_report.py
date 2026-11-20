@@ -307,9 +307,12 @@ def test_build_ao_web_report_markdown_and_staging(
         'href="https://github.com/cacao-org/cacao-work/commit/'
         '1111111222222233333334444444555555566666"'
     ) in how_html
-    assert 'href="../index.html">Front Page</a>' in how_html
+    tokens_css = (site_dir / "public" / "assets" / "css" / "tokens.css").read_text(encoding="utf-8")
+    assert 'href="../index.html">Home</a>' in how_html
+    assert 'href="../assets/css/tokens.css"' in how_html
+    assert "<style" not in how_html
     for cat_key in ("simulation", "calibration", "loop_operation", "analysis"):
-        assert f"--cat-{cat_key}:" in how_html
+        assert f"--cat-{cat_key}:" in tokens_css
         assert f'data-cu-cat="{cat_key}"' in how_html
         assert f"classDef cat_{cat_key} " in how_html
         assert f"classDef cat_{cat_key} " in index_html
@@ -328,43 +331,57 @@ def test_build_ao_web_report_markdown_and_staging(
     assert "class=\"checklist-item cat-calibration\"" in how_html
     assert "class=\"checklist-item cat-analysis\"" in how_html
 
-    # Root Front Page is served directly at / with 2 tables (Tech Reports + Simulations).
+    # Root Executive Hub is served directly at / while simulations live under /simulations/
+    # and the open-source stack & reproduction recipe live under /stack/.
     fb_cfg = json.loads((site_dir / "firebase.json").read_text(encoding="utf-8"))
     assert "redirects" not in fb_cfg["hosting"]
     assert "mp4" in fb_cfg["hosting"]["headers"][0]["source"]
+    assert "css" in fb_cfg["hosting"]["headers"][1]["source"]
+    assert "js" in fb_cfg["hosting"]["headers"][1]["source"]
 
     front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
     reports_html = (site_dir / "public" / "reports.html").read_text(encoding="utf-8")
     assert front_html == reports_html
     assert 'id="tech-reports-table"' in front_html
-    assert 'id="sim-reports-table"' in front_html
     assert "Knowledge Repository" in front_html
-    assert "https://github.com/cacao-org/cacao-work" in front_html
-    assert "https://github.com/milk-org/milk" in front_html
-    assert "git -C milk submodule update --init src/engine/ImageStreamIO" in front_html
-    assert "./scripts/build-all.sh" in front_html
-    assert "./scripts/run-ao3k-scexao.sh --save-telemetry speckle" in front_html
-    assert "82.8%" in front_html
-    assert "95.3%" in front_html
-    assert './demo_run/config.html' in front_html
-    assert './demo_run/optical.html' in front_html
-    assert './demo_run/runtime.html' in front_html
-    assert './demo_run/how_to_run.html' in front_html
-    assert 'class="sim-filter-panel"' in front_html
-    assert 'class="filter-cat-box cat-loop_operation"' in front_html
-    assert 'class="filter-cat-box cat-calibration"' in front_html
+    assert 'id="quick-guide"' in front_html
+    assert "Quick Guide" in front_html
+    assert 'class="domain-card domain-wavefront-control"' in front_html
+    assert 'href="./simulations/index.html"' in front_html
+    assert 'href="./stack/index.html"' in front_html
+    assert 'data-rel-root="."' in front_html
+
+    sims_html = (site_dir / "public" / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert 'id="sim-reports-table"' in sims_html
+    assert "82.8%" in sims_html
+    assert "95.3%" in sims_html
+    assert "../demo_run/config.html" in sims_html
+    assert "../demo_run/optical.html" in sims_html
+    assert "../demo_run/runtime.html" in sims_html
+    assert "../demo_run/how_to_run.html" in sims_html
+    assert 'class="sim-filter-panel"' in sims_html
+    assert 'class="filter-cat-box cat-loop_operation"' in sims_html
+    assert 'class="filter-cat-box cat-calibration"' in sims_html
     for ck in ("integrator", "ar", "eof"):
-        assert f'data-sim-ctrl="{ck}"' in front_html
-    assert 'data-sim-tri="llowfs"' in front_html
-    assert 'data-sim-tri="calib2wfs"' in front_html
-    assert 'data-val="any"' in front_html
-    assert 'data-val="on"' in front_html
-    assert 'data-val="off"' in front_html
-    assert 'data-ctrl="' in front_html
-    assert 'data-llowfs="' in front_html
-    assert 'data-calib2wfs="' in front_html
-    assert 'id="sim-filter-reset"' in front_html
-    assert 'id="sim-empty-msg"' in front_html
+        assert f'data-sim-ctrl="{ck}"' in sims_html
+    assert 'data-sim-tri="llowfs"' in sims_html
+    assert 'data-sim-tri="calib2wfs"' in sims_html
+    assert 'data-val="any"' in sims_html
+    assert 'data-val="on"' in sims_html
+    assert 'data-val="off"' in sims_html
+    assert 'data-ctrl="' in sims_html
+    assert 'data-llowfs="' in sims_html
+    assert 'data-calib2wfs="' in sims_html
+    assert 'id="sim-filter-reset"' in sims_html
+    assert 'id="sim-empty-msg"' in sims_html
+    assert 'class="nav-drop-menu"' in sims_html
+
+    stack_html = (site_dir / "public" / "stack" / "index.html").read_text(encoding="utf-8")
+    assert "https://github.com/cacao-org/cacao-work" in stack_html
+    assert "https://github.com/milk-org/milk" in stack_html
+    assert "git -C milk submodule update --init src/engine/ImageStreamIO" in stack_html
+    assert "./scripts/build-all.sh" in stack_html
+    assert "./scripts/run-ao3k-scexao.sh --save-telemetry speckle" in stack_html
 
 
 def test_publish_ao_report_build_only_and_include_fits(
@@ -552,6 +569,7 @@ def test_all_matrix_imshow_use_lower_origin(repo_root: Path) -> None:
     targets = [
         repo_root / "scripts" / "build-calib-2wfs1dm-report.py",
         repo_root / "scripts" / "build-predictive-control-report.py",
+        *sorted((repo_root / "scripts" / "studies").rglob("*.py")),
         repo_root.parent / "cacaosim" / "scripts" / "cacaosim-ao-report",
         repo_root.parent / "cacaosim" / "scripts" / "cacaosim-telemetry-video",
     ]
@@ -686,3 +704,184 @@ def test_compute_unit_categories_and_multiselect(
     assert '"category":"analysis"' in rt_html
     assert 'class="checklist-item cat-simulation"' in how_html
     assert 'class="cat-badge cat-loop_operation"' in how_html
+
+
+def test_topic_hierarchy_crossrefs_and_link_integrity(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify domain hubs, cross-refs, domain override, search index, and local link integrity."""
+    from html.parser import HTMLParser
+
+    site_dir = tmp_path / "web_site"
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+
+    sim_specs = [
+        (
+            "ao3k_scexao_lowfs_closed",
+            "AO3k + SCExAO Closed LLOWFS Baseline",
+            "coronagraphy-lowfs",
+            {"coronagraph_metrics": {"llowfs": {"enabled_closed_loop": True}}},
+        ),
+        (
+            "ao3k_scexao_predictive_ar8",
+            "AO3k + SCExAO PSOL AR(8)",
+            "wavefront-control",
+            {"predictive_control": {"enabled": True, "pf_order": 8}},
+        ),
+        (
+            "ao3k_scexao_calib2wfs1dm",
+            "AO3k + SCExAO 2-WFS/1-DM Calib",
+            "calibration-sysid",
+            {"calib_2wfs1dm": {"enabled": True}},
+        ),
+        ("ao3k_scexao", "AO3k + SCExAO Baseline Bench", "bench-runtime", {}),
+    ]
+    for idx, (slug, title, expected_dom, extra_metrics) in enumerate(sim_specs):
+        rdir = tmp_path / slug
+        rdir.mkdir(parents=True)
+        (rdir / "REPORT.md").write_text(f"# {title}\n\nSummary body.\n", encoding="utf-8")
+        metrics_payload: dict[str, object] = {
+            "summary": {
+                "total_wfe_nm": 90.0 + idx,
+                "vis_strehl": 0.70 + 0.02 * idx,
+                "nir_strehl": 0.90 + 0.01 * idx,
+            },
+            "parameters": {"bench_fps": 2000.0},
+            **extra_metrics,
+        }
+        (rdir / "ao3k_scexao_metrics.json").write_text(
+            json.dumps(metrics_payload),
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(rdir),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+        staged_meta = json.loads(
+            (site_dir / "public" / slug / "report_meta.json").read_text(encoding="utf-8")
+        )
+        assert staged_meta["domain"] == expected_dom
+
+    # Stage 2 tech reports: one overriding domain explicitly, one using keyword classification.
+    tr1 = tmp_path / "tr_calib_override"
+    tr1.mkdir(parents=True)
+    (tr1 / "REPORT.md").write_text("# Custom Calib Report\n\nBody.\n", encoding="utf-8")
+    (tr1 / "study_meta.json").write_text(
+        json.dumps(
+            {
+                "report_type": "tech_report",
+                "domain": "calibration-sysid",
+                "title": "Explicit Calibration Domain Study",
+                "referenced_simulations": ["ao3k_scexao_calib2wfs1dm", "ao3k_scexao_lowfs_closed"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    tr2 = tmp_path / "tr_pred_kw"
+    tr2.mkdir(parents=True)
+    (tr2 / "REPORT.md").write_text("# Predictive Study\n\nBody.\n", encoding="utf-8")
+    (tr2 / "study_meta.json").write_text(
+        json.dumps(
+            {
+                "report_type": "tech_report",
+                "title": "PSOL Predictive Control Overview",
+                "referenced_simulations": ["ao3k_scexao_predictive_ar8", "ao3k_scexao_lowfs_closed"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    for tdir, tslug in ((tr1, "tr_calib_override"), (tr2, "tr_pred_kw")):
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(tdir),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                tslug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+
+    pub_dir = site_dir / "public"
+    for did in ("wavefront-control", "calibration-sysid", "coronagraphy-lowfs", "bench-runtime"):
+        hub = pub_dir / "topics" / did / "index.html"
+        assert hub.is_file(), f"Missing topic hub: {hub}"
+    cal_hub_html = (pub_dir / "topics" / "calibration-sysid" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "Custom Calib Report" in cal_hub_html
+    assert "ao3k_scexao_lowfs_closed" in cal_hub_html
+    assert "Cross-ref" in cal_hub_html
+    bench_hub_html = (pub_dir / "topics" / "bench-runtime" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "Optical Bench, Compute &amp; Deployment Matrix" in bench_hub_html
+
+    search_js = (pub_dir / "assets" / "js" / "search-index.js").read_text(encoding="utf-8")
+    assert search_js.startswith("window.CACAO_SEARCH_INDEX=")
+    search_items = json.loads(search_js.removeprefix("window.CACAO_SEARCH_INDEX=").rstrip(";\n"))
+    assert any(item["path"] == "topics/wavefront-control/index.html" for item in search_items)
+    assert any(item["path"] == "tr_calib_override/index.html" for item in search_items)
+
+    class LinkCollector(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refs: list[str] = []
+            self.has_style = False
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "style":
+                self.has_style = True
+            for k, v in attrs:
+                if k in ("href", "src") and v:
+                    self.refs.append(v)
+
+    html_files = sorted(pub_dir.rglob("*.html"))
+    assert len(html_files) >= 20
+    for html_path in html_files:
+        parser = LinkCollector()
+        parser.feed(html_path.read_text(encoding="utf-8"))
+        assert not parser.has_style, f"Unexpected inline <style> in {html_path}"
+        for ref in parser.refs:
+            if ref.startswith(("http://", "https://", "#", "data:", "javascript:", "mailto:")):
+                continue
+            rel_part = ref.split("#", 1)[0].split("?", 1)[0]
+            if not rel_part:
+                continue
+            target = (html_path.parent / rel_part).resolve()
+            assert target.exists(), f"Broken local link {ref!r} in {html_path}"
+
+    for cli_name in (
+        "build-ao-web-report.py",
+        "build-calib-2wfs1dm-report.py",
+        "build-predictive-control-report.py",
+    ):
+        res_help = subprocess.run(
+            [sys.executable, str(repo_root / "scripts" / cli_name), "--help"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_help.returncode == 0, f"{cli_name} --help failed: {res_help.stderr}"

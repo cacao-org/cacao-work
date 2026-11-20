@@ -1,0 +1,119 @@
+{
+  "domains": [
+    {
+      "id": "wavefront-control",
+      "title": "Wavefront Control & Prediction",
+      "short_title": "Wavefront Control",
+      "accent": "#2563eb",
+      "description": "Modal leaky integrators, PSOL per-mode diagonal AR(4..64) predictors, and full cross-mode Block-EOF VAR(P) real-time controllers.",
+      "subgroups": [
+        {
+          "id": "diagonal-ar",
+          "label": "PSOL Diagonal AR(P)"
+        },
+        {
+          "id": "block-eof",
+          "label": "Cross-Mode Block-EOF (VAR)"
+        },
+        {
+          "id": "integrator",
+          "label": "Modal Integrators"
+        }
+      ],
+      "keywords": [
+        "predictive",
+        "eof",
+        "psol",
+        "ar(",
+        "var(",
+        "wavefront control",
+        "control law",
+        "predictive_control"
+      ]
+    },
+    {
+      "id": "calibration-sysid",
+      "title": "Calibration & System ID",
+      "short_title": "Calibration & SysID",
+      "accent": "#b45309",
+      "description": "Probe-free 2-WFS + inter-stage DM closed-loop system identification, on-sky PyWFS optical gain tracking, and blind DM2-to-DM1 offloading.",
+      "subgroups": [
+        {
+          "id": "telemetry-sysid",
+          "label": "2-WFS/1-DM Telemetry SysID"
+        },
+        {
+          "id": "optical-gain",
+          "label": "Optical Gain & ZPO Diagnostics"
+        }
+      ],
+      "keywords": [
+        "calib",
+        "sysid",
+        "2-wfs",
+        "2wfs1dm",
+        "system identification",
+        "optical gain",
+        "offload",
+        "whitening"
+      ]
+    },
+    {
+      "id": "coronagraphy-lowfs",
+      "title": "Coronagraphy & LLOWFS",
+      "short_title": "Coronagraphy & LLOWFS",
+      "accent": "#047857",
+      "description": "H-band Lyot coronagraph contrast, focal-plane speckle suppression, and 500 Hz Stage-3 reflective-Lyot low-order wavefront sensing.",
+      "subgroups": [
+        {
+          "id": "llowfs-control",
+          "label": "Stage-3 LLOWFS Control"
+        },
+        {
+          "id": "lyot-contrast",
+          "label": "Lyot Coronagraph Contrast"
+        }
+      ],
+      "keywords": [
+        "coronagraph",
+        "coro",
+        "llowfs",
+        "lowfs",
+        "lyot",
+        "contrast",
+        "speckle"
+      ]
+    },
+    {
+      "id": "bench-runtime",
+      "title": "Optical Bench & Runtime",
+      "short_title": "Bench & Runtime",
+      "accent": "#7e22ce",
+      "description": "Polychromatic Subaru AO3k + SCExAO optical bench modeling, GPU-fused cacaosim sub-stepping, CACAO FPS compute units, and deployment.",
+      "subgroups": [
+        {
+          "id": "optical-bench",
+          "label": "Optical Bench & Passbands"
+        },
+        {
+          "id": "compute-runtime",
+          "label": "Compute & SHM Runtime"
+        },
+        {
+          "id": "deployment",
+          "label": "Hardware Deployment"
+        }
+      ],
+      "keywords": [
+        "bench",
+        "runtime",
+        "cacaosim",
+        "compute",
+        "architecture",
+        "fps",
+        "deployment",
+        "shm"
+      ]
+    }
+  ]
+}

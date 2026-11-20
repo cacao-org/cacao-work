@@ -1,0 +1,155 @@
+/* SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+   SPDX-License-Identifier: LGPL-3.0-or-later */
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 0.85rem 0 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+th, td {
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+th {
+  background: var(--surface-alt);
+  font-weight: 600;
+}
+
+th.sort-col { cursor: pointer; user-select: none; }
+th.sort-col:hover { color: var(--accent); }
+th.sort-col::after { content: " ⇅"; font-size: 0.72em; opacity: 0.45; }
+th.sort-asc::after { content: " ▲"; opacity: 0.95; color: var(--accent); }
+th.sort-desc::after { content: " ▼"; opacity: 0.95; color: var(--accent); }
+
+tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--surface-alt); }
+
+.wrap-cell {
+  white-space: normal;
+  min-width: 220px;
+}
+
+.param-cell {
+  white-space: normal;
+  min-width: 220px;
+  max-width: 390px;
+}
+
+.sublinks-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.28rem;
+  font-size: 0.77rem;
+}
+
+.sublinks-row a {
+  padding: 0.08rem 0.38rem;
+  border-radius: 4px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.sublinks-row a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.shared-params {
+  margin: -0.75rem 0 1.4rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.detail-row td {
+  background: var(--surface);
+  white-space: normal;
+  font-size: 0.82rem;
+}
+
+tr.cat-group-row td {
+  white-space: normal;
+  font-size: 0.84rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.cat-group-hdr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cat-group-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cat-group-count { font-size: 0.79rem; font-weight: 600; opacity: 0.88; }
+
+tr.cat-group-row.cat-simulation,
+tbody tr.cat-group-row.cat-simulation:hover {
+  background: var(--cat-simulation-soft);
+  color: var(--cat-simulation-text);
+  border-top: 2px solid var(--cat-simulation-border);
+}
+tr.cat-group-row.cat-simulation td:first-child { border-left: 4px solid var(--cat-simulation); }
+
+tr.cat-group-row.cat-calibration,
+tbody tr.cat-group-row.cat-calibration:hover {
+  background: var(--cat-calibration-soft);
+  color: var(--cat-calibration-text);
+  border-top: 2px solid var(--cat-calibration-border);
+}
+tr.cat-group-row.cat-calibration td:first-child { border-left: 4px solid var(--cat-calibration); }
+
+tr.cat-group-row.cat-loop_operation,
+tbody tr.cat-group-row.cat-loop_operation:hover {
+  background: var(--cat-loop_operation-soft);
+  color: var(--cat-loop_operation-text);
+  border-top: 2px solid var(--cat-loop_operation-border);
+}
+tr.cat-group-row.cat-loop_operation td:first-child {
+  border-left: 4px solid var(--cat-loop_operation);
+}
+
+tr.cat-group-row.cat-analysis,
+tbody tr.cat-group-row.cat-analysis:hover {
+  background: var(--cat-analysis-soft);
+  color: var(--cat-analysis-text);
+  border-top: 2px solid var(--cat-analysis-border);
+}
+tr.cat-group-row.cat-analysis td:first-child { border-left: 4px solid var(--cat-analysis); }
+
+.cat-row.cat-simulation td:first-child,
+.cat-detail-row.cat-simulation td:first-child { border-left: 4px solid var(--cat-simulation); }
+
+.cat-row.cat-calibration td:first-child,
+.cat-detail-row.cat-calibration td:first-child { border-left: 4px solid var(--cat-calibration); }
+
+.cat-row.cat-loop_operation td:first-child,
+.cat-detail-row.cat-loop_operation td:first-child {
+  border-left: 4px solid var(--cat-loop_operation);
+}
+
+.cat-row.cat-analysis td:first-child,
+.cat-detail-row.cat-analysis td:first-child { border-left: 4px solid var(--cat-analysis); }

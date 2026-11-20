@@ -219,20 +219,25 @@ def test_front_page_changed_parameters_and_calib_2wfs1dm(
         wfe_nm=57.5,
     )
 
-    front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
-    assert '<th style="text-align: left;">Changed Parameters</th>' in front_html
-    assert '<th style="text-align: right;">2-WFS/1-DM Calib</th>' in front_html
-    assert "2-WFS/1-DM CALIB" in front_html
-    assert "Mdb=0.72" in front_html
-    assert "3.9% selfRM" in front_html
-    assert "R&sup2;_A=0.77" in front_html
-    assert "param-pill-diff" in front_html
-    assert "Shared parameters across all 4 runs:" in front_html
+    sims_html = (site_dir / "public" / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert '<th style="text-align: left;">Changed Parameters</th>' in sims_html
+    assert '<th style="text-align: right;">2-WFS/1-DM Calib</th>' in sims_html
+    assert "2-WFS/1-DM CALIB" in sims_html
+    assert "Mdb=0.72" in sims_html
+    assert "3.9% selfRM" in sims_html
+    assert "R&sup2;_A=0.77" in sims_html
+    assert "param-pill-diff" in sims_html
+    assert "Shared parameters across all 4 runs:" in sims_html
     # Seeing & Gain2 did NOT change yet, so they must appear in the shared strip.
-    shared_section = front_html.split("Shared parameters across all 4 runs:")[1].split("</div>")[0]
+    shared_section = sims_html.split("Shared parameters across all 4 runs:")[1].split("</div>")[0]
     assert 'Seeing=<code>0.60"</code>' in shared_section
     assert "Gain2=<code>0.35</code>" in shared_section
     assert "Control Law=" not in shared_section
+
+    cal_hub = (site_dir / "public" / "topics" / "calibration-sysid" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "<code>r4_calib</code>" in cal_hub
 
     # Verify individual calibration pages stage figure, downloadable JSON, & compute unit.
     calib_idx = (site_dir / "public" / "r4_calib" / "index.html").read_text(encoding="utf-8")
@@ -249,12 +254,12 @@ def test_front_page_changed_parameters_and_calib_2wfs1dm(
     _stage_synthetic_run(
         repo_root, tmp_path, site_dir, "r5_seeing08", seeing=0.80, gain2=0.50, phys_time=10.0
     )
-    front_html_5 = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
-    assert "Baseline</span>" in front_html_5
-    assert 'Seeing: <strong><code>0.80"</code></strong>' in front_html_5
-    assert "Gain2: <strong><code>0.50</code></strong>" in front_html_5
-    assert "Phys Time: <strong><code>10.0 s</code></strong>" in front_html_5
-    shared_5 = front_html_5.split("Shared parameters across all 5 runs:")[1].split("</div>")[0]
+    sims_html_5 = (site_dir / "public" / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert "Baseline</span>" in sims_html_5
+    assert 'Seeing: <strong><code>0.80"</code></strong>' in sims_html_5
+    assert "Gain2: <strong><code>0.50</code></strong>" in sims_html_5
+    assert "Phys Time: <strong><code>10.0 s</code></strong>" in sims_html_5
+    shared_5 = sims_html_5.split("Shared parameters across all 5 runs:")[1].split("</div>")[0]
     assert "Seeing=" not in shared_5
     assert "Gain2=" not in shared_5
     assert "Gain1=<code>0.35</code>" in shared_5

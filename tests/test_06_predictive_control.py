@@ -165,16 +165,25 @@ def test_web_report_three_way_predictive_comparison(
 
     front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
     assert 'id="tech-reports-table"' in front_html
-    assert 'id="sim-reports-table"' in front_html
-    assert "PSOL AR(8) PREDICTIVE" in front_html
-    assert "<strong>PSOL AR(8) Predictive</strong>" in front_html
-    assert "Modal Integrator" in front_html
-    assert "83.1 nm" in front_html
+    assert 'href="./simulations/index.html"' in front_html
 
-    idx_open = front_html.index("<code>run_open</code>")
-    idx_closed = front_html.index("<code>run_closed</code>")
-    idx_pred = front_html.index("<code>run_predictive</code>")
+    sims_html = (site_dir / "public" / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert 'id="sim-reports-table"' in sims_html
+    assert "PSOL AR(8) PREDICTIVE" in sims_html
+    assert "<strong>PSOL AR(8) Predictive</strong>" in sims_html
+    assert "Modal Integrator" in sims_html
+    assert "83.1 nm" in sims_html
+
+    sim_tbl_html = sims_html.split('id="sim-reports-table"')[1].split("</table>")[0]
+    idx_open = sim_tbl_html.index("<code>run_open</code>")
+    idx_closed = sim_tbl_html.index("<code>run_closed</code>")
+    idx_pred = sim_tbl_html.index("<code>run_predictive</code>")
     assert idx_open < idx_closed < idx_pred
+
+    wf_hub = (site_dir / "public" / "topics" / "wavefront-control" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "<code>run_predictive</code>" in wf_hub
 
     pred_opt = (site_dir / "public" / "run_predictive" / "optical.html").read_text(
         encoding="utf-8"
@@ -282,13 +291,19 @@ def test_web_report_ar_order_sweep_and_featured_study(
     assert res_s.returncode == 0, res_s.stderr + res_s.stdout
 
     front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
+    sims_html = (site_dir / "public" / "simulations" / "index.html").read_text(encoding="utf-8")
+    wf_hub = (site_dir / "public" / "topics" / "wavefront-control" / "index.html").read_text(
+        encoding="utf-8"
+    )
     t1_html = front_html.split('id="tech-reports-table"')[1].split("</table>")[0]
-    t2_html = front_html.split('id="sim-reports-table"')[1].split("</table>")[0]
+    t2_html = sims_html.split('id="sim-reports-table"')[1].split("</table>")[0]
     assert './predictive_control_report/index.html' in t1_html
     assert "Predictive Control Report" in t1_html
     assert t2_html.index("<code>run_ar4</code>") < t2_html.index("<code>run_ar8</code>")
     assert t2_html.index("<code>run_ar8</code>") < t2_html.index("<code>run_ar16</code>")
     assert t2_html.index("<code>run_ar16</code>") < t2_html.index("<code>run_ar32</code>")
+    assert "../../predictive_control_report/index.html" in wf_hub
+    assert "<code>run_ar16</code>" in wf_hub
 
     study_html = (
         site_dir / "public" / "predictive_control_report" / "index.html"
