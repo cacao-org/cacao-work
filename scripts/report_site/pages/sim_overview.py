@@ -160,6 +160,11 @@ def build_sim_overview_html(
         ("cacaosim_gui_schematic.png", "config.html", "Optical Bench Schematic (Configuration)"),
         ("psf_comparison_2x3.png", "optical.html", "Long-Exposure PSFs (Optical Performance)"),
         ("coro_before_after_psf.png", "optical.html", "Lyot Coronagraph (Optical Performance)"),
+        (
+            "eof_pf_matrix_3d.png",
+            "optical.html#eof-3d-predictive-matrix",
+            "3D Modal Predictive Matrix PF (EOF)",
+        ),
         ("compute_timeline_4x1.png", "runtime.html", "Compute & Power Timeline (Runtime)"),
     ):
         if (out_slug_dir / fname).is_file():

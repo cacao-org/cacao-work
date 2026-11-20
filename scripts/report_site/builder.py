@@ -15,6 +15,7 @@ from .constants import ASSET_EXTS
 from .cross_links import refresh_cross_links
 from .extractors import (
     build_compute_unit_catalog,
+    extract_eof_pf_data,
     extract_metrics_highlights,
     extract_optical_explorer_data,
     extract_referenced_simulations,
@@ -40,6 +41,7 @@ from .pages import (
     build_telemetry_files_section,
     build_topic_hub_html,
 )
+from .pages.fragments import safe_json_embed
 from .taxonomy import build_site_hierarchy, classify_report, load_taxonomy
 
 
@@ -252,6 +254,12 @@ def build_site(
         bench_path = find_bench_path(out_slug_dir)
         bench_sections = parse_bench_file(bench_path)
         explorer_data = extract_optical_explorer_data(out_slug_dir, metrics_data)
+        eof_pf_data = extract_eof_pf_data(report_dir, metrics_data)
+        if eof_pf_data is not None:
+            (out_slug_dir / "eof_pf_data.js").write_text(
+                f"window.CACAO_EOF_PF_DATA={safe_json_embed(eof_pf_data)};\n",
+                encoding="utf-8",
+            )
         runtime_data = extract_runtime_explorer_data(out_slug_dir)
         runtime_summary = extract_runtime_summary(runtime_data)
         units = build_compute_unit_catalog(
@@ -342,6 +350,7 @@ def build_site(
             hierarchy=hierarchy,
             optical_md=sections["optical"],
             explorer_data=explorer_data,
+            eof_pf_data=eof_pf_data,
             staged_files=staged_files,
             ctx=ctx,
             has_compute_report=has_compute,

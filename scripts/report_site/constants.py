@@ -93,6 +93,13 @@ FRIENDLY_FIG_LABELS: dict[str, str] = {
     "predictive_control_summary_2x2.png": (
         "PSOL Auto-Regressive Predictive Control Filter & Modal Residual Summary (2x2)"
     ),
+    "eof_pf_matrix_3d.png": (
+        "3D Modal Predictive Matrix PF(out_i, lag_k, in_j) — Volumetric Slices, "
+        "Cross-Mode Coupling & Block/Lag Structure (2x3)"
+    ),
+    "eof_pf_lag_slices.png": (
+        "3D Modal Predictive Matrix PF — Signed 2D Cross-Mode Lag Slices Across Lookback Taps"
+    ),
     "ar_order_optical_coro_summary_2x3.png": (
         "Optical, Wavefront & Lyot Coronagraph Performance vs. AR Predictive Order (2x3)"
     ),

@@ -885,3 +885,206 @@ def test_topic_hierarchy_crossrefs_and_link_integrity(
             check=False,
         )
         assert res_help.returncode == 0, f"{cli_name} --help failed: {res_help.stderr}"
+
+
+def test_eof_pf_extractor_and_optical_page(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify pure-stdlib EOF 3D PF extractor, int8 round-trip, and optical page."""
+    import base64
+    import numpy as np
+    from astropy.io import fits
+
+    scripts_dir = str(repo_root / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from report_site.extractors import extract_eof_pf_data
+
+    rep_dir = tmp_path / "eof_synth"
+    rep_dir.mkdir(parents=True)
+    n_modes, b_sz, p_ord, diag_tail = 32, 16, 4, 8
+
+    def build_eof_mat(diag_scale: float) -> tuple[np.ndarray, np.ndarray]:
+        sub0 = np.zeros((b_sz, p_ord, b_sz), dtype=np.float32)
+        taps = np.array([0.65, 0.25, -0.05, -0.15], dtype=np.float32) * diag_scale
+        for m in range(b_sz):
+            sub0[m, :, m] = taps
+        quad = np.array([0.18, 0.14, 0.08, 0.02], dtype=np.float32)
+        sub0[3, :, 4] = quad
+        sub0[4, :, 3] = -quad
+        fmat = np.zeros((n_modes, p_ord * b_sz + diag_tail), dtype=np.float32)
+        fmat[:b_sz, : p_ord * b_sz] = sub0.reshape(b_sz, p_ord * b_sz)
+        for m in range(b_sz, n_modes):
+            for k in range(p_ord):
+                fmat[m, k * b_sz + (m - b_sz)] = taps[k] * 0.8
+        return fmat, sub0
+
+    fmat1, sub0_1 = build_eof_mat(1.0)
+    fmat2, _ = build_eof_mat(0.85)
+    fits.writeto(rep_dir / "aol1_eofPFmat.fits", fmat1, overwrite=True)
+    fits.writeto(rep_dir / "aol2_eofPFmat.fits", fmat2[:, : p_ord * b_sz], overwrite=True)
+
+    metrics = {
+        "star_and_atmosphere": {"seeing_arcsec_500nm": 0.60, "physical_time_s": 5.0},
+        "psf_metrics": {
+            "vis": {"final": {"strehl_peak": 0.81}},
+            "nir": {"final": {"strehl_peak": 0.95}},
+        },
+        "wavefront_metrics": {"locations": {"final": {"quad_total_rms_nm": 56.0}}},
+        "predictive_control": {
+            "enabled": True,
+            "pf_mode": "eof",
+            "pf_blocksize": b_sz,
+            "pf_order": p_ord,
+            "stage1": {"pflatency_fr": 2.40, "var_red_pct": 41.8},
+            "stage2": {"pflatency_fr": 2.58, "var_red_pct": 34.1},
+        },
+    }
+    (rep_dir / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(metrics) + "\n", encoding="utf-8"
+    )
+    (rep_dir / "REPORT.md").write_text(
+        "# EOF Synthetic Run\n\n## Summary\n\nBody.\n", encoding="utf-8"
+    )
+
+    extracted = extract_eof_pf_data(rep_dir, metrics)
+    assert extracted is not None
+    assert extracted["pf_mode"] == "eof"
+    assert len(extracted["stages"]) == 2
+    st1 = extracted["stages"][0]
+    assert st1["blocksize"] == b_sz
+    assert st1["order"] == p_ord
+    assert st1["n_blocks"] == 2
+    blk0 = st1["blocks"][0]
+    assert blk0["top_pairs"][0][:2] in ([3, 4], [4, 3])
+    raw_q = np.frombuffer(base64.b64decode(blk0["data_b64"]), dtype=np.int8)
+    rec = np.sign(raw_q) * ((raw_q.astype(np.float64) / 127.0) ** 2) * blk0["vmax"]
+    rec_3d = rec.reshape(b_sz, p_ord, b_sz)
+    assert np.max(np.abs(rec_3d - sub0_1)) < 0.01
+
+    site_dir = tmp_path / "web_site"
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--report-dir",
+            str(rep_dir),
+            "--site-dir",
+            str(site_dir),
+            "--slug",
+            "eof_synth",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+    slug_out = site_dir / "public" / "eof_synth"
+    assert (slug_out / "eof_pf_data.js").is_file()
+    opt_html = (slug_out / "optical.html").read_text(encoding="utf-8")
+    assert 'id="eof-pf-panel"' in opt_html
+    assert "eof_pf_viewer.js" in opt_html
+    assert 'src="eof_pf_data.js"' in opt_html
+
+    ar_dir = tmp_path / "ar_synth"
+    ar_dir.mkdir(parents=True)
+    (ar_dir / "REPORT.md").write_text("# AR Run\n\nBody.\n", encoding="utf-8")
+    (ar_dir / "ao3k_scexao_metrics.json").write_text(
+        json.dumps({"predictive_control": {"enabled": True, "pf_mode": "ar", "pf_order": 8}}),
+        encoding="utf-8",
+    )
+    res_ar = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--report-dir",
+            str(ar_dir),
+            "--site-dir",
+            str(site_dir),
+            "--slug",
+            "ar_synth",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res_ar.returncode == 0, res_ar.stderr + res_ar.stdout
+    ar_out = site_dir / "public" / "ar_synth"
+    assert not (ar_out / "eof_pf_data.js").exists()
+    ar_opt = (ar_out / "optical.html").read_text(encoding="utf-8")
+    assert 'id="eof-pf-panel"' not in ar_opt
+    assert "eof_pf_viewer.js" not in ar_opt
+
+
+def test_cacaosim_ao_report_replot_eof_pf(
+    stack_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    """Verify cacaosim-ao-report --replot-eof-pf generates 3D PF plots & REPORT.md."""
+    import numpy as np
+    from astropy.io import fits
+
+    rep_dir = tmp_path / "eof_replot"
+    rep_dir.mkdir(parents=True)
+    n_modes, b_sz, p_ord = 32, 16, 4
+    mat = np.zeros((n_modes, p_ord * b_sz), dtype=np.float32)
+    taps = np.array([0.6, 0.2, -0.05, -0.1], dtype=np.float32)
+    for m in range(b_sz):
+        for k in range(p_ord):
+            mat[m, k * b_sz + m] = taps[k]
+    mat[3, 4] = 0.16
+    mat[4, 3] = -0.16
+    fits.writeto(rep_dir / "aol1_eofPFmat.fits", mat, overwrite=True)
+    fits.writeto(rep_dir / "aol2_eofPFmat.fits", mat * 0.9, overwrite=True)
+
+    (rep_dir / "pf_stats.json").write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "pf_mode": "eof",
+                "pf_blocksize": b_sz,
+                "pf_order": p_ord,
+                "pf_mix": 0.90,
+                "pf_reg": 0.0001,
+                "stage1": {"pflatency_fr": 2.4, "var_red_pct": 40.0, "offdiag_frac": 0.2},
+                "stage2": {"pflatency_fr": 2.5, "var_red_pct": 33.0, "offdiag_frac": 0.1},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (rep_dir / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(
+            {
+                "configuration": "Synthetic EOF Run",
+                "telescope": {"diameter_m": 7.95, "cobs": 0.307, "tput_tel": 0.20},
+                "star_and_atmosphere": {"seeing_arcsec_500nm": 0.60, "physical_time_s": 5.0},
+                "loops": {
+                    "stage1_ao3k": {"n_cm_modes": n_modes, "gain": 0.35, "mult": 0.98},
+                    "stage2_scexao": {"n_cm_modes": n_modes, "gain": 0.35, "mult": 0.98},
+                },
+                "psf_metrics": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    res = subprocess.run(
+        ["cacaosim-ao-report", "--replot-eof-pf", str(rep_dir)],
+        env=stack_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+    assert (rep_dir / "eof_pf_matrix_3d.png").is_file()
+    assert (rep_dir / "eof_pf_lag_slices.png").is_file()
+    rep_txt = (rep_dir / "REPORT.md").read_text(encoding="utf-8")
+    assert "Block-EOF(B=16, P=4)" in rep_txt
+    assert "eof_pf_matrix_3d.png" in rep_txt
+    assert "eof_pf_lag_slices.png" in rep_txt

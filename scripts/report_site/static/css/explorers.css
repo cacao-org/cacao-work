@@ -329,3 +329,85 @@ canvas.chart-canvas {
   text-align: center;
   margin: 0.65rem 0;
 }
+
+.eof-pf-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(270px, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .eof-pf-grid { grid-template-columns: 1fr; }
+}
+
+canvas.eof-pf-canvas {
+  display: block;
+  width: 100%;
+  height: 460px;
+  user-select: none;
+}
+
+canvas.eof-pf-kernel-canvas {
+  display: block;
+  width: 100%;
+  height: 195px;
+}
+
+.eof-pf-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.eof-pf-side-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.78rem;
+  background: var(--surface);
+}
+
+.eof-pf-side-card h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.88rem;
+}
+
+.eof-pf-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.eof-pf-stat {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.34rem 0.48rem;
+  background: var(--surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.75rem;
+}
+
+.eof-pf-stat span { color: var(--muted); }
+.eof-pf-stat strong { font-size: 0.81rem; color: var(--text); }
+
+.eof-pf-pair-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.eof-pf-ctrl-label {
+  font-size: 0.79rem;
+  font-weight: 600;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.eof-pf-hint {
+  font-size: 0.76rem;
+  margin-top: 0.35rem;
+}

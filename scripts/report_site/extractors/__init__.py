@@ -15,6 +15,7 @@ from .common import (
     meta_sort_key,
 )
 from .compute_units import build_compute_unit_catalog, extract_referenced_simulations
+from .eof_pf import extract_eof_pf_data
 from .highlights import extract_metrics_highlights
 from .optical import extract_optical_explorer_data
 from .params import TRACKED_PARAMS, extract_run_parameters, resolve_run_parameters
@@ -33,6 +34,7 @@ __all__ = [
     "classify_phase_category",
     "classify_shm_category",
     "classify_unit_category",
+    "extract_eof_pf_data",
     "extract_metrics_highlights",
     "extract_optical_explorer_data",
     "extract_referenced_simulations",
