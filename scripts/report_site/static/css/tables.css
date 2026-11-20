@@ -42,7 +42,7 @@ tbody tr:hover { background: var(--surface-alt); }
 .param-cell {
   white-space: normal;
   min-width: 220px;
-  max-width: 390px;
+  max-width: 520px;
 }
 
 .sublinks-row {

@@ -11,7 +11,8 @@
 }
 
 .nav-inner {
-  max-width: 1440px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
   padding: 0.55rem 1.25rem;
   display: flex;
@@ -178,7 +179,8 @@
 }
 
 .subnav-inner {
-  max-width: 1440px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
   padding: 0.42rem 1.25rem;
   display: flex;
