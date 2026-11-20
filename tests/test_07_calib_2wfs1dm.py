@@ -234,10 +234,15 @@ def test_front_page_changed_parameters_and_calib_2wfs1dm(
     assert "Gain2=<code>0.35</code>" in shared_section
     assert "Control Law=" not in shared_section
 
-    # Verify individual calibration page stages both the figure and downloadable summary JSON.
-    calib_html = (site_dir / "public" / "r4_calib" / "index.html").read_text(encoding="utf-8")
-    assert 'src="calib_2wfs1dm_summary_2x2.png"' in calib_html
-    assert 'href="calib_2wfs1dm_summary.json"' in calib_html
+    # Verify individual calibration pages stage figure, downloadable JSON, & compute unit.
+    calib_idx = (site_dir / "public" / "r4_calib" / "index.html").read_text(encoding="utf-8")
+    calib_opt = (site_dir / "public" / "r4_calib" / "optical.html").read_text(encoding="utf-8")
+    calib_how = (site_dir / "public" / "r4_calib" / "how_to_run.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'src="calib_2wfs1dm_summary_2x2.png"' in calib_opt
+    assert 'href="calib_2wfs1dm_summary.json"' in calib_idx
+    assert "milk-mlt-calib2wfs1dm" in calib_how
 
     # Stage 2 more runs varying Seeing, Gain2, and Phys Time -> >4 varying params switches to
     # compact diff-only pills against Baseline so the table remains readable.

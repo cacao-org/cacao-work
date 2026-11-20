@@ -129,6 +129,8 @@ def _create_synthetic_report(report_dir: Path) -> None:
             "",
             "![Optical Bench 32-Bin Spectra](chromatic_passbands_2x1.png)",
             "",
+            "## Long-Exposure PSF Summary",
+            "",
             "| Band | Strehl | Mode |",
             "| :--- | ---: | :---: |",
             "| Vis | 36.1% | `aol2_imWFS2` |",
@@ -138,11 +140,15 @@ def _create_synthetic_report(report_dir: Path) -> None:
             "    ATM --> DM1",
             "```",
             "",
+            "## Figures",
+            "",
             "### Hardware Simulator GUI (cacaosim-CTRL)",
             "",
             "- ![cacaosim-CTRL Builder](cacaosim_gui_builder.png)",
             "- ![cacaosim-CTRL Tables](cacaosim_gui_tables.png)",
             "- ![cacaosim-CTRL Status](cacaosim_gui_status.png)",
+            "",
+            "### Time-Series & Sampled Instant Snapshots",
             "",
             "- ![PSF Comparison](psf_comparison_2x3.png)",
             "- ![Wavefront Error & Strehl Time Series](wf_strehl_timeseries_4x1.png)",
@@ -208,83 +214,121 @@ def test_build_ao_web_report_markdown_and_staging(
 
     slug_out = site_dir / "public" / "demo_run"
     index_html = (slug_out / "index.html").read_text(encoding="utf-8")
+    config_html = (slug_out / "config.html").read_text(encoding="utf-8")
+    optical_html = (slug_out / "optical.html").read_text(encoding="utf-8")
+    runtime_html = (slug_out / "runtime.html").read_text(encoding="utf-8")
     compute_html = (slug_out / "compute_report.html").read_text(encoding="utf-8")
+    how_html = (slug_out / "how_to_run.html").read_text(encoding="utf-8")
 
-    # Bullet with pipe stays in <ul>, while GFM table gets alignments.
+    # All 5 simulation views exist cleanly.
+    assert runtime_html == compute_html
+    for sub in ("config.html", "optical.html", "runtime.html", "how_to_run.html"):
+        assert f'href="{sub}"' in index_html
+
+    # Preamble bullet list stays on index.html; GFM tables & optical tokens on optical/config.
     assert "<ul>" in index_html
     assert "<strong>Seeing</strong>:" in index_html
     assert "<strong>Internal Optical-Bench Clock</strong>:" in index_html
     assert "<code>8.0 kHz</code>" in index_html
     assert "<code>dt = 0.125 ms = 125 us</code>" in index_html
-    assert 'style="text-align: left;"' in index_html
-    assert 'style="text-align: right;"' in index_html
-    assert 'style="text-align: center;"' in index_html
-
-    # Underscores inside code spans and filenames are not turned into <em>.
     assert "<code>csim_htsim</code>" in index_html
     assert "<code>b_post_stg1</code>" in index_html
-    assert "<code>aol2_imWFS2</code>" in index_html
-    assert 'src="cacaosim_gui_schematic.png"' in index_html
-    assert 'src="cacaosim_gui_builder.png"' in index_html
-    assert 'src="cacaosim_gui_tables.png"' in index_html
-    assert 'src="cacaosim_gui_status.png"' in index_html
-    assert 'src="chromatic_passbands_2x1.png"' in index_html
-    assert "<code>wfs_nir</code>" in index_html
-    assert 'id="hardware-simulator-gui-cacaosim-ctrl"' in index_html
-    assert 'href="#hardware-simulator-gui-cacaosim-ctrl"' in index_html
-    assert 'href="ao3k_scexao.bench"' in index_html
+    assert 'style="text-align: left;"' in optical_html
+    assert 'style="text-align: right;"' in optical_html
+    assert 'style="text-align: center;"' in optical_html
+    assert "<code>aol2_imWFS2</code>" in optical_html
+
+    # Configuration sub-page has GUI screenshots (tabbed, no duplicate), passbands, & .bench.
+    assert 'src="cacaosim_gui_schematic.png"' in config_html
+    assert config_html.count("cacaosim_gui_builder.png") == 2
+    assert 'src="cacaosim_gui_builder.png"' in config_html
+    assert 'src="cacaosim_gui_tables.png"' in config_html
+    assert 'src="cacaosim_gui_status.png"' in config_html
+    assert 'src="chromatic_passbands_2x1.png"' in config_html
+    assert "<code>wfs_nir</code>" in config_html
+    assert 'id="hardware-simulator-gui-cacaosim-ctrl"' in config_html
+    assert 'href="#hardware-simulator-gui-cacaosim-ctrl"' in config_html
+    assert 'href="ao3k_scexao.bench"' in config_html
+    assert 'id="bench-card-grid"' in config_html
+    assert "subaru_ao3k_scexao" in config_html
     assert (slug_out / "ao3k_scexao.bench").is_file()
-    assert 'src="psf_comparison_2x3.png"' in index_html
-    assert 'src="wf_strehl_timeseries_4x1.png"' in index_html
-    assert 'src="psf_inst_vis_5x3.png"' in index_html
-    assert 'src="dm_samples_5x4.png"' in index_html
-    assert 'src="wfs_samples_5x4.png"' in index_html
-    assert "<em>" not in index_html
 
-    # Image-only list avoids <ul> bullets and renders <div class="figure-stack">.
-    assert '<div class="figure-stack">' in index_html
-    assert "<li><img" not in index_html
-
-    # Mermaid diagram and script enabled on index.html only.
-    assert '<pre class="mermaid">' in index_html
-    assert "mermaid.esm.min.mjs" in index_html
+    # Optical Performance sub-page has interactive explorer, optical figures, video, & Mermaid.
+    assert 'id="optical-explorer-data"' in optical_html
+    assert 'src="psf_comparison_2x3.png"' in optical_html
+    assert 'src="wf_strehl_timeseries_4x1.png"' in optical_html
+    assert 'src="psf_inst_vis_5x3.png"' in optical_html
+    assert 'src="dm_samples_5x4.png"' in optical_html
+    assert 'src="wfs_samples_5x4.png"' in optical_html
+    assert "<em>" not in optical_html
+    assert '<div class="figure-stack">' in optical_html
+    assert "<li><img" not in optical_html
+    assert '<pre class="mermaid">' in optical_html
+    assert "mermaid.esm.min.mjs" in optical_html
     assert "mermaid.esm.min.mjs" not in compute_html
 
-    # Bidirectional report link rewriting works.
-    assert 'href="compute_report.html"' in index_html
-    assert 'href="index.html"' in compute_html
+    # Bidirectional report link rewriting maps REPORT.md -> optical.html & COMPUTE -> runtime.html.
+    assert 'href="runtime.html"' in index_html
+    assert 'href="optical.html"' in compute_html
 
-    # Extra unreferenced PNG appears on index.html; compute PNG and video poster are NOT duplicated.
-    assert 'src="extra_wf_samples_5x3.png"' in index_html
-    assert "Additional Diagnostic Figures" in index_html
+    # Extra optical PNG appears on optical.html; GUI, compute, & video poster NOT duplicated.
+    assert 'src="extra_wf_samples_5x3.png"' in optical_html
+    assert "Additional Diagnostic Figures" in optical_html
     assert 'src="compute_timeline_4x1.png"' in compute_html
-    assert 'src="compute_timeline_4x1.png"' not in index_html
-    assert "<video controls loop autoplay muted playsinline" in index_html
-    assert 'poster="wfs_psf_short_evolution_poster.png"' in index_html
-    assert '<source src="wfs_psf_short_evolution.mp4" type="video/mp4">' in index_html
-    assert 'src="wfs_psf_short_evolution_poster.png"' not in index_html
+    assert 'src="compute_timeline_4x1.png"' not in optical_html
+    assert 'src="cacaosim_gui_builder.png"' not in optical_html
+    assert "<video controls loop autoplay muted playsinline" in optical_html
+    assert 'poster="wfs_psf_short_evolution_poster.png"' in optical_html
+    assert '<source src="wfs_psf_short_evolution.mp4" type="video/mp4">' in optical_html
+    assert 'src="wfs_psf_short_evolution_poster.png"' not in optical_html
     assert (slug_out / "wfs_psf_short_evolution.mp4").is_file()
     assert 'href="wfs_psf_short_evolution_meta.json"' not in index_html
 
     # Excluded .fits and external ../ paths do not produce broken <a href> links.
     assert not (slug_out / "cube.fits").exists()
     assert 'href="cube.fits"' not in index_html
-    assert 'href="../ao3k_scexao_rm"' not in index_html
+    assert 'href="../ao3k_scexao_rm"' not in optical_html
     assert 'href="metrics.json"' in index_html
     assert 'href="wf_timeseries.csv"' in index_html
     assert 'href="strehl_timeseries.csv"' in index_html
-    assert "(local artifact, omitted from web bundle)" in index_html
+    assert "(local artifact, omitted from web bundle)" in optical_html
 
-    # Report page includes nav links to Front Page, Reproduce anchor, and GitHub.
-    assert 'href="../index.html">Front Page</a>' in index_html
-    assert 'href="index.html#reproducibility-github-provenance">Reproduce</a>' in index_html
-    assert 'id="reproducibility-github-provenance"' in index_html
+    # How-to-Run page includes cacaosim launcher, CACAO compute units, checklist, & provenance.
+    assert 'id="howtorun-defaults"' in how_html
+    assert "cacaosim-bench deploy" in how_html
+    assert 'id="compute-units-table"' in how_html
+    assert "csim_htsim" in how_html
+    assert "DMch2disp-01" in how_html
+    assert "acquWFS-1" in how_html
+    assert "mfilt-1" in how_html
+    assert "deploy-step-cb" in how_html
+    assert 'id="reproducibility-github-provenance"' in how_html
     assert (
         'href="https://github.com/cacao-org/cacao-work/commit/'
         '1111111222222233333334444444555555566666"'
-    ) in index_html
+    ) in how_html
+    assert 'href="../index.html">Front Page</a>' in how_html
+    for cat_key in ("simulation", "calibration", "loop_operation", "analysis"):
+        assert f"--cat-{cat_key}:" in how_html
+        assert f'data-cu-cat="{cat_key}"' in how_html
+        assert f"classDef cat_{cat_key} " in how_html
+        assert f"classDef cat_{cat_key} " in index_html
+    assert 'aria-pressed="true"' in how_html
+    assert 'data-cu-action="all"' in how_html
+    assert 'data-cu-action="none"' in how_html
+    assert 'id="cu-visible-count"' in how_html
+    assert 'id="cu-empty-msg"' in how_html
+    pos_sim = how_html.index('<tbody class="cat-tbody cat-simulation"')
+    pos_cal = how_html.index('<tbody class="cat-tbody cat-calibration"')
+    pos_loop = how_html.index('<tbody class="cat-tbody cat-loop_operation"')
+    pos_ana = how_html.index('<tbody class="cat-tbody cat-analysis"')
+    assert pos_sim < pos_cal < pos_loop < pos_ana
+    assert "2. Launching cacaosim for This Configuration</a>" in how_html
+    assert "1. Step-by-Step" not in how_html
+    assert "class=\"checklist-item cat-calibration\"" in how_html
+    assert "class=\"checklist-item cat-analysis\"" in how_html
 
-    # Root Front Page is served directly at / (no 302 redirect) with intro, repos & CLI recipe.
+    # Root Front Page is served directly at / with 2 tables (Tech Reports + Simulations).
     fb_cfg = json.loads((site_dir / "firebase.json").read_text(encoding="utf-8"))
     assert "redirects" not in fb_cfg["hosting"]
     assert "mp4" in fb_cfg["hosting"]["headers"][0]["source"]
@@ -292,15 +336,35 @@ def test_build_ao_web_report_markdown_and_staging(
     front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
     reports_html = (site_dir / "public" / "reports.html").read_text(encoding="utf-8")
     assert front_html == reports_html
-    assert "Closed-Loop Adaptive Optics Simulation" in front_html
+    assert 'id="tech-reports-table"' in front_html
+    assert 'id="sim-reports-table"' in front_html
+    assert "Knowledge Repository" in front_html
     assert "https://github.com/cacao-org/cacao-work" in front_html
     assert "https://github.com/milk-org/milk" in front_html
     assert "git -C milk submodule update --init src/engine/ImageStreamIO" in front_html
     assert "./scripts/build-all.sh" in front_html
     assert "./scripts/run-ao3k-scexao.sh --save-telemetry speckle" in front_html
-    assert "Vis SR 82.8%" in front_html
-    assert "H SR 95.3%" in front_html
-    assert './demo_run/index.html#reproducibility-github-provenance' in front_html
+    assert "82.8%" in front_html
+    assert "95.3%" in front_html
+    assert './demo_run/config.html' in front_html
+    assert './demo_run/optical.html' in front_html
+    assert './demo_run/runtime.html' in front_html
+    assert './demo_run/how_to_run.html' in front_html
+    assert 'class="sim-filter-panel"' in front_html
+    assert 'class="filter-cat-box cat-loop_operation"' in front_html
+    assert 'class="filter-cat-box cat-calibration"' in front_html
+    for ck in ("integrator", "ar", "eof"):
+        assert f'data-sim-ctrl="{ck}"' in front_html
+    assert 'data-sim-tri="llowfs"' in front_html
+    assert 'data-sim-tri="calib2wfs"' in front_html
+    assert 'data-val="any"' in front_html
+    assert 'data-val="on"' in front_html
+    assert 'data-val="off"' in front_html
+    assert 'data-ctrl="' in front_html
+    assert 'data-llowfs="' in front_html
+    assert 'data-calib2wfs="' in front_html
+    assert 'id="sim-filter-reset"' in front_html
+    assert 'id="sim-empty-msg"' in front_html
 
 
 def test_publish_ao_report_build_only_and_include_fits(
@@ -479,3 +543,146 @@ def test_cacaosim_telemetry_video_renderer(
     vmeta = json.loads(meta_out.read_text(encoding="utf-8"))
     assert vmeta["n_frames"] >= 10
     assert vmeta["oversample"] == 4
+
+
+def test_all_matrix_imshow_use_lower_origin(repo_root: Path) -> None:
+    """Verify report plotters never use origin='upper' and always use origin='lower'."""
+    import re
+
+    targets = [
+        repo_root / "scripts" / "build-calib-2wfs1dm-report.py",
+        repo_root / "scripts" / "build-predictive-control-report.py",
+        repo_root.parent / "cacaosim" / "scripts" / "cacaosim-ao-report",
+        repo_root.parent / "cacaosim" / "scripts" / "cacaosim-telemetry-video",
+    ]
+    for path in targets:
+        if not path.is_file():
+            continue
+        txt = path.read_text(encoding="utf-8")
+        assert 'origin="upper"' not in txt, f"Found origin='upper' in {path}"
+        assert "origin='upper'" not in txt, f"Found origin='upper' in {path}"
+        for m in re.finditer(r"\.imshow\(([^;]{0,300})", txt):
+            snippet = m.group(1)
+            assert 'origin="lower"' in snippet or "origin='lower'" in snippet, (
+                f"imshow missing origin='lower' in {path}: {snippet[:80]}"
+            )
+
+
+def test_compute_unit_categories_and_multiselect(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify 4-category classification, grouping, colors, and multi-select pills."""
+    scripts_dir = str(repo_root / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from report_site import COMPUTE_CATEGORY_ORDER
+    from report_site.metrics import (
+        build_compute_unit_catalog,
+        classify_phase_category,
+        classify_shm_category,
+        classify_unit_category,
+    )
+
+    assert classify_unit_category("csim_atmturb") == "simulation"
+    assert classify_unit_category("csim_htsim") == "simulation"
+    assert classify_unit_category("milk-fpsexec-ca") == "simulation"
+    assert classify_unit_category("mlat-1") == "calibration"
+    assert classify_unit_category("compstrCM-2") == "calibration"
+    assert classify_unit_category("mkEOFPF-1") == "calibration"
+    assert classify_unit_category("DMch2disp-01") == "loop_operation"
+    assert classify_unit_category("acquWFS-1") == "loop_operation"
+    assert classify_unit_category("applyARPF-2") == "loop_operation"
+    assert classify_unit_category("mctrlstats-1") == "analysis"
+    assert classify_unit_category("tlog_00") == "analysis"
+
+    assert classify_phase_category("deploy_bench") == "simulation"
+    assert classify_phase_category("calib_stage1") == "calibration"
+    assert classify_phase_category("closed_loop_10s") == "loop_operation"
+    assert classify_phase_category("tlm_analysis") == "analysis"
+
+    assert classify_shm_category("csim_wfs_nir_logbuff0") == "analysis"
+    assert classify_shm_category("csim_wfs_nir") == "simulation"
+    assert classify_shm_category("aol1_arPFmat") == "calibration"
+    assert classify_shm_category("aol1_dmC") == "loop_operation"
+
+    units = build_compute_unit_catalog({}, [], {}, {"telemetry": "speckle"})
+    cat_ranks = [COMPUTE_CATEGORY_ORDER.index(str(u["category"])) for u in units]
+    assert cat_ranks == sorted(cat_ranks)
+    assert set(str(u["category"]) for u in units) == set(COMPUTE_CATEGORY_ORDER)
+
+    report_dir = tmp_path / "rt_cat_run"
+    site_dir = tmp_path / "rt_site"
+    _create_synthetic_report(report_dir)
+    (report_dir / "compute_perf_metrics.json").write_text(
+        json.dumps(
+            {
+                "phases": [
+                    {"id": "deploy_bench", "duration_s": 2.0, "gpu_util_mean_pct": 10.0},
+                    {"id": "calib_stage1", "duration_s": 5.0, "gpu_util_mean_pct": 25.0},
+                    {"id": "closed_loop_10s", "duration_s": 10.0, "gpu_util_mean_pct": 45.0},
+                    {"id": "tlm_analysis", "duration_s": 3.0, "gpu_util_mean_pct": 5.0},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (report_dir / "compute_telemetry.json").write_text(
+        json.dumps(
+            {
+                "processes": [
+                    {"name": "csim_htsim", "cl_cpu_pct": 120.0, "gpu_vram_peak_mib": 512.0},
+                    {"name": "compstrCM-1", "cl_cpu_pct": 15.0},
+                    {"name": "acquWFS-1", "cl_cpu_pct": 42.0},
+                    {"name": "mctrlstats-1", "cl_cpu_pct": 8.0},
+                    {"name": "tlog_00", "cl_cpu_pct": 12.0},
+                ],
+                "streams": [
+                    {"name": "csim_wfs_nir", "dims": [160, 160], "mean_hz": 1000.0},
+                    {"name": "aol1_arPFmat", "dims": [1255, 16], "mean_hz": 1.0},
+                    {"name": "aol1_dmC", "dims": [64, 64], "mean_hz": 1000.0},
+                    {"name": "csim_wfs_nir_logbuff0", "dims": [160, 160, 100], "nb_readers": 1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--report-dir",
+            str(report_dir),
+            "--site-dir",
+            str(site_dir),
+            "--slug",
+            "rt_cat_run",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+
+    slug_out = site_dir / "public" / "rt_cat_run"
+    rt_html = (slug_out / "runtime.html").read_text(encoding="utf-8")
+    how_html = (slug_out / "how_to_run.html").read_text(encoding="utf-8")
+
+    assert "mermaid.esm.min.mjs" not in rt_html
+    for cat_key in COMPUTE_CATEGORY_ORDER:
+        assert f'data-rt-proc-cat="{cat_key}"' in rt_html
+        assert f'data-rt-shm-cat="{cat_key}"' in rt_html
+        assert f'<tbody class="cat-tbody cat-{cat_key}"' in rt_html
+    rt_p_order = [
+        rt_html.index(f'<tbody class="cat-tbody cat-{k}"') for k in COMPUTE_CATEGORY_ORDER
+    ]
+    assert rt_p_order == sorted(rt_p_order)
+    assert '"category":"simulation"' in rt_html
+    assert '"category":"calibration"' in rt_html
+    assert '"category":"loop_operation"' in rt_html
+    assert '"category":"analysis"' in rt_html
+    assert 'class="checklist-item cat-simulation"' in how_html
+    assert 'class="cat-badge cat-loop_operation"' in how_html

@@ -2095,7 +2095,7 @@ def plot_fig7_eof_offline(
     c64 = np.maximum(f1["blk0_coupling"][:64, :64], 1e-4)
     im = ax.imshow(
         c64,
-        origin="upper",
+        origin="lower",
         cmap="magma",
         norm=LogNorm(vmin=3e-3, vmax=1.0),
         aspect="auto",
@@ -2107,14 +2107,16 @@ def plot_fig7_eof_offline(
     ax.set_title("Learned Stage-1 Cross-Mode Matrix (Block 0, Modes 0–63)")
     off_b = f1["offdiag_by_block"]
     ax.text(
-        0.03,
+        0.97,
         0.04,
         f"Off-diag energy: {off_b[0]:.1f}% (Blk 0) → {max(off_b):.1f}% (Blk 14)\n"
         "Quadrature wind pairs: (47↔50), (16↔17), (3↔4), (8↔9)",
         transform=ax.transAxes,
+        ha="right",
+        va="bottom",
         fontsize=7.6,
         color="#f8fafc",
-        bbox={"boxstyle": "round,pad=0.35", "fc": "#0f172a", "ec": "#334155", "alpha": 0.85},
+        bbox={"boxstyle": "round,pad=0.35", "fc": "#0f172a", "ec": "#334155", "alpha": 0.88},
     )
 
     fig.savefig(out_dir / "eof_vs_ar_offline_20s_2x2.png")
@@ -2523,7 +2525,12 @@ def generate_report_markdown(
 
     def fmt_cmp_link(b: dict[str, Any]) -> str:
         slug = b["spec"]["slug"]
-        return f"[Compute](../{slug}/compute_report.html)"
+        return (
+            f"[Config](../{slug}/config.html) · "
+            f"[Optical](../{slug}/optical.html) · "
+            f"[Runtime](../{slug}/runtime.html) · "
+            f"[Run](../{slug}/how_to_run.html)"
+        )
 
     def pf_cpu_sum(s: dict[str, Any]) -> float:
         pr = s["procs"]
@@ -2673,7 +2680,7 @@ def generate_report_markdown(
         "",
         "| Controller | `N_min / N_train` | Mem. Horizon (S1 / S2) | Post-AO3k WFE (Tot / Dyn) | "
         "Post-SCExAO WFE (Tot / Dyn) | S1 Vis SR | Final Vis SR | Final H SR | Coro Leak | "
-        "Planet 3–10 l/D | 5-sig @ 5 l/D | Full Reports |",
+        "Planet 3–10 l/D | 5-sig @ 5 l/D | Sub-Pages |",
         (
             "| :--- | :---: | :---: | :---: | :---: | ---: | ---: | ---: | ---: | ---: "
             "| ---: | :---: |"
@@ -3254,7 +3261,7 @@ def generate_report_markdown(
             "| Controller (`t = 14–19 s`, `N = 16k/32k`) | `reg` (S1 / S2) | "
             "Post-AO3k WFE (Tot / Max) | S1 Vis SR | Post-SCExAO WFE | Final Vis SR | "
             "Final H SR | Raw Coro (`10 / 15 / 20 l/D`) | `5-sig @ 20 l/D` | LLOWFS DM3 | "
-            "RT Apply (`S1/S2`) | Total PF CPU | Reports |",
+            "RT Apply (`S1/S2`) | Total PF CPU | Sub-Pages |",
             "| :--- | :---: | :---: | ---: | ---: | ---: | ---: | :---: | ---: | ---: | "
             ":---: | ---: | :---: |",
         ]
@@ -3544,7 +3551,17 @@ def main() -> int:
     )
 
     study_meta = {
-        "report_type": "study",
+        "report_type": "tech_report",
+        "topic": "PSOL Predictive Control (Diagonal AR & Cross-Mode Block-EOF)",
+        "cacao_features": [
+            "PSOL Predictive Control",
+            "Diagonal AR(4..64)",
+            "Cross-Mode Block-EOF (VAR)",
+            "Stage-3 LLOWFS",
+        ],
+        "referenced_simulations": list(
+            dict.fromkeys(spec["slug"] for spec in RUN_SPECS + EOF_RUN_SPECS)
+        ),
         "nav_label": "Predictive Control Report",
         "button_label": "Read Predictive Control Report",
         "summary": (

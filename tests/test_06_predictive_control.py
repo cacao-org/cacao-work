@@ -164,7 +164,8 @@ def test_web_report_three_way_predictive_comparison(
         assert res.returncode == 0, res.stderr + res.stdout
 
     front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
-    assert "Open LLOWFS vs. Closed LLOWFS vs. PSOL Predictive Control" in front_html
+    assert 'id="tech-reports-table"' in front_html
+    assert 'id="sim-reports-table"' in front_html
     assert "PSOL AR(8) PREDICTIVE" in front_html
     assert "<strong>PSOL AR(8) Predictive</strong>" in front_html
     assert "Modal Integrator" in front_html
@@ -175,10 +176,15 @@ def test_web_report_three_way_predictive_comparison(
     idx_pred = front_html.index("<code>run_predictive</code>")
     assert idx_open < idx_closed < idx_pred
 
-    pred_html = (site_dir / "public" / "run_predictive" / "index.html").read_text(
+    pred_opt = (site_dir / "public" / "run_predictive" / "optical.html").read_text(
         encoding="utf-8"
     )
-    assert 'src="predictive_control_summary_2x2.png"' in pred_html
+    assert 'src="predictive_control_summary_2x2.png"' in pred_opt
+    pred_how = (site_dir / "public" / "run_predictive" / "how_to_run.html").read_text(
+        encoding="utf-8"
+    )
+    assert "mkARPF-1" in pred_how
+    assert "applyARPF-1" in pred_how
 
 
 def test_web_report_ar_order_sweep_and_featured_study(
@@ -276,17 +282,21 @@ def test_web_report_ar_order_sweep_and_featured_study(
     assert res_s.returncode == 0, res_s.stderr + res_s.stdout
 
     front_html = (site_dir / "public" / "index.html").read_text(encoding="utf-8")
-    assert "Featured Technical Reports" in front_html
-    assert (
-        'href="./predictive_control_report/index.html">Predictive Control Report</a>' in front_html
-    )
-    assert front_html.index("<code>run_ar4</code>") < front_html.index("<code>run_ar8</code>")
-    assert front_html.index("<code>run_ar8</code>") < front_html.index("<code>run_ar16</code>")
-    assert front_html.index("<code>run_ar16</code>") < front_html.index("<code>run_ar32</code>")
+    t1_html = front_html.split('id="tech-reports-table"')[1].split("</table>")[0]
+    t2_html = front_html.split('id="sim-reports-table"')[1].split("</table>")[0]
+    assert './predictive_control_report/index.html' in t1_html
+    assert "Predictive Control Report" in t1_html
+    assert t2_html.index("<code>run_ar4</code>") < t2_html.index("<code>run_ar8</code>")
+    assert t2_html.index("<code>run_ar8</code>") < t2_html.index("<code>run_ar16</code>")
+    assert t2_html.index("<code>run_ar16</code>") < t2_html.index("<code>run_ar32</code>")
 
     study_html = (
         site_dir / "public" / "predictive_control_report" / "index.html"
     ).read_text(encoding="utf-8")
     assert 'href="../run_ar16/index.html"' in study_html
+    assert 'href="../run_ar16/how_to_run.html"' in study_html
     assert 'href="study_meta.json"' not in study_html
     assert 'href="predictive_control_summary.csv"' in study_html
+
+    ar16_idx = (site_dir / "public" / "run_ar16" / "index.html").read_text(encoding="utf-8")
+    assert '../predictive_control_report/index.html' in ar16_idx

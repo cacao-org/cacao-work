@@ -904,7 +904,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # Write study_meta.json so build-ao-web-report.py features it on the Top Page!
     study_meta = {
-        "report_type": "study",
+        "report_type": "tech_report",
+        "topic": "Two-WFS + Inter-Stage DM Closed-Loop System Identification",
+        "cacao_features": [
+            "2-WFS/1-DM Telemetry SysID",
+            "DM2->DM1 Blind Offload",
+            "PyWFS Optical Gain",
+            "ZPO Wind-Up Diagnosis",
+        ],
+        "referenced_simulations": [
+            "ao3k_scexao_calib2wfs1dm",
+            "ao3k_scexao_lowfs_closed",
+            "ao3k_scexao_lowfs_open",
+        ],
         "nav_label": "2-WFS/1-DM Calibration Report",
         "button_label": "Read 2-WFS/1-DM Calibration Report",
         "summary": (
@@ -940,7 +952,7 @@ def main(argv: list[str] | None = None) -> int:
         "- **Physical Model**: Forward optical relation `B = Mab A + Mdb D + b0` and virtual upstream relation `A = Mba B - Mda_virt D + a0` (`Mda_virt = -Mda` = virtual influence of inter-stage `DM2` on upstream `WFS A`)",
         "- **Testbed**: Subaru 7.95 m AO3k (`64×64 DM1`, `1 kHz` J-band PyWFS = `WFS A`) + SCExAO (`50×50 DM2`, `2 kHz` Vis PyWFS = `WFS B`) + Reflective-Lyot LLOWFS (`500 Hz` Stage-3 Zernikes on `dm02disp04`), `0.60\"` seeing, `8.0 kHz` (`125 us`) fused GPU sub-stepping",
         "- **Core Engine**: `milk-mltools` (`mlt.sysid`, `mlt.tlmsync .mode=expint`, `mlt_arfit`, `mlt_firfilt`, `mlt.calib2wfs1dm`) — `< 0.5 s` C runtime with BLAS/LAPACKE + OpenMP",
-        "- **Companion Live Run**: [ao3k_scexao_calib2wfs1dm](../ao3k_scexao_calib2wfs1dm/index.html) | **Predictive Control Study**: [predictive_control_report](../predictive_control_report/index.html)",
+        "- **Companion Live Run**: [ao3k_scexao_calib2wfs1dm](../ao3k_scexao_calib2wfs1dm/index.html) ([Config](../ao3k_scexao_calib2wfs1dm/config.html) · [Optical](../ao3k_scexao_calib2wfs1dm/optical.html) · [Runtime](../ao3k_scexao_calib2wfs1dm/runtime.html) · [How to Run](../ao3k_scexao_calib2wfs1dm/how_to_run.html)) | **Predictive Control Study**: [predictive_control_report](../predictive_control_report/index.html)",
         "",
         "> **Key Takeaway**: Passive closed-loop sky telemetry alone recovers probe-free Stage-2 optical gain `diag(Mdb)` within **`0.4%–0.7%`** of active on-sky `selfRM` (under predictive control) and reconstructs the blind `DM2 → DM1` offloading matrix `Mda_virt` to **`0.933` median geometric cosine** (`80.4%` single-shot / `93.2%` 5-step closed-loop OPD RMS reduction, provably unconditionally stable across all 40 modes). Diagnosing why the `AR(4)` whitening filter `W(z)` still exhibits `21–23%` bias under pure Modal Integrators led directly to a cleaner **Exact-Window Frequency-Domain AO-Dynamics** estimator that cuts pure-integrator error **6×** (`21–23% → 3.5–3.9%`) and eliminates low-order LLOWFS/ZPO bias completely.",
         "",
@@ -1151,7 +1163,10 @@ def main(argv: list[str] | None = None) -> int:
         "",
         "- [calib_2wfs1dm_benchmark.json](calib_2wfs1dm_benchmark.json) — Complete whitening sweep, sample-size convergence, 2D offload eigenvalues, and 4-regime method comparison",
         "- [calib_2wfs1dm_comparison.csv](calib_2wfs1dm_comparison.csv) — Tabular benchmark comparing Unwhitened OLS, `AR(4)` `W(z)`, and Exact-Window Frequency-Domain AO-Dynamics",
-        "- Live individual simulation reports: [ao3k_scexao_lowfs_open](../ao3k_scexao_lowfs_open/index.html) | [ao3k_scexao_lowfs_closed](../ao3k_scexao_lowfs_closed/index.html) | [ao3k_scexao_calib2wfs1dm](../ao3k_scexao_calib2wfs1dm/index.html)",
+        "- Live individual simulation reports: "
+        "[ao3k_scexao_lowfs_open](../ao3k_scexao_lowfs_open/index.html) ([How to Run](../ao3k_scexao_lowfs_open/how_to_run.html)) | "
+        "[ao3k_scexao_lowfs_closed](../ao3k_scexao_lowfs_closed/index.html) ([How to Run](../ao3k_scexao_lowfs_closed/how_to_run.html)) | "
+        "[ao3k_scexao_calib2wfs1dm](../ao3k_scexao_calib2wfs1dm/index.html) ([Config](../ao3k_scexao_calib2wfs1dm/config.html) · [Optical](../ao3k_scexao_calib2wfs1dm/optical.html) · [Runtime](../ao3k_scexao_calib2wfs1dm/runtime.html) · [How to Run](../ao3k_scexao_calib2wfs1dm/how_to_run.html))",
         "",
     ]
     (out_dir / "REPORT.md").write_text("\n".join(md_lines), encoding="utf-8")
