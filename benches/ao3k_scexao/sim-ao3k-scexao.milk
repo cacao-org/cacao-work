@@ -1319,8 +1319,8 @@ if (( CALIB_2WFS1DM )) && [[ "${SAVE_TELEMETRY}" != "none" ]] && \
    command -v milk-mlt-calib2wfs1dm >/dev/null 2>&1; then
     sysmon.mark "calib_2wfs1dm" "Run 2-WFS + 1-DM telemetry calibration (mlt.calib2wfs1dm)"
     echo "[ao3k-scexao] Running 2-WFS + 1-DM telemetry calibration (mlt.calib2wfs1dm)..."
-    SYSID_MODES_A=$(( SYSID_MODES * 3 / 2 ))
-    (( SYSID_MODES_A < 60 )) && SYSID_MODES_A=60
+    SYSID_MODES_A=$(( SYSID_MODES * 4 ))
+    (( SYSID_MODES_A < 160 )) && SYSID_MODES_A=160
     SC2_PATH="${OUT_DIR}/selfRM_calib_stg2.fits"
     SS2_PATH="${OUT_DIR}/selfRM_onsky_stg2.fits"
     [[ -f "${SC2_PATH}" ]] || SC2_PATH=""
@@ -1332,7 +1332,8 @@ if (( CALIB_2WFS1DM )) && [[ "${SAVE_TELEMETRY}" != "none" ]] && \
         aol1_modevalWFS aol2_modevalWFS aol2_modevalDM \
         "${SYSID_MODES_A}" "${SYSID_MODES}" "${SYSID_MODES}" \
         auto auto "${SYSID_WHITEN_ORDER}" 0.02 0.70 \
-        "${SC2_PATH}" "${SS2_PATH}" || true
+        "${SC2_PATH}" "${SS2_PATH}" \
+        ".method=ivdiff" ".b_offset_us=${CLOCK_SKEW_US:-0.0}" || true
 elif (( ! CALIB_2WFS1DM )); then
     rm -rf "${OUT_DIR}/calib_2wfs1dm" "${OUT_DIR}/calib_2wfs1dm_summary.json" \
         "${OUT_DIR}/calib_2wfs1dm_summary_2x2.png"
