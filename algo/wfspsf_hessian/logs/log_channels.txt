@@ -1,0 +1,25 @@
+22:02:43 [0.3] aff2: 259 iterations, 150 s, loss 3.0417
+22:15:36 [0.3] quad2: 300 iterations, 774 s, loss 0.2961
+22:15:36 [0.3] core<1.25 ( 4 px) median R2: lin 0.938  poly2 0.999  aff2_init 0.685  aff2 0.975  quad2_init 0.998  quad2 1.000
+22:15:36 [0.3]    1.25-4 ( 8 px) median R2: lin 0.726  poly2 0.974  aff2_init 0.922  aff2 0.936  quad2_init 0.981  quad2 0.997
+22:15:36 [0.3]       4-8 (12 px) median R2: lin 0.607  poly2 0.951  aff2_init 0.868  aff2 0.878  quad2_init 0.958  quad2 0.988
+22:15:36 [0.3]        >8 (11 px) median R2: lin 0.637  poly2 0.959  aff2_init 0.827  aff2 0.846  quad2_init 0.965  quad2 0.983
+22:18:24 [0.5] aff2: 174 iterations, 58 s, loss 6.3271
+22:27:30 [0.5] quad2: 300 iterations, 546 s, loss 1.1903
+22:27:30 [0.5] core<1.25 ( 4 px) median R2: lin 0.860  poly2 0.994  aff2_init 0.097  aff2 0.930  quad2_init 0.983  quad2 0.998
+22:27:30 [0.5]    1.25-4 ( 8 px) median R2: lin 0.464  poly2 0.872  aff2_init 0.799  aff2 0.817  quad2_init 0.861  quad2 0.980
+22:27:30 [0.5]       4-8 (12 px) median R2: lin 0.304  poly2 0.765  aff2_init 0.648  aff2 0.671  quad2_init 0.743  quad2 0.922
+22:27:30 [0.5]        >8 (11 px) median R2: lin 0.367  poly2 0.796  aff2_init 0.466  aff2 0.533  quad2_init 0.823  quad2 0.904
+22:29:29 [0.7] aff2: 219 iterations, 42 s, loss 9.5575
+22:35:27 [0.7] quad2: 200 iterations, 358 s, loss 2.7910
+22:35:27 [0.7] core<1.25 ( 4 px) median R2: lin 0.762  poly2 0.977  aff2_init -0.728  aff2 0.862  quad2_init 0.939  quad2 0.991
+22:35:27 [0.7]    1.25-4 ( 8 px) median R2: lin 0.236  poly2 0.700  aff2_init 0.575  aff2 0.589  quad2_init 0.548  quad2 0.914
+22:35:27 [0.7]       4-8 (12 px) median R2: lin 0.151  poly2 0.519  aff2_init 0.371  aff2 0.413  quad2_init 0.112  quad2 0.731
+22:35:27 [0.7]        >8 (11 px) median R2: lin 0.190  poly2 0.473  aff2_init 0.287  aff2 0.299  quad2_init 0.456  quad2 0.685
+22:37:18 [1.0] aff2: 136 iterations, 39 s, loss 12.9799
+22:46:33 [1.0] quad2: 300 iterations, 555 s, loss 6.3046
+22:46:33 [1.0] core<1.25 ( 4 px) median R2: lin 0.607  poly2 0.914  aff2_init -2.351  aff2 0.708  quad2_init 0.824  quad2 0.966
+22:46:33 [1.0]    1.25-4 ( 8 px) median R2: lin 0.102  poly2 0.419  aff2_init 0.301  aff2 0.316  quad2_init 0.370  quad2 0.731
+22:46:33 [1.0]       4-8 (12 px) median R2: lin 0.069  poly2 0.242  aff2_init -0.071  aff2 0.170  quad2_init -243.622  quad2 0.458
+22:46:33 [1.0]        >8 (11 px) median R2: lin 0.128  poly2 0.229  aff2_init -0.154  aff2 0.174  quad2_init -3616609.547  quad2 0.260
+22:46:33 saved

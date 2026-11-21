@@ -1,0 +1,10 @@
+22:09:47 forward model, 100008 frames: 174 s
+22:11:11 frame 0: WF 0.659 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9463, linear 0.8509
+22:11:11 frame 1: WF 0.574 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9420, linear 0.2177
+22:11:11 frame 2: WF 0.579 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9169, linear 0.5223
+22:11:11 frame 3: WF 0.628 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9429, linear 0.8237
+22:11:11 frame 4: WF 0.841 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9725, linear 0.8278
+22:11:11 frame 5: WF 0.678 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9723, linear 0.9263
+22:11:11 frame 6: WF 0.604 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9263, linear 0.7800
+22:11:11 frame 7: WF 0.693 rad RMS, explained fraction of (PSF - mean PSF): Hessian 0.9563, linear 0.8940
+22:11:11 saved gallery_rms0.7

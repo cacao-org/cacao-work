@@ -1,0 +1,12 @@
+23:00:31 [bin1_amp0.1] forward model, 110000 samples: 17 s
+23:01:11 [bin1_amp0.1] oracle fits: 39 s
+23:01:11    oracle quad  R2  core<1.25: 1.000 1.25-4: 1.000 4-8: 0.999 >8: 0.999
+23:01:11    oracle lin   R2  core<1.25: 0.996 1.25-4: 0.975 4-8: 0.927 >8: 0.968
+23:01:25    H gain vs Taylor (median, r in 1.25-8): 0.989, rel. err 0.024
+23:01:26 [bin1_amp0.1] saved
+23:01:37 [bin1_amp0.3] forward model, 110000 samples: 11 s
+23:02:00 [bin1_amp0.3] oracle fits: 22 s
+23:02:00    oracle quad  R2  core<1.25: 0.999 1.25-4: 0.986 4-8: 0.952 >8: 0.955
+23:02:00    oracle lin   R2  core<1.25: 0.964 1.25-4: 0.804 4-8: 0.556 >8: 0.757
+23:02:08    H gain vs Taylor (median, r in 1.25-8): 0.906, rel. err 0.115
+23:02:08 [bin1_amp0.3] saved

@@ -1,0 +1,29 @@
+22:03:45 [ref] forward model, 210000 samples: 355 s
+22:08:36 [ref] oracle fits: 286 s
+22:08:36    oracle quad  R2  core<1.25: 0.999 1.25-4: 0.986 4-8: 0.953 >8: 0.959
+22:08:36    oracle lin   R2  core<1.25: 0.964 1.25-4: 0.805 4-8: 0.563 >8: 0.765
+22:08:59    H gain vs Taylor (median, r in 1.25-8): 0.905, rel. err 0.116
+22:11:10    PSF PCA (sqrtmean) J=100: model core<1.25: 0.999 1.25-4: 0.973 4-8: 0.787 >8: 0.806 | ceiling core<1.25: 1.000 1.25-4: 0.979 4-8: 0.800 >8: 0.806
+22:12:45    PSF PCA (none) J=100: model core<1.25: 0.999 1.25-4: 0.981 4-8: 0.691 >8: 0.806 | ceiling core<1.25: 1.000 1.25-4: 0.990 4-8: 0.697 >8: 0.792
+22:15:53    oracle + noise s2=0.1: quad R2 core<1.25: 0.902 1.25-4: 0.880 4-8: 0.832 >8: 0.853 | H gain 0.822
+22:18:32    oracle + noise s2=0.3: quad R2 core<1.25: 0.759 1.25-4: 0.721 4-8: 0.658 >8: 0.698 | H gain 0.695
+22:21:01    oracle + noise s2=1.0: quad R2 core<1.25: 0.483 1.25-4: 0.438 4-8: 0.369 >8: 0.421 | H gain 0.450
+22:23:19    oracle + noise s2=3.0: quad R2 core<1.25: 0.236 1.25-4: 0.197 4-8: 0.149 >8: 0.190 | H gain 0.225
+22:26:06    PSF photon noise 1e+06/frame: quad R2 core<1.25: 0.999 1.25-4: 0.986 4-8: 0.953 >8: 0.940
+22:28:40    PSF photon noise 10000/frame: quad R2 core<1.25: 0.997 1.25-4: 0.979 4-8: 0.905 >8:-0.915
+22:34:00 [ref] pyramid (pyr, K=120) fits: 309 s; WFS modes linear in WF: median R2 1.000; WF modes from WFS: median R2 1.000
+22:34:00    pyr K= 20 quad R2 core<1.25: 0.012 1.25-4: 0.150 4-8: 0.134 >8: 0.146 | lin core<1.25: 0.011 1.25-4: 0.136 4-8: 0.102 >8: 0.141
+22:34:00    pyr K= 40 quad R2 core<1.25: 0.014 1.25-4: 0.258 4-8: 0.357 >8: 0.215 | lin core<1.25: 0.016 1.25-4: 0.224 4-8: 0.246 >8: 0.201
+22:34:00    pyr K= 60 quad R2 core<1.25: 0.019 1.25-4: 0.525 4-8: 0.652 >8: 0.446 | lin core<1.25: 0.022 1.25-4: 0.457 4-8: 0.415 >8: 0.392
+22:34:00    pyr K= 80 quad R2 core<1.25: 0.998 1.25-4: 0.986 4-8: 0.953 >8: 0.958 | lin core<1.25: 0.963 1.25-4: 0.805 4-8: 0.563 >8: 0.764
+22:34:00    pyr K=100 quad R2 core<1.25: 0.998 1.25-4: 0.986 4-8: 0.956 >8: 0.963 | lin core<1.25: 0.965 1.25-4: 0.806 4-8: 0.576 >8: 0.778
+22:34:00    pyr K=120 quad R2 core<1.25: 0.999 1.25-4: 0.987 4-8: 0.960 >8: 0.967 | lin core<1.25: 0.974 1.25-4: 0.809 4-8: 0.584 >8: 0.791
+22:36:15 [ref] pyramid (pyr1e+06, K=80) fits: 102 s; WFS modes linear in WF: median R2 0.997; WF modes from WFS: median R2 0.997
+22:36:15    pyr1e+06 K= 80 quad R2 core<1.25: 0.989 1.25-4: 0.981 4-8: 0.948 >8: 0.953 | lin core<1.25: 0.954 1.25-4: 0.802 4-8: 0.561 >8: 0.761
+22:38:38 [ref] pyramid (pyr100000, K=80) fits: 117 s; WFS modes linear in WF: median R2 0.970; WF modes from WFS: median R2 0.970
+22:38:38    pyr100000 K= 80 quad R2 core<1.25: 0.909 1.25-4: 0.940 4-8: 0.908 >8: 0.907 | lin core<1.25: 0.880 1.25-4: 0.774 4-8: 0.544 >8: 0.730
+22:40:59 [ref] pyramid (pyr10000, K=80) fits: 120 s; WFS modes linear in WF: median R2 0.762; WF modes from WFS: median R2 0.768
+22:40:59    pyr10000 K= 80 quad R2 core<1.25: 0.503 1.25-4: 0.675 4-8: 0.636 >8: 0.629 | lin core<1.25: 0.497 1.25-4: 0.586 4-8: 0.421 >8: 0.536
+22:43:15 [ref] pyramid (pyr1000, K=80) fits: 116 s; WFS modes linear in WF: median R2 0.224; WF modes from WFS: median R2 0.235
+22:43:15    pyr1000 K= 80 quad R2 core<1.25: 0.032 1.25-4: 0.149 4-8: 0.129 >8: 0.129 | lin core<1.25: 0.045 1.25-4: 0.154 4-8: 0.122 >8: 0.134
+22:43:16 [ref] saved

@@ -1,0 +1,27 @@
+# Commands that produced out/ and the figures (2026-11-20, second version: 128-pixel
+# anti-aliased pupil, PSF at 3 pixels per lambda/D), run from this directory.
+# /usr/bin/python3 is used because the miniforge python cannot import matplotlib here.
+# The forward model forks TOY_NPROC single-thread workers; BLAS threads are capped by the
+# environment for the fits.
+
+export OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 TOY_NPROC=8
+
+/usr/bin/python3 toysim.py                 # self-test: Taylor expansion, pupil sampling
+/usr/bin/python3 test_hessmodel.py         # unit checks (also runs under pytest)
+/usr/bin/python3 exp_iid.py quick          # 20 modes, 30k frames: smoke test
+/usr/bin/python3 exp_iid.py minifull       # 20 modes, every code path of "ref"
+
+/usr/bin/python3 exp_gallery.py 0.3 200000 11 > out/log_gallery_0.3.txt  # sample frames
+/usr/bin/python3 exp_gallery.py 0.7 100000 23 > out/log_gallery_0.7.txt
+/usr/bin/python3 exp_iid.py ref   > out/log_ref.txt       # reference case
+/usr/bin/python3 exp_iid.py amp   > out/log_amp.txt       # amplitude scan
+/usr/bin/python3 exp_iid.py bin1  > out/log_bin1.txt      # point-sampled PSF
+/usr/bin/python3 exp_iid.py extra > out/log_extra.txt     # cross-moments, channel truncation
+/usr/bin/python3 exp_channels.py  > out/log_channels.txt  # two-channel fits (L-BFGS)
+/usr/bin/python3 exp_sync.py      > out/log_sync.txt      # time series and lag recovery
+/usr/bin/python3 exp_smooth.py    > out/log_smooth.txt    # noisy modes, temporal smoothing
+
+/usr/bin/python3 figs.py                               # fig1..fig6
+/usr/bin/python3 figs.py gallery_rms0.3 gallery_rms0.7 # sample-frame galleries
+/usr/bin/python3 fill_readme.py                        # tables of README.md
+/usr/bin/python3 summary.py > out/summary.md           # every table
