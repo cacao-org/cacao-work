@@ -36,6 +36,7 @@ SVDLIM1="0.004"
 SVDLIM2="0.004"
 SVDLIM3="0.02"
 ENABLE_LOWFS="1"
+ZPO_OG=""
 PREDICTIVE="0"
 PF_MODE="ar"
 PF_BLOCKSIZE="128"
@@ -100,6 +101,7 @@ Options:
   --svdlim2 <float>   Stage-2 SVD truncation threshold (default: ${SVDLIM2})
   --svdlim3 <float>   Stage-3 LLOWFS SVD truncation threshold (default: ${SVDLIM3})
   --no-lowfs          Keep Stage-3 LLOWFS loop open during science integration
+  --zpo-og <float>    Stage-2 optical-gain scale for ZPO & PSOL (default: unset = 1.0)
   --predictive        Enable PSOL predictive control on Stage 1 (AO3k) & Stage 2 (SCExAO)
   --pf-mode <ar|eof>  Predictive filter type: ar (diag) or eof (block cross-mode, def: ${PF_MODE})
   --pf-blocksize <n>  Cross-mode EOF coupled block size B (default: ${PF_BLOCKSIZE})
@@ -164,6 +166,7 @@ while (( $# > 0 )); do
         --svdlim2)         SVDLIM2="$2"; shift 2 ;;
         --svdlim3)         SVDLIM3="$2"; shift 2 ;;
         --no-lowfs)        ENABLE_LOWFS="0"; shift ;;
+        --zpo-og)          ZPO_OG="$2"; shift 2 ;;
         --predictive)      PREDICTIVE="1"; shift ;;
         --pf-mode)         PF_MODE="$2"; shift 2 ;;
         --pf-blocksize)    PF_BLOCKSIZE="$2"; shift 2 ;;
@@ -830,6 +833,10 @@ done
 milk-stream-wait -q -t 30 "csim_wfs_vis+200"
 CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
 milk-stream-wait -q -t 30 "csim_wfs_vis+200"
+if [[ -n "${ZPO_OG}" ]]; then
+    echo "[ao3k-scexao]   -> Scaling Stage-2 ZPO & PSOL for optical gain g_opt=${ZPO_OG}"
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 setog "${ZPO_OG}"
+fi
 if (( ENABLE_LOWFS )); then
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 close "${GAIN3}"
 fi

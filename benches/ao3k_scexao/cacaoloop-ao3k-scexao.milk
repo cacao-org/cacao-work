@@ -110,6 +110,7 @@ RATE="${CACAO_WFSFRATE:-100}"
 LAT_FR="${CACAO_LATENCYHARDWFR:-1.5}"
 SOFT_LAT_FR="${CACAO_LATENCYSOFTWFR:-1.65}"
 PSOL_WFSFACT="${CACAO_PSOL_WFSFACT:-1.0}"
+WFSZPO_GAIN="${CACAO_WFSZPO_GAIN:-1.0}"
 TBUFF_SIZE="${CACAO_TBUFF_SIZE:-256}"
 PF_MODE="${CACAO_PF_MODE:-ar}"
 PF_ORDER="${CACAO_PF_ORDER:-8}"
@@ -207,6 +208,7 @@ Usage:
   ${SCRIPT_NAME} [--stage 1|2|3] pf-on [mixcoeff [pflatency]]
   ${SCRIPT_NAME} [--stage 1|2|3] pf-freeze
   ${SCRIPT_NAME} [--stage 1|2|3] pf-off
+  ${SCRIPT_NAME} [--stage 1|2|3] setog <g_opt> [--zpo-safety F] [--no-psol]
   ${SCRIPT_NAME} [--stage 1|2|3] testol [mode [ampl [nbsample]]]
   ${SCRIPT_NAME} [--stage 1|2|3] open
   ${SCRIPT_NAME} [--stage 1|2|3] zero
@@ -452,6 +454,7 @@ acquWFS-${N}.comp.WFSnormalize        = ON
 acquWFS-${N}.comp.WFSrefsub           = ON
 acquWFS-${N}.comp.WFSsigav            = ON
 acquWFS-${N}.comp.WFSrefc             = ON
+acquWFS-${N}.WFSzpogain               = ${WFSZPO_GAIN}
 acquWFS-${N}.wfszpo                   = ${PFX}wfszpo
 acquWFS-${N}.procinfo.loopcntMax      = -1
 acquWFS-${N}.procinfo.triggermode     = 3
@@ -1436,6 +1439,31 @@ cmd_testol() {
     milk-fps-set -q "${PF_MK_UNIT}.PFlatency=${pflat}"
 }
 
+cmd_setog() {
+    if (( $# < 1 )); then
+        echo "${SCRIPT_NAME}: 'setog' requires <g_opt> (0 < g_opt <= 2.0)" >&2
+        return 2
+    fi
+    local g_opt="$1" safety="0.95" upd_psol=1
+    shift
+    while (( $# > 0 )); do
+        case "$1" in
+            --zpo-safety) safety="$2"; shift 2 ;;
+            --no-psol)    upd_psol=0; shift ;;
+            *) echo "${SCRIPT_NAME}: unknown setog option '$1'" >&2; return 2 ;;
+        esac
+    done
+    local zpo_g wfs_f
+    zpo_g="$(awk -v g="${g_opt}" -v s="${safety}" \
+        'BEGIN { v = g * s; if (v < 0.1) v = 0.1; if (v > 1.5) v = 1.5; printf "%.4f", v }')"
+    wfs_f="$(awk -v g="${g_opt}" \
+        'BEGIN { v = (g > 0.1 ? 1.0 / g : 10.0); if (v > 5.0) v = 5.0; printf "%.4f", v }')"
+    @set "f.acquWFS-${N}.WFSzpogain=${zpo_g}"
+    if (( upd_psol )); then
+        @set "f.mfilt-${N}.comp.WFSfact=${wfs_f}"
+    fi
+}
+
 cmd_open() {
     @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF"
     milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" "mctrlstats-${N}" >/dev/null 2>&1 || true
@@ -1513,6 +1541,7 @@ case "${subcmd}" in
     pf-on)     cmd_pf_on "$@" ;;
     pf-freeze) cmd_pf_freeze "$@" ;;
     pf-off)    cmd_pf_off "$@" ;;
+    setog)     cmd_setog "$@" ;;
     testol)    cmd_testol "$@" ;;
     open)      cmd_open "$@" ;;
     zero)      cmd_zero "$@" ;;
