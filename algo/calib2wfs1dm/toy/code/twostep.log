@@ -1,0 +1,276 @@
+
+=== step-1 WFS B gain same | reference | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.734, 0.0493   single closed window 0.755, 0.0498
+  g    fixed, LS              -30.6 (0.5) /  30.6
+  g    fixed, W(z)            +16.4 (0.1) /  16.4
+  g    fixed, IV              -11.6 (0.3) /  12.5
+  g    fixed, IV diff          +0.4 (0.2) /   3.7
+  g    scale, IV               +0.6 (0.3) /   4.5
+  g    scale, IV diff          +0.4 (0.2) /   4.1
+  g    recipe, IV              +0.7 (0.4) /   4.8
+  g    recipe, IV diff         +1.9 (0.4) /   4.3
+  g    true Mab, IV            +0.2 (0.2) /   2.7
+  g    true Mab, IV diff       +0.5 (0.3) /   3.8
+  Mda  tool                   -16.0 (0.3) /  16.0
+  Mda  Mba1, LS                -5.5 (0.1) /   5.5
+  Mda  Mba1, IV                +1.1 (0.2) /   2.3
+  Mda  from scale fit         +17.0 (0.7) /  17.0
+
+=== step-1 WFS B gain same | reference | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.734, 0.0493   single closed window 0.767, 0.0487
+  g    fixed, LS              -33.1 (0.5) /  33.1
+  g    fixed, W(z)            +17.0 (0.2) /  17.0
+  g    fixed, IV              -12.4 (0.3) /  14.0
+  g    fixed, IV diff          -2.6 (0.4) /   5.4
+  g    scale, IV               -0.6 (0.6) /   5.8
+  g    scale, IV diff          -1.4 (0.3) /   5.4
+  g    recipe, IV              +1.0 (0.4) /   5.0
+  g    recipe, IV diff         -0.2 (0.5) /   5.9
+  g    true Mab, IV            -1.0 (0.3) /   3.6
+  g    true Mab, IV diff       -1.2 (0.5) /   5.3
+  Mda  tool                   -13.6 (0.1) /  13.6
+  Mda  Mba1, LS                -4.1 (0.2) /   4.2
+  Mda  Mba1, IV                +2.6 (0.2) /   3.0
+  Mda  from scale fit         +16.3 (0.4) /  16.3
+
+=== step-1 WFS B gain same | noises /4 | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.897, 0.0523   single closed window 0.768, 0.0536
+  g    fixed, LS              -16.5 (0.6) /  16.5
+  g    fixed, W(z)             +4.3 (0.2) /   4.5
+  g    fixed, IV               +1.3 (0.5) /   7.9
+  g    fixed, IV diff          +0.1 (0.3) /   4.3
+  g    scale, IV              -13.9 (1.2) /  14.5
+  g    scale, IV diff          +0.4 (0.3) /   4.4
+  g    recipe, IV              -8.6 (0.7) /   8.9
+  g    recipe, IV diff         -0.2 (0.5) /   4.6
+  g    true Mab, IV            -4.1 (0.5) /   6.2
+  g    true Mab, IV diff       +0.9 (0.3) /   3.6
+  Mda  tool                    -8.0 (0.3) /   8.0
+  Mda  Mba1, LS                -4.3 (0.2) /   4.3
+  Mda  Mba1, IV                +1.2 (0.1) /   2.3
+  Mda  from scale fit         +21.4 (0.6) /  21.5
+
+=== step-1 WFS B gain same | noises /4 | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.897, 0.0523   single closed window 0.798, 0.0524
+  g    fixed, LS              -16.5 (0.3) /  16.5
+  g    fixed, W(z)             +0.7 (0.1) /   1.7
+  g    fixed, IV               +1.4 (0.6) /   8.1
+  g    fixed, IV diff          -0.5 (0.4) /   4.5
+  g    scale, IV              -19.9 (1.6) /  20.4
+  g    scale, IV diff          -1.8 (0.4) /   4.5
+  g    recipe, IV             -10.3 (0.7) /  11.4
+  g    recipe, IV diff         -1.7 (0.4) /   4.7
+  g    true Mab, IV            -7.8 (0.6) /   9.5
+  g    true Mab, IV diff       -1.1 (0.4) /   4.6
+  Mda  tool                    -9.4 (0.2) /   9.4
+  Mda  Mba1, LS                -4.4 (0.2) /   4.4
+  Mda  Mba1, IV                +1.3 (0.2) /   2.3
+  Mda  from scale fit         +19.1 (0.6) /  19.3
+
+=== step-1 WFS B gain same | noises /16 | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.922, 0.0552   single closed window 0.439, 0.0571
+  g    fixed, LS              -14.2 (0.6) /  14.3
+  g    fixed, W(z)            -22.7 (0.3) /  22.7
+  g    fixed, IV               +5.0 (0.4) /   9.2
+  g    fixed, IV diff          +6.7 (0.4) /   6.9
+  g    scale, IV              -37.7 (2.2) /  45.7
+  g    scale, IV diff          -1.0 (0.3) /   4.9
+  g    recipe, IV             -29.7 (2.0) /  33.6
+  g    recipe, IV diff         -2.5 (0.4) /   4.9
+  g    true Mab, IV           -11.5 (2.5) /  29.2
+  g    true Mab, IV diff       -0.6 (0.2) /   3.5
+  Mda  tool                    -9.3 (0.2) /   9.3
+  Mda  Mba1, LS                -4.3 (0.2) /   4.3
+  Mda  Mba1, IV                +1.1 (0.1) /   2.3
+  Mda  from scale fit         +18.1 (0.5) /  18.1
+
+=== step-1 WFS B gain same | noises /16 | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.922, 0.0552   single closed window 0.571, 0.0545
+  g    fixed, LS              -14.0 (0.4) /  14.0
+  g    fixed, W(z)            -18.6 (0.2) /  18.6
+  g    fixed, IV               +4.1 (0.6) /   9.8
+  g    fixed, IV diff          +6.9 (0.4) /   7.2
+  g    scale, IV              -57.2 (2.7) /  62.0
+  g    scale, IV diff          -1.8 (0.4) /   5.0
+  g    recipe, IV             -26.6 (1.6) /  37.5
+  g    recipe, IV diff         -3.9 (0.3) /   5.7
+  g    true Mab, IV           -22.6 (2.6) /  40.8
+  g    true Mab, IV diff       -1.7 (0.5) /   4.2
+  Mda  tool                    -9.6 (0.3) /   9.6
+  Mda  Mba1, LS                -4.4 (0.2) /   4.5
+  Mda  Mba1, IV                +1.0 (0.2) /   2.2
+  Mda  from scale fit         +17.7 (0.4) /  17.7
+
+=== step-1 WFS B gain same | no WFS A noise | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.924, 0.0564   single closed window 1.233, 0.0581
+  g    fixed, LS              -13.7 (0.7) /  13.8
+  g    fixed, W(z)            +35.7 (0.2) /  35.7
+  g    fixed, IV               +5.4 (0.5) /   9.7
+  g    fixed, IV diff         +13.6 (0.8) /  14.0
+  g    scale, IV              -46.9 (1.9) /  51.0
+  g    scale, IV diff         +12.7 (3.1) /  36.8
+  g    recipe, IV             -15.0 (1.8) /  27.5
+  g    recipe, IV diff        +10.9 (1.6) /  29.2
+  g    true Mab, IV           -14.9 (2.3) /  30.1
+  g    true Mab, IV diff      +17.4 (3.3) /  31.9
+  Mda  tool                   -13.8 (0.3) /  13.8
+  Mda  Mba1, LS                -4.3 (0.1) /   4.3
+  Mda  Mba1, IV                +2.3 (0.2) /   2.8
+  Mda  from scale fit         +20.8 (0.9) /  21.1
+
+=== step-1 WFS B gain same | no WFS A noise | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.924, 0.0564   single closed window 1.175, 0.0581
+  g    fixed, LS              -14.4 (0.4) /  14.5
+  g    fixed, W(z)            +28.7 (1.1) /  28.7
+  g    fixed, IV               +5.3 (0.7) /  10.5
+  g    fixed, IV diff         +14.5 (1.0) /  16.1
+  g    scale, IV              -42.0 (1.6) /  47.7
+  g    scale, IV diff         +15.6 (2.1) /  33.7
+  g    recipe, IV              -5.8 (2.1) /  24.4
+  g    recipe, IV diff        +15.4 (1.7) /  36.4
+  g    true Mab, IV            -8.7 (1.7) /  27.6
+  g    true Mab, IV diff      +18.9 (1.9) /  35.0
+  Mda  tool                   -12.1 (0.2) /  12.1
+  Mda  Mba1, LS                -3.1 (0.2) /   3.4
+  Mda  Mba1, IV                +3.1 (0.3) /   3.3
+  Mda  from scale fit         +22.1 (0.7) /  23.1
+
+=== step-1 WFS B gain lower | reference | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.733, 0.0499   single closed window 0.755, 0.0498
+  g    fixed, LS              -44.2 (0.2) /  44.2
+  g    fixed, W(z)            +13.8 (0.2) /  13.9
+  g    fixed, IV              -30.3 (0.3) /  30.3
+  g    fixed, IV diff          +0.6 (0.2) /   3.2
+  g    scale, IV               +0.6 (0.3) /   4.5
+  g    scale, IV diff          +0.4 (0.2) /   4.1
+  g    recipe, IV              +0.7 (0.4) /   4.8
+  g    recipe, IV diff         +1.9 (0.4) /   4.3
+  g    true Mab, IV            +0.2 (0.2) /   2.7
+  g    true Mab, IV diff       +0.5 (0.3) /   3.8
+  Mda  tool                   -16.0 (0.3) /  16.0
+  Mda  Mba1, LS                -5.8 (0.2) /   5.8
+  Mda  Mba1, IV                +0.4 (0.2) /   2.2
+  Mda  from scale fit         +17.4 (0.7) /  17.4
+
+=== step-1 WFS B gain lower | reference | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.733, 0.0499   single closed window 0.767, 0.0487
+  g    fixed, LS              -47.3 (0.5) /  47.3
+  g    fixed, W(z)            +14.1 (0.2) /  14.1
+  g    fixed, IV              -31.8 (0.3) /  31.8
+  g    fixed, IV diff          -4.5 (0.5) /   6.5
+  g    scale, IV               -0.7 (0.6) /   5.8
+  g    scale, IV diff          -1.5 (0.3) /   5.5
+  g    recipe, IV              +1.0 (0.4) /   5.0
+  g    recipe, IV diff         -0.2 (0.5) /   5.9
+  g    true Mab, IV            -1.0 (0.3) /   3.6
+  g    true Mab, IV diff       -1.2 (0.5) /   5.3
+  Mda  tool                   -13.6 (0.1) /  13.6
+  Mda  Mba1, LS                -4.9 (0.2) /   4.9
+  Mda  Mba1, IV                +1.3 (0.2) /   2.5
+  Mda  from scale fit         +16.6 (0.4) /  16.6
+
+=== step-1 WFS B gain lower | noises /4 | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.897, 0.0523   single closed window 0.768, 0.0536
+  g    fixed, LS              -34.5 (0.5) /  34.5
+  g    fixed, W(z)             -0.9 (0.2) /   2.5
+  g    fixed, IV              -20.0 (0.4) /  20.3
+  g    fixed, IV diff          +0.8 (0.3) /   4.1
+  g    scale, IV              -13.9 (1.2) /  14.5
+  g    scale, IV diff          +0.4 (0.3) /   4.4
+  g    recipe, IV              -8.6 (0.7) /   8.9
+  g    recipe, IV diff         -0.2 (0.5) /   4.6
+  g    true Mab, IV            -4.1 (0.5) /   6.2
+  g    true Mab, IV diff       +0.9 (0.3) /   3.6
+  Mda  tool                    -8.0 (0.3) /   8.0
+  Mda  Mba1, LS                -5.8 (0.2) /   5.8
+  Mda  Mba1, IV                -0.5 (0.1) /   2.4
+  Mda  from scale fit         +21.4 (0.6) /  21.5
+
+=== step-1 WFS B gain lower | noises /4 | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.897, 0.0523   single closed window 0.798, 0.0524
+  g    fixed, LS              -34.7 (0.3) /  34.7
+  g    fixed, W(z)             -2.4 (0.1) /   2.7
+  g    fixed, IV              -20.4 (0.5) /  20.5
+  g    fixed, IV diff          -3.0 (0.3) /   4.6
+  g    scale, IV              -19.9 (1.5) /  20.4
+  g    scale, IV diff          -1.8 (0.4) /   4.5
+  g    recipe, IV             -10.3 (0.7) /  11.4
+  g    recipe, IV diff         -1.7 (0.4) /   4.7
+  g    true Mab, IV            -7.8 (0.6) /   9.5
+  g    true Mab, IV diff       -1.1 (0.4) /   4.6
+  Mda  tool                    -9.4 (0.2) /   9.4
+  Mda  Mba1, LS                -5.6 (0.2) /   5.6
+  Mda  Mba1, IV                -0.3 (0.2) /   2.3
+  Mda  from scale fit         +19.2 (0.6) /  19.3
+
+=== step-1 WFS B gain lower | noises /16 | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.922, 0.0552   single closed window 0.439, 0.0571
+  g    fixed, LS              -32.7 (0.6) /  32.7
+  g    fixed, W(z)            -34.8 (0.2) /  34.8
+  g    fixed, IV              -17.2 (0.3) /  17.5
+  g    fixed, IV diff          -9.5 (0.5) /   9.6
+  g    scale, IV              -37.7 (2.2) /  45.8
+  g    scale, IV diff          -1.0 (0.3) /   4.9
+  g    recipe, IV             -29.7 (2.0) /  33.6
+  g    recipe, IV diff         -2.5 (0.4) /   4.9
+  g    true Mab, IV           -11.5 (2.5) /  29.2
+  g    true Mab, IV diff       -0.6 (0.2) /   3.5
+  Mda  tool                    -9.3 (0.2) /   9.3
+  Mda  Mba1, LS                -6.0 (0.2) /   6.0
+  Mda  Mba1, IV                -0.6 (0.1) /   2.4
+  Mda  from scale fit         +18.1 (0.5) /  18.1
+
+=== step-1 WFS B gain lower | noises /16 | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.922, 0.0552   single closed window 0.571, 0.0545
+  g    fixed, LS              -32.4 (0.3) /  32.4
+  g    fixed, W(z)            -27.6 (0.3) /  27.6
+  g    fixed, IV              -17.8 (0.6) /  18.3
+  g    fixed, IV diff          -9.1 (0.3) /   9.3
+  g    scale, IV              -57.3 (2.7) /  62.2
+  g    scale, IV diff          -1.9 (0.4) /   5.0
+  g    recipe, IV             -26.6 (1.6) /  37.5
+  g    recipe, IV diff         -3.9 (0.3) /   5.7
+  g    true Mab, IV           -22.6 (2.6) /  40.8
+  g    true Mab, IV diff       -1.7 (0.5) /   4.2
+  Mda  tool                    -9.6 (0.3) /   9.6
+  Mda  Mba1, LS                -5.7 (0.2) /   5.7
+  Mda  Mba1, IV                -0.4 (0.2) /   2.2
+  Mda  from scale fit         +17.8 (0.4) /  17.8
+
+=== step-1 WFS B gain lower | no WFS A noise | int ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.924, 0.0571   single closed window 1.233, 0.0581
+  g    fixed, LS              -31.5 (0.6) /  31.5
+  g    fixed, W(z)            +34.9 (0.2) /  34.9
+  g    fixed, IV              -16.4 (0.4) /  16.8
+  g    fixed, IV diff          -5.5 (0.8) /   9.7
+  g    scale, IV              -47.1 (1.9) /  51.6
+  g    scale, IV diff         +12.6 (3.0) /  36.3
+  g    recipe, IV             -15.0 (1.8) /  27.5
+  g    recipe, IV diff        +10.9 (1.6) /  29.2
+  g    true Mab, IV           -14.9 (2.3) /  30.1
+  g    true Mab, IV diff      +17.4 (3.3) /  31.9
+  Mda  tool                   -13.8 (0.3) /  13.8
+  Mda  Mba1, LS                -4.7 (0.2) /   4.7
+  Mda  Mba1, IV                +1.4 (0.2) /   2.6
+  Mda  from scale fit         +20.9 (0.7) /  21.3
+
+=== step-1 WFS B gain lower | no WFS A noise | pred ===
+  Mab diag / truth, off-diag rms / diag:  step 1 open 0.924, 0.0571   single closed window 1.175, 0.0581
+  g    fixed, LS              -33.0 (0.3) /  33.0
+  g    fixed, W(z)            +28.1 (1.1) /  28.1
+  g    fixed, IV              -17.7 (0.8) /  18.6
+  g    fixed, IV diff          -4.4 (1.0) /  12.3
+  g    scale, IV              -42.6 (1.6) /  49.1
+  g    scale, IV diff         +15.4 (2.2) /  33.5
+  g    recipe, IV              -5.8 (2.1) /  24.4
+  g    recipe, IV diff        +15.4 (1.7) /  36.4
+  g    true Mab, IV            -8.7 (1.7) /  27.6
+  g    true Mab, IV diff      +18.9 (1.9) /  35.0
+  Mda  tool                   -12.1 (0.2) /  12.1
+  Mda  Mba1, LS                -4.0 (0.2) /   4.1
+  Mda  Mba1, IV                +1.8 (0.2) /   2.8
+  Mda  from scale fit         +22.5 (0.7) /  23.7
+
+real	0m26.823s
+user	0m0.215s
+sys	0m0.039s

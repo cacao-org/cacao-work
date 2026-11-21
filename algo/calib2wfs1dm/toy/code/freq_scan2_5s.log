@@ -1,0 +1,18 @@
+differenced lagged-A, toy model, 5 s windows, 12 runs per case
+bias of the median (standard error) / per-mode median error [%], timeline rate
+
+WFS A / WFS B                                               1 slow frame                 2 slow frames                 3 slow frames
+1 kHz / 2 kHz                                  +0.4 (0.3) /  4.1 @ 1000 Hz     +0.5 (0.2) /  3.7 @  500 Hz     -1.4 (0.3) /  4.4 @  333 Hz
+1 kHz / 1 kHz                                  +6.1 (1.1) / 12.8 @ 1000 Hz     +4.3 (0.6) /  7.1 @  500 Hz     +1.6 (0.3) /  4.5 @  333 Hz
+1 kHz / 1 kHz, clocks offset 1/4 frame        +34.2 (0.9) / 34.2 @ 1000 Hz     +3.7 (0.7) /  6.7 @  500 Hz     +0.2 (0.4) /  4.2 @  333 Hz
+1 kHz / 1 kHz, clocks offset 1/2 frame        +60.0 (0.6) / 60.0 @ 1000 Hz     +4.2 (0.6) /  6.6 @  500 Hz     -1.0 (0.4) /  4.5 @  333 Hz
+1 kHz / 2 kHz, clocks offset 1/4 A frame       -1.6 (0.4) /  3.9 @ 1000 Hz     -2.7 (0.4) /  4.2 @  500 Hz     -2.6 (0.4) /  4.4 @  333 Hz
+1 kHz / 1.5 kHz                                +3.3 (0.4) /  5.3 @ 1000 Hz     -0.1 (0.2) /  3.2 @  500 Hz     -1.0 (0.2) /  3.3 @  333 Hz
+1 kHz / 1.846 kHz (24:13 ticks)                -0.2 (0.4) /  3.9 @ 1000 Hz     -1.7 (0.3) /  4.0 @  500 Hz     -2.8 (0.3) /  4.7 @  333 Hz
+1 kHz / 1.2 kHz                               +17.8 (0.5) / 18.0 @ 1000 Hz     -1.0 (0.4) /  4.0 @  500 Hz     -1.3 (0.3) /  3.6 @  333 Hz
+1.2 kHz / 1 kHz (A faster)                    +21.6 (1.3) / 21.8 @ 1000 Hz     +7.2 (0.5) /  8.7 @  500 Hz     +4.8 (0.5) /  5.8 @  333 Hz
+1 kHz / 2.182 kHz (24:11 ticks)                -1.2 (0.4) /  3.7 @ 1000 Hz     -1.1 (0.4) /  4.2 @  500 Hz     -2.9 (0.4) /  5.0 @  333 Hz
+
+real	0m34.518s
+user	0m0.186s
+sys	0m0.031s

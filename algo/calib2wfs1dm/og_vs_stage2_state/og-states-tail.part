@@ -1,0 +1,138 @@
+
+# ==========================================================================================
+# og_vs_stage2_state tail. Everything above this line is lines 1-867 of
+# benches/ao3k_scexao/sim-ao3k-scexao.milk, unchanged: bench deployment, calibration of the
+# three stages, calibration selfRM, turbulence on, stage 1 and stage 2 closed.
+#
+# From here the stock script integrates once and reports. This tail instead scans a list of
+# stage-2 loop states under that single calibration. For each state it records
+#   (1) in-DAG wavefront statistics and PSF Strehl over OGS_WF_TICKS master ticks,
+#   (2) the stage-2 self-response matrix with the loop in that state,
+# and the stream counters around both, so that dropped frames would show.
+#
+# Parameters come from the environment (the stock option parser is left untouched):
+#   OGS_STATES        comma list of label:gain, gain = number or "open"  (open = loop off, DM2 flat)
+#   OGS_SRM_ITER      selfRM averaging iterations per state
+#   OGS_WF_TICKS      master ticks (2 kHz) per statistics window
+#   OGS_SETTLE_TICKS  master ticks to wait after changing the state
+# ==========================================================================================
+OGS_STATES="${OGS_STATES:-a_nominal:${GAIN2}}"
+OGS_SRM_ITER="${OGS_SRM_ITER:-16}"
+OGS_WF_TICKS="${OGS_WF_TICKS:-8000}"
+OGS_SETTLE_TICKS="${OGS_SETTLE_TICKS:-2000}"
+
+ogs_wait_ticks() {
+    local n="$1" step
+    while (( n > 0 )); do
+        step=$(( n < 400 ? n : 400 ))
+        milk-stream-wait -q -t 120 "csim_wfs_vis+${step}"
+        n=$(( n - step ))
+    done
+}
+
+ogs_p=0
+ogs_a=0
+ogs_b=0
+ogs_counts() {
+    @get ogs_p="s.outarraypha.cnt0" ogs_a="s.csim_wfs_nir.cnt0" ogs_b="s.csim_wfs_vis.cnt0"
+}
+
+OGS_CSV="${OUT_DIR}/og_states_counts.csv"
+echo "state,gain2,window,d_pha,d_wfs1,d_wfs2,wall_s,strehl_vis_final,strehl_vis_stg1" \
+    > "${OGS_CSV}"
+
+IFS=',' read -r -a OGS_LIST <<< "${OGS_STATES}"
+for ogs_ent in "${OGS_LIST[@]}"; do
+    ogs_label="${ogs_ent%%:*}"
+    ogs_gain="${ogs_ent#*:}"
+    ogs_dir="${OUT_DIR}/state_${ogs_label}"
+    mkdir -p "${ogs_dir}"
+    sysmon.mark "state_${ogs_label}" "Stage-2 state ${ogs_label} (gain ${ogs_gain})"
+    echo "[og-states] ---- state ${ogs_label}: stage-2 gain = ${ogs_gain} ----"
+    if [[ "${ogs_gain}" == "open" ]]; then
+        CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero
+    else
+        CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${ogs_gain}"
+    fi
+    ogs_wait_ticks "${OGS_SETTLE_TICKS}"
+
+    # (1) wavefront statistics and PSF Strehl
+    @set "f.csim_htsim.enable_fpcam=ON"
+    milk-stream-wait -q -t 60 "csim_wfs_vis+40"
+    rm -f "${ogs_dir}/wf_stats.json"
+    ln -sfn "${ogs_dir}" "${WFSTAT_LINK}"
+    milk-fps-set -q \
+        "csim_htsim.wfstat_outdir=${WFSTAT_LINK}" \
+        "csim_htsim.wfstat_ticks=${OGS_WF_TICKS}" \
+        "csim_htsim.wfstat_extra=ON"
+    ogs_counts
+    p0="${ogs_p}" a0="${ogs_a}" b0="${ogs_b}"
+    t0="$(date +%s.%N)"
+    cacaosim.reset_long
+    @set "f.csim_htsim.wfstat_enable=ON"
+    wf_n=0
+    for _ in $(seq 1 6000); do
+        @get wf_n="f.csim_htsim.wfstat_frames"
+        (( wf_n >= OGS_WF_TICKS )) && [[ -s "${ogs_dir}/wf_stats.json" ]] && break
+        sleep 0.2
+    done
+    ogs_counts
+    t1="$(date +%s.%N)"
+    sv="" s1v=""
+    @get sv="s.psf_vis_final_long.kw.STREHL" s1v="s.psf_vis_stg1_long.kw.STREHL" \
+        2>/dev/null || true
+    @set "f.csim_htsim.wfstat_enable=OFF"
+    sleep 1.0
+    rm -f "${WFSTAT_LINK}"
+    wall="$(awk -v a="${t0}" -v b="${t1}" 'BEGIN { printf "%.1f", b - a }')"
+    echo "${ogs_label},${ogs_gain},wfstat,$(( ogs_p - p0 )),$(( ogs_a - a0 )),$(( ogs_b - b0 ))" \
+         ",${wall},${sv:-},${s1v:-}" | tr -d ' ' >> "${OGS_CSV}"
+    echo "[og-states]      wfstat: frames=${wf_n} d(pha)=$(( ogs_p - p0 ))" \
+         "d(wfs1)=$(( ogs_a - a0 )) d(wfs2)=$(( ogs_b - b0 )) in ${wall} s |" \
+         "Strehl vis: final=${sv:-?} stg1=${s1v:-?}"
+    @set "f.csim_htsim.enable_fpcam=OFF"
+    milk-stream-wait -q -t 60 "csim_wfs_vis+40"
+
+    # (2) stage-2 self-response matrix with the loop in this state
+    ogs_counts
+    p0="${ogs_p}" a0="${ogs_a}" b0="${ogs_b}"
+    t0="$(date +%s.%N)"
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 selfrm \
+        "${ogs_dir}/selfRM_onsky_stg2.fits" \
+        --nbmode "${SELFRM_MODES}" --ampl 0.020 --nbiter "${OGS_SRM_ITER}" --nbsettle 6 \
+        --timeout 5400
+    ogs_counts
+    t1="$(date +%s.%N)"
+    wall="$(awk -v a="${t0}" -v b="${t1}" 'BEGIN { printf "%.1f", b - a }')"
+    echo "${ogs_label},${ogs_gain},selfrm,$(( ogs_p - p0 )),$(( ogs_a - a0 )),$(( ogs_b - b0 ))" \
+         ",${wall},," | tr -d ' ' >> "${OGS_CSV}"
+    echo "[og-states]      selfRM: d(pha)=$(( ogs_p - p0 )) d(wfs1)=$(( ogs_a - a0 ))" \
+         "d(wfs2)=$(( ogs_b - b0 )) in ${wall} s"
+    for sfx in mgain mgainfact mmult mvalWFSrms mvalDMrms mvalOLrms; do
+        if @exists "s.aol2_${sfx}"; then
+            fpspipe.savefits "aol2_${sfx}" "${ogs_dir}/aol2_${sfx}.fits"
+        fi
+    done
+    lon="" lg="" lm=""
+    @get lon="f.mfilt-2.loopON" lg="f.mfilt-2.loopgain" lm="f.mfilt-2.loopmult"
+    echo "[og-states]      stage-2 loop at end of state: loopON=${lon} gain=${lg} mult=${lm}"
+    echo "loopON=${lon} loopgain=${lg} loopmult=${lm}" > "${ogs_dir}/loop_state.txt"
+done
+
+milk-fps-runstop -q csim_atmturb
+
+for stg_pair in "1:${STG1_ROOT}" "2:${STG2_ROOT}" "3:${STG3_ROOT}"; do
+    sn="${stg_pair%%:*}"
+    sroot="${stg_pair#*:}"
+    for mf in mlat_hardwlatency.dat rm_meta.env calib_timings.json; do
+        if [[ -f "${sroot}/conf/${mf}" ]]; then
+            cp -f "${sroot}/conf/${mf}" "${OUT_DIR}/stg${sn}_${mf}"
+        fi
+    done
+done
+cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
+
+sysmon.stop
+sysmon.report "${OUT_DIR}" "${OUT_DIR}/ao3k_scexao_metrics.json" "" \
+    "${OUT_DIR}/stg1_calib_timings.json" "${OUT_DIR}/stg2_calib_timings.json" "" || true
+echo "[og-states] Done: ${OUT_DIR}"

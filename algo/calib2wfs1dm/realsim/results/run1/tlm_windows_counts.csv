@@ -1,0 +1,7 @@
+window,lowfs,phase,d_pha,d_wfs1,d_wfs2,wall_s
+lowfs_open,0,telemetry,40200,20100,40200,804.0
+lowfs_open,0,selfrm,19218,9609,19218,384.4
+lowfs_closed,1,telemetry,40201,20100,40201,804.0
+lowfs_closed,1,selfrm,19216,9608,19216,384.3
+gain_quarter,0,telemetry,40201,20101,40201,804.0
+gain_quarter,0,selfrm,19218,9608,19217,384.4

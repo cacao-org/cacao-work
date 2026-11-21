@@ -1,0 +1,3 @@
+window,lowfs,phase,d_pha,d_wfs1,d_wfs2,wall_s
+dbg_open,0,telemetry,6417,3208,6417,128.3
+dbg_closed,1,telemetry,6416,3208,6416,128.3
