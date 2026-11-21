@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 # Synthetic layers built by `windlayers.milk selftest` (pattern velocity [m/s], distance [m])
@@ -111,3 +112,55 @@ EOF
     for vel, dist in TRUTH:
         assert _has_layer(rows, vel, dist, 1.0, 0.2), res.stdout
     assert not list(shm_dir.glob("wl_*.im.shm"))
+
+
+def test_windlayers_subpixel_pupils(
+    repo_root: Path,
+    shm_sandbox: tuple[Path, Path, dict[str, str]],
+) -> None:
+    """Sub-pixel pupil centres (.pupx/.pupy fractional) recover both synthetic layers."""
+    _, work_dir, env = shm_sandbox
+    env = env | {"WINDLAYERS_BIN": str(work_dir / "bin")}
+    tool = repo_root / "algo" / "windlayers" / "windlayers.milk"
+
+    # Place the 4 synthetic pupils at genuine fractional pixel centres via sub-pixel shift,
+    # then recover them with bicubic cutout extraction in windlayers.c.
+    script = f"""
+set -euo pipefail
+"{tool}" selftest --keep >/dev/null
+milk-script -q -e <<'EOF'
+iofits.saveFITS wlst_icube "!icube.fits"
+EOF
+"{sys.executable}" - <<'PY'
+import numpy as np
+from astropy.io import fits
+
+ic = fits.getdata("icube.fits").astype(np.float64)  # (T, 32, 32)
+nfr, n, _ = ic.shape
+# True sub-pixel shifts (dx, dy) for the 4 pupils placed in 80x80 frame around (19.5, 59.5)
+shifts = [(+0.35, -0.30), (-0.40, +0.25), (+0.25, +0.40), (-0.30, -0.35)]
+origins = [(4, 4), (44, 4), (4, 44), (44, 44)]
+f1 = np.fft.fftfreq(n)
+fx, fy = np.meshgrid(f1, f1)
+out = np.zeros((nfr, 80, 80), dtype=np.float32)
+fic = np.fft.fft2(ic)
+for (sx, sy), (ox, oy) in zip(shifts, origins):
+    ph = np.exp(-2j * np.pi * (fx * sx + fy * sy))
+    sh = np.fft.ifft2(fic * ph[None, :, :]).real * 0.25
+    out[:, oy:oy+n, ox:ox+n] = np.maximum(sh, 0.0).astype(np.float32)
+fits.writeto("scube.fits", out, overwrite=True)
+PY
+"{tool}" cube scube.fits wlst_pcube frate=200 diam=7.5 diampix=30 phaunit=1e-6 phasign=1 \\
+    vmax=30 wfsmode=0 modrad=500 \\
+    pupx=19.85,59.10,19.75,59.20 pupy=19.20,19.75,59.90,59.15 phapitch=0.125
+"{tool}" stop --rm
+"""
+    res = subprocess.run(
+        ["bash", "-c", script], cwd=work_dir, env=env, timeout=300, check=False,
+        capture_output=True, text=True,
+    )
+    assert res.returncode == 0, f"stdout:\n{res.stdout}\nstderr:\n{res.stderr[-2000:]}"
+    assert "(subpix)" in res.stdout, res.stdout
+    rows = _layers(res.stdout)
+    for vel, dist in TRUTH:
+        assert _has_layer(rows, vel, dist, 0.5, 0.10), res.stdout

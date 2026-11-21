@@ -81,9 +81,11 @@ static double  p_tupdate                               = 10.0;
 static double  p_tavg                                  = 0.0;
 static double  p_modrad                                = 3.0;
 static double  p_blur                                  = 0.6;
-static double  p_corefrac                              = 1.0;
+static double  p_corefrac                              = -1.0;
 static double  p_halo                                  = 15.0;
 static double  p_igain                                 = 1.0;
+static int32_t p_pyrcoh                                = 1;
+static int32_t p_fresnel                               = 1;
 static double  p_lambda                                = 0.75;
 static double  p_og                                    = 1.0;
 static double  p_phaunit                               = 1e-6;
@@ -99,15 +101,17 @@ static char    p_report[FUNCTION_PARAMETER_STRMAXLEN]  = "";
 static int32_t p_reset                                 = 0;
 static int32_t p_nthread                               = 1;
 
-static int64_t o_nframes = 0;
-static int64_t o_nblocks = 0;
-static double  o_tint    = 0.0;
-static int64_t o_nlayers = 0;
-static int64_t o_ksign   = 0;
-static int64_t o_zvalid  = 0;
-static int64_t o_ngaps   = 0;
-static int64_t o_npix    = 0;
-static double  o_dx      = 0.0;
+static int64_t o_nframes  = 0;
+static int64_t o_nblocks  = 0;
+static double  o_tint     = 0.0;
+static int64_t o_nlayers  = 0;
+static int64_t o_ksign    = 0;
+static int64_t o_zvalid   = 0;
+static int64_t o_ngaps    = 0;
+static int64_t o_npix     = 0;
+static double  o_dx       = 0.0;
+static double  o_corefrac = 1.0;
+static double  o_fluxin   = 1.0;
 static double  o_speed[WLU_NLAYOUT];
 static double  o_dir[WLU_NLAYOUT];
 static double  o_z[WLU_NLAYOUT];
@@ -157,13 +161,17 @@ static double  o_z[WLU_NLAYOUT];
     X(".blur", &p_blur, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                                  \
       "Pyramid: width of the PSF core on the tip [lambda/D]")                                     \
     X(".corefrac", &p_corefrac, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                          \
-      "Pyramid: fraction of the light in the PSF core (rest: halo)")                              \
+      "Pyramid: PSF core fraction (<0: auto from inter-pupil flux, 0..1: fixed)")                 \
     X(".halo", &p_halo, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                                  \
       "Pyramid: width of the PSF halo on the tip [lambda/D]")                                     \
     X(".igain", &p_igain, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                                \
       "Intensity response of the WFS relative to the model (calibration)")                        \
+    X(".pyrcoh", &p_pyrcoh, FPTYPE_ONOFF, 0, FPFLAG_DEFAULT_INPUT,                                \
+      "Pyramid: coherent 2D Fourier-optics T_I(f) model from pupil mask (OFF: analytic)")         \
+    X(".fresnel", &p_fresnel, FPTYPE_ONOFF, 0, FPFLAG_DEFAULT_INPUT,                              \
+      "Refine layer distances with pole-free Fresnel/Rytov model at .lambda")                     \
     X(".lambda", &p_lambda, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                              \
-      "WFS wavelength [um] (slopes to OPD, without .pha)")                                        \
+      "WFS wavelength [um] (Fresnel refinement, and slopes to OPD without .pha)")                 \
     X(".og", &p_og, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                                      \
       "Extra optical gain of the slopes (without .pha)")                                          \
     X(".phaunit", &p_phaunit, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_INPUT,                            \
@@ -199,6 +207,10 @@ static double  o_z[WLU_NLAYOUT];
     X(".res.ngaps", &o_ngaps, FPTYPE_INT64, 0, FPFLAG_DEFAULT_OUTPUT, "Live: frame gaps seen")    \
     X(".res.npix", &o_npix, FPTYPE_INT64, 0, FPFLAG_DEFAULT_OUTPUT, "Pixels in the pupil mask")   \
     X(".res.dx", &o_dx, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_OUTPUT, "Pixel pitch [m]")              \
+    X(".res.corefrac", &o_corefrac, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_OUTPUT,                     \
+      "Pyramid PSF core fraction used (auto or manual)")                                          \
+    X(".res.fluxin", &o_fluxin, FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_OUTPUT,                         \
+      "Fraction of WFS camera flux inside the 4 geometric pupils")                                \
     X(".res.l0speed", &o_speed[0], FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_OUTPUT, "Layer 0 [m/s]")     \
     X(".res.l0dir", &o_dir[0], FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_OUTPUT, "Layer 0 [deg]")         \
     X(".res.l0z", &o_z[0], FPTYPE_FLOAT64, 0, FPFLAG_DEFAULT_OUTPUT, "Layer 0 distance [m]")      \
@@ -220,8 +232,11 @@ typedef struct
 {
     int        fw, fh;       /**< WFS frame size */
     int        n;            /**< Map size (n x n) */
-    int        sx0[4];       /**< x origin of the 4 pupil cut-outs */
+    int        sx0[4];       /**< x origin of the 4 pupil cut-outs (integer fast path) */
     int        sy0[4];       /**< y origin */
+    double     fx0[4];       /**< Fractional x origin (when subpix == 1) */
+    double     fy0[4];       /**< Fractional y origin */
+    int        subpix;       /**< 1: bilinear sub-pixel cut-out extraction */
     int        shx[4];       /**< 1: cut-out is on the high-x side */
     int        shy[4];       /**< 1: cut-out is on the high-y side */
     int        kmode;        /**< 0: slopes, 1: OPD map */
@@ -235,6 +250,8 @@ typedef struct
     double    *pmean;        /**< Mean OPD frame on its own grid (before the mask is known) */
     long       npmean;
     int        nacc;         /**< Frames in the current time bin */
+    double     acc_tot;      /**< Bin sum of total WFS camera flux */
+    double     mean_tot;     /**< Mean total WFS camera flux */
     double    *acc_i;        /**< Bin sums: intensity; a, b: slopes x, y or OPD */
     double    *acc_a;
     double    *acc_b;
@@ -347,6 +364,47 @@ static int wlu_cmp_float(const void *a, const void *b)
     return (fa > fb) - (fa < fb);
 }
 
+/** @brief 1-D Catmull-Rom cubic interpolation weights for fractional offset t in [0, 1]. */
+static inline void wlu_catmull_w(double t, double w[4])
+{
+    double t2 = t * t;
+    double t3 = t2 * t;
+    w[0]      = -0.5 * t + t2 - 0.5 * t3;
+    w[1]      = 1.0 - 2.5 * t2 + 1.5 * t3;
+    w[2]      = 0.5 * t + 2.0 * t2 - 1.5 * t3;
+    w[3]      = -0.5 * t2 + 0.5 * t3;
+}
+
+/** @brief Bicubic (Catmull-Rom) sample of a row-major (ny, nx) float image, clamped at edges. */
+static inline double wlu_bicubic_f(const float *img, int nx, int ny, double x, double y)
+{
+    if (!(x >= 0.0) || !(y >= 0.0) || x > (double) (nx - 1) || y > (double) (ny - 1))
+    {
+        return 0.0;
+    }
+    int    ix = (int) floor(x);
+    int    iy = (int) floor(y);
+    double wx[4], wy[4];
+    wlu_catmull_w(x - ix, wx);
+    wlu_catmull_w(y - iy, wy);
+    double acc = 0.0;
+    for (int dy = -1; dy <= 2; dy++)
+    {
+        int py = iy + dy;
+        py     = (py < 0) ? 0 : ((py >= ny) ? ny - 1 : py);
+        const float *row = img + (size_t) py * nx;
+        double       rx  = 0.0;
+        for (int dx = -1; dx <= 2; dx++)
+        {
+            int px = ix + dx;
+            px     = (px < 0) ? 0 : ((px >= nx) ? nx - 1 : px);
+            rx += wx[dx + 1] * (double) row[px];
+        }
+        acc += wy[dy + 1] * rx;
+    }
+    return acc;
+}
+
 /** @brief Post a stream the unit wrote. */
 static void wlu_post(PROCESSINFO *pinfo, IMGID *out, IMAGE *in)
 {
@@ -404,10 +462,17 @@ static int wlu_setup_geometry(wlu_t *u)
             u->shx[q] = (cx[q] > mx);
             u->shy[q] = (cy[q] > my);
         }
+        u->subpix = 0;
         for (int q = 0; q < 4; q++)
         {
-            u->sx0[q] = (int) lround(cx[q] - 0.5 * (n - 1));
-            u->sy0[q] = (int) lround(cy[q] - 0.5 * (n - 1));
+            u->fx0[q] = cx[q] - 0.5 * (n - 1);
+            u->fy0[q] = cy[q] - 0.5 * (n - 1);
+            u->sx0[q] = (int) lround(u->fx0[q]);
+            u->sy0[q] = (int) lround(u->fy0[q]);
+            if (fabs(u->fx0[q] - u->sx0[q]) > 1e-3 || fabs(u->fy0[q] - u->sy0[q]) > 1e-3)
+            {
+                u->subpix = 1;
+            }
         }
     }
     else
@@ -418,21 +483,27 @@ static int wlu_setup_geometry(wlu_t *u)
                    u->fw, u->fh);
             return -1;
         }
+        u->subpix = 0;
         for (int q = 0; q < 4; q++)
         {
             u->shx[q] = q & 1;
             u->shy[q] = (q >> 1) & 1;
             u->sx0[q] = u->shx[q] * n;
             u->sy0[q] = u->shy[q] * n;
+            u->fx0[q] = (double) u->sx0[q];
+            u->fy0[q] = (double) u->sy0[q];
         }
     }
     for (int q = 0; q < 4; q++)
     {
-        if (n < 8 || u->sx0[q] < 0 || u->sy0[q] < 0 || u->sx0[q] + n > u->fw ||
-            u->sy0[q] + n > u->fh)
+        int xlo = u->subpix ? (int) floor(u->fx0[q]) : u->sx0[q];
+        int ylo = u->subpix ? (int) floor(u->fy0[q]) : u->sy0[q];
+        int xhi = u->subpix ? ((int) ceil(u->fx0[q]) + n) : (u->sx0[q] + n);
+        int yhi = u->subpix ? ((int) ceil(u->fy0[q]) + n) : (u->sy0[q] + n);
+        if (n < 8 || xlo < 0 || ylo < 0 || xhi > u->fw || yhi > u->fh)
         {
-            printf("[windlayers] ERROR: pupil cut-out %d (%d px at %d,%d) leaves the frame\n", q,
-                   n, u->sx0[q], u->sy0[q]);
+            printf("[windlayers] ERROR: pupil cut-out %d (%d px at %.1f,%.1f) leaves the frame\n",
+                   q, n, u->fx0[q], u->fy0[q]);
             return -1;
         }
     }
@@ -569,10 +640,18 @@ static int wlu_ingest(wlu_t *u)
 
     if (u->nacc == 0)
     {
+        u->acc_tot = 0.0;
         memset(u->acc_i, 0, sizeof(double) * np);
         memset(u->acc_a, 0, sizeof(double) * np);
         memset(u->acc_b, 0, sizeof(double) * np);
     }
+    const size_t nfw = (size_t) u->fw * u->fh;
+    double       ftot = 0.0;
+    for (size_t i = 0; i < nfw; i++)
+    {
+        ftot += f[i];
+    }
+    u->acc_tot += ftot;
     if (p_wfsmode != 0)
     {
         for (size_t i = 0; i < np; i++)
@@ -589,7 +668,9 @@ static int wlu_ingest(wlu_t *u)
                 double tot = 0.0, hx = 0.0, hy = 0.0;
                 for (int q = 0; q < 4; q++)
                 {
-                    double v = f[(size_t) (u->sy0[q] + y) * u->fw + u->sx0[q] + x];
+                    double v = u->subpix
+                                   ? wlu_bicubic_f(f, u->fw, u->fh, u->fx0[q] + x, u->fy0[q] + y)
+                                   : (double) f[(size_t) (u->sy0[q] + y) * u->fw + u->sx0[q] + x];
                     tot += v;
                     hx  += u->shx[q] ? v : -v;
                     hy  += u->shy[q] ? v : -v;
@@ -632,6 +713,7 @@ static int wlu_ingest(wlu_t *u)
         return 0;
     }
     double inv = 1.0 / u->nacc;
+    u->acc_tot *= inv;
     for (size_t i = 0; i < np; i++)
     {
         u->acc_i[i] *= inv;
@@ -646,6 +728,7 @@ static int wlu_ingest(wlu_t *u)
 static void wlu_mean_add(wlu_t *u)
 {
     const size_t np = (size_t) u->n * u->n;
+    u->mean_tot += u->acc_tot;
     for (size_t i = 0; i < np; i++)
     {
         u->mean_i[i] += u->acc_i[i];
@@ -663,6 +746,7 @@ static void wlu_mean_finish(wlu_t *u)
     {
         return;
     }
+    u->mean_tot /= u->nmean;
     for (size_t i = 0; i < np; i++)
     {
         u->mean_i[i] /= u->nmean;
@@ -761,34 +845,71 @@ static int wlu_make_core(wlu_t *u)
         }
     }
 
-    wl_cfg_t cfg = { 0 };
-    cfg.n        = n;
-    cfg.dx       = u->dx;
-    cfg.dt       = u->dtbin;
-    cfg.diam     = p_diam;
-    cfg.fmin     = (p_fmin > 0.0) ? p_fmin : (1.2 / p_diam);
-    cfg.fmax     = (p_fmax > 0.0) ? p_fmax : (0.85 * 0.5 / u->dx);
-    cfg.fmaxk    = cfg.fmax;
-    cfg.pad      = 2;
-    cfg.lagmax_s = p_lagmax;
-    cfg.vmax     = p_vmax;
-    cfg.dv       = p_dv;
-    cfg.nsigma   = p_nsigma;
-    cfg.minsep   = p_minsep;
-    cfg.minfrac  = 0.05;
+    /* fraction of camera flux inside the geometric pupil disk (r <= dpix/2 prevents bright
+     * diffraction ringing on a flat WF from inflating flux_in via extra outer-rim pixels) */
+    double cxm = 0.0, cym = 0.0, nm_f = 0.0;
+    for (int y = 0; y < n; y++)
+    {
+        for (int x = 0; x < n; x++)
+        {
+            if (u->mask_i[(size_t) y * n + x] > 0.0f)
+            {
+                cxm += x;
+                cym += y;
+                nm_f += 1.0;
+            }
+        }
+    }
+    cxm /= (nm_f > 0.0) ? nm_f : 1.0;
+    cym /= (nm_f > 0.0) ? nm_f : 1.0;
+    double rmax2   = 0.25 * dpix * dpix;
+    double in_flux = 0.0;
+    for (int y = 0; y < n; y++)
+    {
+        for (int x = 0; x < n; x++)
+        {
+            size_t i  = (size_t) y * n + x;
+            double r2 = (x - cxm) * (x - cxm) + (y - cym) * (y - cym);
+            if (u->mask_i[i] > 0.0f && r2 <= rmax2)
+            {
+                in_flux += u->mean_i[i];
+            }
+        }
+    }
+    double flux_in = (u->mean_tot > 0.0) ? (in_flux / u->mean_tot) : 0.0;
+
+    wl_cfg_t cfg  = { 0 };
+    cfg.n         = n;
+    cfg.dx        = u->dx;
+    cfg.dt        = u->dtbin;
+    cfg.diam      = p_diam;
+    cfg.fmin      = (p_fmin > 0.0) ? p_fmin : (1.2 / p_diam);
+    cfg.fmax      = (p_fmax > 0.0) ? p_fmax : (0.85 * 0.5 / u->dx);
+    cfg.fmaxk     = cfg.fmax;
+    cfg.pad       = 2;
+    cfg.lagmax_s  = p_lagmax;
+    cfg.vmax      = p_vmax;
+    cfg.dv        = p_dv;
+    cfg.nsigma    = p_nsigma;
+    cfg.minsep    = p_minsep;
+    cfg.minfrac   = 0.05;
     cfg.maxlayers = p_maxlayers;
-    cfg.tavg     = p_tavg;
-    cfg.kmode    = u->kmode;
-    cfg.klag     = (u->kmode == 1) ? (p_phalag / p_tbin) : 0.0;
-    cfg.ksign    = (u->kmode == 1) ? p_phasign : 1;
-    cfg.og       = p_og;
-    cfg.phaifc   = p_phaifc;
-    cfg.pyr      = (p_wfsmode == 0);
-    cfg.modrad   = p_modrad;
-    cfg.blur     = p_blur;
-    cfg.corefrac = p_corefrac;
-    cfg.halo     = p_halo;
-    cfg.igain    = (p_igain > 0.0) ? p_igain : 1.0;
+    cfg.tavg      = p_tavg;
+    cfg.kmode     = u->kmode;
+    cfg.klag      = (u->kmode == 1) ? (p_phalag / p_tbin) : 0.0;
+    cfg.ksign     = (u->kmode == 1) ? p_phasign : 1;
+    cfg.og        = p_og;
+    cfg.phaifc    = p_phaifc;
+    cfg.pyr       = (p_wfsmode == 0);
+    cfg.modrad    = p_modrad;
+    cfg.blur      = p_blur;
+    cfg.corefrac  = p_corefrac;
+    cfg.halo      = p_halo;
+    cfg.igain     = (p_igain > 0.0) ? p_igain : 1.0;
+    cfg.pyr_coh   = (p_pyrcoh != 0);
+    cfg.flux_in   = flux_in;
+    cfg.lambda_m  = (p_lambda > 0.0) ? (p_lambda * 1e-6) : 0.0;
+    cfg.fresnel   = (p_fresnel != 0);
     if (u->kmode == 1)
     {
         cfg.phapitch = (p_phapitch > 0.0) ? p_phapitch : (n * u->dx / u->pnx);
@@ -807,16 +928,27 @@ static int wlu_make_core(wlu_t *u)
                cfg.fmin, cfg.fmax, cfg.dx, cfg.dt);
         return -1;
     }
+    o_corefrac = u->core->corefrac_used;
+    o_fluxin   = flux_in;
     u->work = (float *) malloc(sizeof(float) * 2 * (size_t) u->core->nfx * n);
     if (u->work == NULL)
     {
         return -1;
     }
-    printf("[windlayers] map %d x %d, dx = %.4f m, %d pupil pixels (%d for K), dt = %.2f ms\n", n,
-           n, u->dx, npix, (int) lround(u->core->t0_kk), 1e3 * u->dtbin);
+    printf("[windlayers] map %d x %d%s, dx = %.4f m, %d pupil pixels (%d for K), dt = %.2f ms\n", n,
+           n, u->subpix ? " (subpix)" : "", u->dx, npix, (int) lround(u->core->t0_kk),
+           1e3 * u->dtbin);
     printf("[windlayers] band %.3f-%.3f cycles/m (K: %.3f), %d modes, lags to %d frames,"
            " blocks of %d frames\n",
            cfg.fmin, cfg.fmax, u->core->cfg.fmaxk, u->core->nm, u->core->lmax, u->core->nt);
+    if (cfg.pyr)
+    {
+        printf("[windlayers] pyr T_I: %s, flux_in=%.4f (model %.4f..%.4f) -> corefrac=%.2f%s,"
+               " fresnel=%s\n",
+               cfg.pyr_coh ? "coherent" : "analytic", flux_in, u->core->flux_flat,
+               u->core->flux_halo, u->core->corefrac_used, (p_corefrac < 0.0) ? " (auto)" : "",
+               cfg.fresnel ? "ON" : "OFF");
+    }
     fflush(stdout);
     return 0;
 }
@@ -909,8 +1041,8 @@ static void wlu_report(const wlu_t *u, FILE *f)
     {
         fprintf(f, "# live: %ld frame gaps, %ld blocks dropped\n", (long) o_ngaps, u->nblkdrop);
     }
-    fprintf(f, "# dx %.4f m, dt %.4f s, band %.3f-%.3f cycles/m, distance %s\n", u->dx, u->dtbin,
-            c->cfg.fmin, c->cfg.fmax,
+    fprintf(f, "# dx %.4f m, dt %.4f s, band %.3f-%.3f cycles/m, corefrac %.2f, distance %s\n",
+            u->dx, u->dtbin, c->cfg.fmin, c->cfg.fmax, c->corefrac_used,
             u->kmode ? "calibrated by the OPD stream" : "from the slopes model (indicative)");
     fprintf(f, "# %2s %7s %7s %7s %7s %7s %6s %6s %6s %6s %6s %9s %8s %6s %9s %9s\n", "l", "vx",
             "vy", "speed", "dir", "snr", "pk_k", "pk_i", "pk_x", "frac_k", "frac_i", "z[m]",
@@ -922,6 +1054,16 @@ static void wlu_report(const wlu_t *u, FILE *f)
                    " %8.0f %6.2f %9.0f %9.0f\n",
                 l, L->vx, L->vy, L->speed, L->dir, L->snr, L->pk_k, L->pk_i, L->pk_x, L->frac_k,
                 L->frac_i, L->z, L->zerr, L->coh, L->z_axis, L->z_diag);
+    }
+    if (c->nlayers > 0)
+    {
+        fprintf(f, "# diag (xarg[rad], zerr_f/zerr_blk[m]):");
+        for (int l = 0; l < c->nlayers; l++)
+        {
+            const wl_layer_t *L = &c->layers[l];
+            fprintf(f, " l%d=(%+.2f,%.0f/%.0f)", l, L->xarg, L->zerr_f, L->zerr_blk);
+        }
+        fprintf(f, "\n");
     }
     fflush(f);
 }

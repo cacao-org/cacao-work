@@ -58,6 +58,7 @@
 
 #define WL_MAXLAYERS 8
 #define WL_NZBINS    8
+#define WL_NSUB      4
 #define WL_PI        3.14159265358979323846
 
 /** @brief Estimator configuration (SI units unless noted). */
@@ -84,14 +85,17 @@ typedef struct
     int    ksign;     /**< Sign of K relative to the atmosphere: +1, -1, 0 = find it */
     double og;        /**< Extra optical gain of the slopes (kmode 0), 1 = model */
     double phapitch;  /**< Pitch of the OPD map before resampling [m] (kmode 1) */
-    double phaifc;    /**< OPD map: <0 samples the wavefront, 0 bilinear surface, 0..1 DM
-                           commands with Gaussian influence of that coupling */
+    double phaifc;    /**< OPD map: <0 samples the wavefront, 0 bilinear DM, 0..1 Gaussian DM */
     int    pyr;       /**< 1: I is the 4-image sum of a pyramid WFS (apply T_I) */
     double modrad;    /**< Pyramid modulation radius [lambda/D] */
     double blur;      /**< PSF core width on the pyramid [lambda/D] */
-    double corefrac;  /**< Fraction of the light in the core (rest in the halo) */
+    double corefrac;  /**< Fraction of light in PSF core (<0: auto from flux_in when pyr_coh=1) */
     double halo;      /**< Halo width on the pyramid [lambda/D] */
     double igain;     /**< Intensity response of the sensor relative to the model (1: model) */
+    int    pyr_coh;   /**< 1: coherent 2D Fourier-optics PyWFS T_I(f) from mask_i; 0: analytic */
+    double flux_in;   /**< Measured fraction of WFS camera flux inside mask_i (0: unavailable) */
+    double lambda_m;  /**< WFS wavelength [m] (for Fresnel/Rytov z refinement) */
+    int    fresnel;   /**< 1: pole-free Fresnel/Rytov refinement; 0: geometric only */
 } wl_cfg_t;
 
 /** @brief One detected layer. */
@@ -105,8 +109,11 @@ typedef struct
     double frac_k;        /**< Fraction of the band K power carried by the layer */
     double frac_i;        /**< Fraction of the band I power carried by the layer */
     double z;             /**< Distance [m] */
-    double zerr;          /**< Scatter of z between spatial-frequency bins [m] */
+    double zerr;          /**< Conservative uncertainty on z: max(zerr_f, zerr_blk) [m] */
+    double zerr_f;        /**< Scatter of z between spatial-frequency bins [m] */
+    double zerr_blk;      /**< Standard error of z across disjoint Welch block subsets [m] */
     double coh;           /**< K-I coherence of the layer */
+    double xarg;          /**< Cross-spectrum phase angle [rad] (lag/phase diagnostic) */
     double z_axis;        /**< z from frequencies along the pyramid axes [m] */
     double z_diag;        /**< z from frequencies along the diagonals [m] */
     double ff[WL_NZBINS]; /**< Bin centres [cycles/m] */
@@ -153,9 +160,17 @@ typedef struct
     wl_fft_t fft;
     /* accumulated spectra [nm * nfft] */
     float   *pkk, *pii, *pxr, *pxi;
+    float   *sub_pkk[WL_NSUB];
+    float   *sub_pxr[WL_NSUB];
+    float   *sub_pxi[WL_NSUB];
+    double   sub_nblk[WL_NSUB];
     double   nblk;    /**< Effective number of accumulated blocks */
     long     nblk_total;
     long     nframes;
+    /* pyramid transfer diagnostics */
+    double   corefrac_used;
+    double   flux_flat;
+    double   flux_halo;
     /* lag spectra [nm * (2 lmax + 1)], index tau + lmax */
     float   *skk_r, *skk_i, *sii_r, *sii_i, *ski_r, *ski_i;
     /* correlation (rho) grid */
@@ -386,6 +401,511 @@ static void wl_fft_fwd(const wl_fft_t *p, float *restrict re, float *restrict im
     }
 }
 
+/** @brief In-place 2-D complex FFT (inv=0: forward, inv=1: inverse with 1/n^2 scaling). */
+static void wl_fft2_dir(const wl_fft_t *p, float *restrict re, float *restrict im, int inv)
+{
+    const int n  = p->n;
+    const size_t nn = (size_t) n * n;
+    float *cr = (float *) malloc(sizeof(float) * (size_t) n);
+    float *ci = (float *) malloc(sizeof(float) * (size_t) n);
+
+    if (cr == NULL || ci == NULL)
+    {
+        free(cr);
+        free(ci);
+        return;
+    }
+    if (inv)
+    {
+        for (size_t i = 0; i < nn; i++)
+        {
+            im[i] = -im[i];
+        }
+    }
+    for (int y = 0; y < n; y++)
+    {
+        wl_fft_fwd(p, re + (size_t) y * n, im + (size_t) y * n);
+    }
+    for (int x = 0; x < n; x++)
+    {
+        for (int y = 0; y < n; y++)
+        {
+            cr[y] = re[(size_t) y * n + x];
+            ci[y] = im[(size_t) y * n + x];
+        }
+        wl_fft_fwd(p, cr, ci);
+        for (int y = 0; y < n; y++)
+        {
+            re[(size_t) y * n + x] = cr[y];
+            im[(size_t) y * n + x] = ci[y];
+        }
+    }
+    if (inv)
+    {
+        float sc = 1.0f / (float) nn;
+        for (size_t i = 0; i < nn; i++)
+        {
+            re[i] *= sc;
+            im[i] = -im[i] * sc;
+        }
+    }
+    free(cr);
+    free(ci);
+}
+
+/** @brief Deterministic xorshift32 PRNG and Box-Muller Gaussian for coherent PyWFS probes. */
+static inline double wl_randn(uint32_t *st)
+{
+    uint32_t a = *st;
+    a ^= a << 13;
+    a ^= a >> 17;
+    a ^= a << 5;
+    uint32_t b = a;
+    b ^= b << 13;
+    b ^= b >> 17;
+    b ^= b << 5;
+    *st      = b;
+    double u = ((double) (a & 0x00FFFFFFu) + 0.5) / 16777216.0;
+    double v = ((double) (b & 0x00FFFFFFu) + 0.5) / 16777216.0;
+    return sqrt(-2.0 * log(u)) * cos(2.0 * WL_PI * v);
+}
+
+/** @brief Analytic subpixel-integrated 1-D pyramid facet exp(-i alpha |u|) over [u-0.5, u+0.5]. */
+static inline void wl_pyr_1d_edge(double u, double alpha, float *re_out, float *im_out)
+{
+    double au = fabs(u);
+    if (alpha < 1e-6)
+    {
+        *re_out = 1.0f;
+        *im_out = 0.0f;
+        return;
+    }
+    if (au >= 0.5)
+    {
+        double sh = sin(0.5 * alpha) / (0.5 * alpha);
+        *re_out   = (float) (sh * cos(alpha * au));
+        *im_out   = (float) (-sh * sin(alpha * au));
+    }
+    else
+    {
+        double cu = cos(alpha * au);
+        *re_out   = (float) (2.0 * cu * sin(0.5 * alpha) / alpha);
+        *im_out   = (float) (-2.0 * (1.0 - cu * cos(0.5 * alpha)) / alpha);
+    }
+}
+
+/**
+ * wl_pyr_coherent_setup() - Coherent 2-D Fourier-optics flat-WF T_I(f) and inter-pupil flux
+ *
+ * Uses only the measured pupil mask (mask_i), diam/dx, modrad and halo on an nf x nf grid
+ * (nf = 2 * next_pow2(n), capped at 256). Computes:
+ *   - c->flux_flat, c->flux_halo: fraction of camera flux inside mask_i (flat WF vs halo)
+ *   - *tf_out: fftshifted [nf x nf] real intensity transfer T_I^coh(f) (caller frees)
+ */
+static int wl_pyr_coherent_setup(wl_core_t *c, double **tf_out, int *nf_out)
+{
+    const wl_cfg_t *g     = &c->cfg;
+    const int       n     = g->n;
+    const double    dpix  = g->diam / g->dx;
+    int             np2   = 8;
+
+    *tf_out = NULL;
+    *nf_out = 0;
+    while (np2 < n)
+    {
+        np2 <<= 1;
+    }
+    int nf = 2 * np2;
+    if (nf > 256)
+    {
+        nf = 256;
+    }
+    if (nf < 2 * n || g->modrad > 0.4 * dpix)
+    {
+        return 0;
+    }
+    wl_fft_t fft2;
+    if (wl_fft_init(&fft2, nf) != 0)
+    {
+        return 0;
+    }
+    const size_t nff   = (size_t) nf * nf;
+    const size_t np    = (size_t) n * n;
+    const int    off   = (nf - n) / 2;
+    const int    sh    = n / 2;
+    const double sep   = (double) n / (double) nf;
+    const double alpha = WL_PI * sep;
+    const double pixld = (double) nf / dpix;
+    const int    nlam  = 3;
+    const double lrel[3] = { 0.9, 1.0, 1.1 };
+    const int    npts  = 16;
+    const int    nmks  = nlam * npts;
+    float       *mkr   = (float *) malloc(sizeof(float) * (size_t) nmks * nff);
+    float       *mki   = (float *) malloc(sizeof(float) * (size_t) nmks * nff);
+    float       *f0r   = (float *) calloc(nff, sizeof(float));
+    float       *f0i   = (float *) calloc(nff, sizeof(float));
+    double      *det0  = (double *) calloc(nff, sizeof(double));
+    double      *s0    = (double *) calloc(np, sizeof(double));
+    if (!mkr || !mki || !f0r || !f0i || !det0 || !s0)
+    {
+        free(mkr);
+        free(mki);
+        free(f0r);
+        free(f0i);
+        free(det0);
+        free(s0);
+        wl_fft_free(&fft2);
+        return 0;
+    }
+    /* build 3-wavelength x 16-angle subpixel pyramid masks */
+#pragma omp parallel for schedule(static)
+    for (int im = 0; im < nmks; im++)
+    {
+        int    il  = im / npts;
+        int    ik  = im % npts;
+        double sc  = 1.0 / lrel[il];
+        double ang = 2.0 * WL_PI * (ik + 0.5) / npts;
+        double uk  = g->modrad * pixld * sc * cos(ang);
+        double vk  = g->modrad * pixld * sc * sin(ang);
+        float *pr  = mkr + (size_t) im * nff;
+        float *pi  = mki + (size_t) im * nff;
+        float  erx[256], eix[256], ery[256], eiy[256];
+        for (int u = 0; u < nf; u++)
+        {
+            double fu = (u < nf / 2) ? (double) u : (double) (u - nf);
+            wl_pyr_1d_edge(fu - uk, alpha, &erx[u], &eix[u]);
+            wl_pyr_1d_edge(fu - vk, alpha, &ery[u], &eiy[u]);
+        }
+        for (int y = 0; y < nf; y++)
+        {
+            for (int x = 0; x < nf; x++)
+            {
+                pr[(size_t) y * nf + x] = erx[x] * ery[y] - eix[x] * eiy[y];
+                pi[(size_t) y * nf + x] = erx[x] * eiy[y] + eix[x] * ery[y];
+            }
+        }
+    }
+    /* flat-WF focal field */
+    double mpix = 0.0;
+    for (int y = 0; y < n; y++)
+    {
+        for (int x = 0; x < n; x++)
+        {
+            float mv = c->mask_i[(size_t) y * n + x];
+            f0r[(size_t) (off + y) * nf + (off + x)] = mv;
+            mpix += mv;
+        }
+    }
+    wl_fft2_dir(&fft2, f0r, f0i, 0);
+    /* flat-WF detector image and flux_flat */
+    {
+        float *wr = (float *) malloc(sizeof(float) * nff);
+        float *wi = (float *) malloc(sizeof(float) * nff);
+        if (wr && wi)
+        {
+            for (int im = 0; im < nmks; im++)
+            {
+                const float *pr = mkr + (size_t) im * nff;
+                const float *pi = mki + (size_t) im * nff;
+                for (size_t q = 0; q < nff; q++)
+                {
+                    wr[q] = f0r[q] * pr[q] - f0i[q] * pi[q];
+                    wi[q] = f0r[q] * pi[q] + f0i[q] * pr[q];
+                }
+                wl_fft2_dir(&fft2, wr, wi, 1);
+                for (size_t q = 0; q < nff; q++)
+                {
+                    det0[q] += ((double) wr[q] * wr[q] + (double) wi[q] * wi[q]) / nmks;
+                }
+            }
+        }
+        free(wr);
+        free(wi);
+    }
+    double tot0 = 0.0, in0 = 0.0;
+    for (size_t q = 0; q < nff; q++)
+    {
+        tot0 += det0[q];
+    }
+    int qx[4] = { off - sh, off + sh, off - sh, off + sh };
+    int qy[4] = { off - sh, off - sh, off + sh, off + sh };
+    for (int y = 0; y < n; y++)
+    {
+        for (int x = 0; x < n; x++)
+        {
+            double sv = 0.0;
+            for (int q = 0; q < 4; q++)
+            {
+                sv += det0[(size_t) (qy[q] + y) * nf + (qx[q] + x)];
+            }
+            s0[(size_t) y * n + x] = sv;
+            in0 += sv * c->mask_i[(size_t) y * n + x];
+        }
+    }
+    c->flux_flat = (tot0 > 0.0) ? (in0 / tot0) : 1.0;
+
+    /* incoherent halo flux_halo: average flux_in over 48 focal shifts ~ N(0, halo^2) */
+    const int nhalo = 48;
+    double    hsum  = 0.0;
+    double    hsig  = (g->halo > 1.0) ? g->halo : 15.0;
+    double    hx_a[48], hy_a[48];
+    uint32_t  rng_h = 0x51A7BEEFu;
+    for (int ih = 0; ih < nhalo; ih++)
+    {
+        hx_a[ih] = hsig * pixld * wl_randn(&rng_h);
+        hy_a[ih] = hsig * pixld * wl_randn(&rng_h);
+    }
+#pragma omp parallel for reduction(+ : hsum) schedule(static)
+    for (int ih = 0; ih < nhalo; ih++)
+    {
+        float *wr = (float *) malloc(sizeof(float) * nff);
+        float *wi = (float *) malloc(sizeof(float) * nff);
+        float  erx[256], eix[256], ery[256], eiy[256];
+        if (wr && wi)
+        {
+            for (int u = 0; u < nf; u++)
+            {
+                double fu = (u < nf / 2) ? (double) u : (double) (u - nf);
+                wl_pyr_1d_edge(fu - hx_a[ih], alpha, &erx[u], &eix[u]);
+                wl_pyr_1d_edge(fu - hy_a[ih], alpha, &ery[u], &eiy[u]);
+            }
+            for (int y = 0; y < nf; y++)
+            {
+                for (int x = 0; x < nf; x++)
+                {
+                    size_t idx = (size_t) y * nf + x;
+                    float  mr  = erx[x] * ery[y] - eix[x] * eiy[y];
+                    float  mi  = erx[x] * eiy[y] + eix[x] * ery[y];
+                    wr[idx]    = f0r[idx] * mr - f0i[idx] * mi;
+                    wi[idx]    = f0r[idx] * mi + f0i[idx] * mr;
+                }
+            }
+            wl_fft2_dir(&fft2, wr, wi, 1);
+            double th = 0.0, inh = 0.0;
+            for (size_t q = 0; q < nff; q++)
+            {
+                th += (double) wr[q] * wr[q] + (double) wi[q] * wi[q];
+            }
+            for (int y = 0; y < n; y++)
+            {
+                for (int x = 0; x < n; x++)
+                {
+                    if (c->mask_i[(size_t) y * n + x] <= 0.0f)
+                    {
+                        continue;
+                    }
+                    for (int q = 0; q < 4; q++)
+                    {
+                        size_t idx = (size_t) (qy[q] + y) * nf + (qx[q] + x);
+                        inh += (double) wr[idx] * wr[idx] + (double) wi[idx] * wi[idx];
+                    }
+                }
+            }
+            if (th > 0.0)
+            {
+                hsum += inh / th;
+            }
+        }
+        free(wr);
+        free(wi);
+    }
+    c->flux_halo = hsum / nhalo;
+
+    /* 2-D coherent flat-WF T_I(f) from 48 deterministic white amplitude probes */
+    const int nprb = 48;
+    double   *num  = (double *) calloc(nff, sizeof(double));
+    double   *den  = (double *) calloc(nff, sizeof(double));
+    double   *tf   = (double *) calloc(nff, sizeof(double));
+    if (num && den && tf)
+    {
+#pragma omp parallel
+        {
+            float  *pr  = (float *) malloc(sizeof(float) * nff);
+            float  *pi  = (float *) malloc(sizeof(float) * nff);
+            float  *wr  = (float *) malloc(sizeof(float) * nff);
+            float  *wi  = (float *) malloc(sizeof(float) * nff);
+            float  *tr  = (float *) malloc(sizeof(float) * nff);
+            float  *ti  = (float *) malloc(sizeof(float) * nff);
+            double *det = (double *) malloc(sizeof(double) * nff);
+            double *nz  = (double *) malloc(sizeof(double) * np);
+            double *lnu = (double *) calloc(nff, sizeof(double));
+            double *lde = (double *) calloc(nff, sizeof(double));
+            int     ok  = (pr && pi && wr && wi && tr && ti && det && nz && lnu && lde);
+
+#pragma omp for schedule(static)
+            for (int ip = 0; ip < nprb; ip++)
+            {
+                if (!ok)
+                {
+                    continue;
+                }
+                uint32_t st = 0x13579BDFu ^ (uint32_t) (ip + 1) * 2654435761u;
+                memset(pr, 0, sizeof(float) * nff);
+                memset(pi, 0, sizeof(float) * nff);
+                double sm = 0.0;
+                for (size_t i = 0; i < np; i++)
+                {
+                    double v = 0.05 * wl_randn(&st);
+                    if (v < -0.25)
+                    {
+                        v = -0.25;
+                    }
+                    else if (v > 0.25)
+                    {
+                        v = 0.25;
+                    }
+                    nz[i] = v * c->mask_i[i];
+                    sm += nz[i];
+                }
+                sm /= (mpix > 0.0) ? mpix : 1.0;
+                for (int y = 0; y < n; y++)
+                {
+                    for (int x = 0; x < n; x++)
+                    {
+                        size_t i = (size_t) y * n + x;
+                        if (c->mask_i[i] > 0.0f)
+                        {
+                            nz[i] -= sm;
+                            pr[(size_t) (off + y) * nf + (off + x)] = (float) sqrt(1.0 + nz[i]);
+                        }
+                    }
+                }
+                wl_fft2_dir(&fft2, pr, pi, 0);
+                memset(det, 0, sizeof(double) * nff);
+                for (int im = 0; im < nmks; im++)
+                {
+                    const float *mr = mkr + (size_t) im * nff;
+                    const float *mi = mki + (size_t) im * nff;
+                    for (size_t q = 0; q < nff; q++)
+                    {
+                        wr[q] = pr[q] * mr[q] - pi[q] * mi[q];
+                        wi[q] = pr[q] * mi[q] + pi[q] * mr[q];
+                    }
+                    wl_fft2_dir(&fft2, wr, wi, 1);
+                    for (size_t q = 0; q < nff; q++)
+                    {
+                        det[q] += ((double) wr[q] * wr[q] + (double) wi[q] * wi[q]) / nmks;
+                    }
+                }
+                memset(wr, 0, sizeof(float) * nff);
+                memset(wi, 0, sizeof(float) * nff);
+                memset(tr, 0, sizeof(float) * nff);
+                memset(ti, 0, sizeof(float) * nff);
+                double md = 0.0;
+                for (int y = 0; y < n; y++)
+                {
+                    for (int x = 0; x < n; x++)
+                    {
+                        size_t i = (size_t) y * n + x;
+                        if (c->mask_i[i] > 0.0f && s0[i] > 0.0)
+                        {
+                            double sv = 0.0;
+                            for (int q = 0; q < 4; q++)
+                            {
+                                sv += det[(size_t) (qy[q] + y) * nf + (qx[q] + x)];
+                            }
+                            double dv = sv / s0[i] - 1.0;
+                            wr[(size_t) y * nf + x] = (float) dv;
+                            md += dv;
+                            tr[(size_t) y * nf + x] = (float) nz[i];
+                        }
+                    }
+                }
+                md /= (mpix > 0.0) ? mpix : 1.0;
+                for (int y = 0; y < n; y++)
+                {
+                    for (int x = 0; x < n; x++)
+                    {
+                        if (c->mask_i[(size_t) y * n + x] > 0.0f)
+                        {
+                            wr[(size_t) y * nf + x] -= (float) md;
+                        }
+                    }
+                }
+                wl_fft2_dir(&fft2, wr, wi, 0);
+                wl_fft2_dir(&fft2, tr, ti, 0);
+                for (size_t q = 0; q < nff; q++)
+                {
+                    lnu[q] += (double) wr[q] * tr[q] + (double) wi[q] * ti[q];
+                    lde[q] += (double) tr[q] * tr[q] + (double) ti[q] * ti[q];
+                }
+            }
+#pragma omp critical
+            {
+                if (ok)
+                {
+                    for (size_t q = 0; q < nff; q++)
+                    {
+                        num[q] += lnu[q];
+                        den[q] += lde[q];
+                    }
+                }
+            }
+            free(pr);
+            free(pi);
+            free(wr);
+            free(wi);
+            free(tr);
+            free(ti);
+            free(det);
+            free(nz);
+            free(lnu);
+            free(lde);
+        }
+        /* fftshift and apply 8-fold square pyramid symmetry */
+        double *raw = (double *) calloc(nff, sizeof(double));
+        if (raw != NULL)
+        {
+            for (int y = 0; y < nf; y++)
+            {
+                int sy = (y + nf / 2) % nf;
+                for (int x = 0; x < nf; x++)
+                {
+                    int    sx = (x + nf / 2) % nf;
+                    size_t q  = (size_t) y * nf + x;
+                    raw[(size_t) sy * nf + sx] = (den[q] > 0.0) ? (num[q] / den[q]) : 1.0;
+                }
+            }
+            for (int y = 0; y < nf; y++)
+            {
+                int dy = y - nf / 2;
+                int ym = (nf / 2 - dy + nf) % nf;
+                for (int x = 0; x < nf; x++)
+                {
+                    int    dx_i = x - nf / 2;
+                    int    xm   = (nf / 2 - dx_i + nf) % nf;
+                    double s    = 0.125 * (raw[(size_t) y * nf + x] + raw[(size_t) ym * nf + x] +
+                                           raw[(size_t) y * nf + xm] + raw[(size_t) ym * nf + xm] +
+                                           raw[(size_t) x * nf + y] + raw[(size_t) xm * nf + y] +
+                                           raw[(size_t) x * nf + ym] + raw[(size_t) xm * nf + ym]);
+                    tf[(size_t) y * nf + x] = (s < 0.05) ? 0.05 : ((s > 1.5) ? 1.5 : s);
+                }
+            }
+            free(raw);
+            *tf_out = tf;
+            *nf_out = nf;
+        }
+        else
+        {
+            free(tf);
+        }
+    }
+    else
+    {
+        free(tf);
+    }
+    free(num);
+    free(den);
+    free(mkr);
+    free(mki);
+    free(f0r);
+    free(f0i);
+    free(det0);
+    free(s0);
+    wl_fft_free(&fft2);
+    return (*tf_out != NULL);
+}
+
 /* ------------------------------------------------------------------------------------------ */
 /* setup                                                                                      */
 /* ------------------------------------------------------------------------------------------ */
@@ -437,8 +957,34 @@ static inline double wl_taper_at(const double *tap, int n, double rx, double ry)
 /** @brief Model gain of dI/I against the K channel for every active mode. */
 static void wl_make_gain(wl_core_t *c)
 {
-    const wl_cfg_t *g  = &c->cfg;
-    const double    dx = g->dx;
+    const wl_cfg_t *g      = &c->cfg;
+    const double    dx     = g->dx;
+    double         *tf_coh = NULL;
+    int             nf_coh = 0;
+
+    c->flux_flat     = 1.0;
+    c->flux_halo     = 1.0;
+    c->corefrac_used = (g->corefrac < 0.0) ? 1.0 : ((g->corefrac > 1.0) ? 1.0 : g->corefrac);
+    if (g->pyr && g->pyr_coh)
+    {
+        wl_pyr_coherent_setup(c, &tf_coh, &nf_coh);
+        if (g->corefrac < 0.0)
+        {
+            /* auto corefrac from inter-pupil diffracted flux fraction */
+            if (g->flux_in > 0.0 && g->flux_in < 0.995 && c->flux_halo > c->flux_flat + 0.01)
+            {
+                double s         = (c->flux_halo - g->flux_in) / (c->flux_halo - c->flux_flat);
+                c->corefrac_used = (s < 0.0) ? 0.0 : ((s > 1.0) ? 1.0 : s);
+            }
+            else
+            {
+                c->corefrac_used = 1.0;
+            }
+        }
+    }
+
+    const double df_coh = (nf_coh > 0) ? (1.0 / (nf_coh * dx)) : 1.0;
+    const double cf     = c->corefrac_used;
 
     for (int m = 0; m < c->nm; m++)
     {
@@ -450,8 +996,12 @@ static void wl_make_gain(wl_core_t *c)
         if (g->pyr || g->kmode == 0)
         {
             double tic, txc, tyc, tih, txh, tyh;
-            double cf = (g->corefrac < 0.0) ? 0.0 : ((g->corefrac > 1.0) ? 1.0 : g->corefrac);
             wl_pyr_model(fx * g->diam, fy * g->diam, g->modrad, g->blur, &tic, &txc, &tyc);
+            if (tf_coh != NULL)
+            {
+                tic = wl_bilin_d(tf_coh, nf_coh, nf_coh, fx / df_coh + nf_coh / 2,
+                                 fy / df_coh + nf_coh / 2);
+            }
             if (cf < 1.0)
             {
                 wl_pyr_model(fx * g->diam, fy * g->diam, g->modrad, g->halo, &tih, &txh, &tyh);
@@ -475,16 +1025,31 @@ static void wl_make_gain(wl_core_t *c)
             double sy  = sin(WL_PI * fy * dx);
             double lam = (4.0 / (dx * dx)) * (sx * sx + sy * sy);
             double rsp = 1.0;
-            if (g->phapitch > 1.001 * dx && g->phaifc != 0.0)
+            if (g->phapitch > 0.0)
             {
-                double p  = g->phapitch;
+                double p          = g->phapitch;
+                /* matches wlu_setup_resample(): fine = (p < 0.75 dx) uses box average,
+                 * otherwise bilinear resampling already applies MTF b2 */
+                int    bil_resamp = (p >= 0.75 * dx);
                 double b2 = wl_sinc(fx * p) * wl_sinc(fx * p) * wl_sinc(fy * p) * wl_sinc(fy * p);
-                double h  = 1.0;
-                if (g->phaifc > 0.0 && g->phaifc < 1.0)
+                if (g->phaifc < 0.0)
                 {
-                    h = exp(-WL_PI * WL_PI * f2 * p * p / (-log(g->phaifc)));
+                    if (bil_resamp && p > 1.001 * dx)
+                    {
+                        rsp = (b2 > 0.05) ? (1.0 / b2) : 0.0;
+                    }
                 }
-                rsp = (b2 > 0.05) ? (h / b2) : 0.0;
+                else if (g->phaifc == 0.0)
+                {
+                    /* bilinear DM commands: MTF = b2 (already applied when bil_resamp) */
+                    rsp = bil_resamp ? 1.0 : b2;
+                }
+                else if (g->phaifc < 1.0)
+                {
+                    /* Gaussian DM commands: MTF = h (undo b2 when bil_resamp) */
+                    double h = exp(-WL_PI * WL_PI * f2 * p * p / (-log(g->phaifc)));
+                    rsp      = bil_resamp ? ((b2 > 0.05) ? (h / b2) : 0.0) : h;
+                }
             }
             gain = (lam > 0.0) ? (4.0 * WL_PI * WL_PI * f2 * ti * rsp / lam) : 0.0;
         }
@@ -498,6 +1063,7 @@ static void wl_make_gain(wl_core_t *c)
         }
         c->gain[m] = gain;
     }
+    free(tf_coh);
 }
 
 static void wl_destroy(wl_core_t *c)
@@ -535,6 +1101,12 @@ static void wl_destroy(wl_core_t *c)
     free(c->pii);
     free(c->pxr);
     free(c->pxi);
+    for (int s = 0; s < WL_NSUB; s++)
+    {
+        free(c->sub_pkk[s]);
+        free(c->sub_pxr[s]);
+        free(c->sub_pxi[s]);
+    }
     free(c->skk_r);
     free(c->skk_i);
     free(c->sii_r);
@@ -634,7 +1206,6 @@ static wl_core_t *wl_create(const wl_cfg_t *cfg, const float *mask_k, const floa
         wl_destroy(c);
         return NULL;
     }
-    wl_make_gain(c);
 
     /* forward kernels, pixel coordinates centred on the map */
     c->exr = (float *) malloc(sizeof(float) * (size_t) c->nfx * n);
@@ -688,6 +1259,8 @@ static wl_core_t *wl_create(const wl_cfg_t *cfg, const float *mask_k, const floa
         wl_destroy(c);
         return NULL;
     }
+    /* build sensor transfer and channel gains now that mask_i is populated */
+    wl_make_gain(c);
 
     /* blocks */
     c->lmax = (int) ceil(cfg->lagmax_s / cfg->dt);
@@ -721,6 +1294,17 @@ static wl_core_t *wl_create(const wl_cfg_t *cfg, const float *mask_k, const floa
     c->pii    = (float *) calloc(np, sizeof(float));
     c->pxr    = (float *) calloc(np, sizeof(float));
     c->pxi    = (float *) calloc(np, sizeof(float));
+    for (int s = 0; s < WL_NSUB; s++)
+    {
+        c->sub_pkk[s] = (float *) calloc(np, sizeof(float));
+        c->sub_pxr[s] = (float *) calloc(np, sizeof(float));
+        c->sub_pxi[s] = (float *) calloc(np, sizeof(float));
+        if (!c->sub_pkk[s] || !c->sub_pxr[s] || !c->sub_pxi[s])
+        {
+            wl_destroy(c);
+            return NULL;
+        }
+    }
     c->skk_r  = (float *) calloc(ns, sizeof(float));
     c->skk_i  = (float *) calloc(ns, sizeof(float));
     c->sii_r  = (float *) calloc(ns, sizeof(float));
@@ -844,11 +1428,15 @@ static void wl_block_process(wl_core_t *c)
     const int nfft = c->nfft;
     double    keep = 1.0;
 
+    const int   sb      = (int) (c->nblk_total % WL_NSUB);
+    double      keep_sb = 1.0;
     if (c->cfg.tavg > 0.0)
     {
-        keep = exp(-(0.5 * nt * c->cfg.dt) / c->cfg.tavg);
+        keep    = exp(-(0.5 * nt * c->cfg.dt) / c->cfg.tavg);
+        keep_sb = exp(-(0.5 * WL_NSUB * nt * c->cfg.dt) / c->cfg.tavg);
     }
-    const float fk = (float) keep;
+    const float fk    = (float) keep;
+    const float fk_sb = (float) keep_sb;
 
 #pragma omp parallel
     {
@@ -873,22 +1461,33 @@ static void wl_block_process(wl_core_t *c)
             memset(vi + nt, 0, sizeof(float) * (size_t) (nfft - nt));
             wl_fft_fwd(&c->fft, wr, wi);
             wl_fft_fwd(&c->fft, vr, vi);
-            float *pk = c->pkk + (size_t) m * nfft;
-            float *pi = c->pii + (size_t) m * nfft;
-            float *xr = c->pxr + (size_t) m * nfft;
-            float *xi = c->pxi + (size_t) m * nfft;
+            float *pk  = c->pkk + (size_t) m * nfft;
+            float *pi  = c->pii + (size_t) m * nfft;
+            float *xr  = c->pxr + (size_t) m * nfft;
+            float *xi  = c->pxi + (size_t) m * nfft;
+            float *spk = c->sub_pkk[sb] + (size_t) m * nfft;
+            float *sxr = c->sub_pxr[sb] + (size_t) m * nfft;
+            float *sxi = c->sub_pxi[sb] + (size_t) m * nfft;
 #pragma omp simd
             for (int k = 0; k < nfft; k++)
             {
-                pk[k] = fk * pk[k] + wr[k] * wr[k] + wi[k] * wi[k];
-                pi[k] = fk * pi[k] + vr[k] * vr[k] + vi[k] * vi[k];
-                xr[k] = fk * xr[k] + wr[k] * vr[k] + wi[k] * vi[k];
-                xi[k] = fk * xi[k] + wr[k] * vi[k] - wi[k] * vr[k];
+                float dpk = wr[k] * wr[k] + wi[k] * wi[k];
+                float dpi = vr[k] * vr[k] + vi[k] * vi[k];
+                float dxr = wr[k] * vr[k] + wi[k] * vi[k];
+                float dxi = wr[k] * vi[k] - wi[k] * vr[k];
+                pk[k]     = fk * pk[k] + dpk;
+                pi[k]     = fk * pi[k] + dpi;
+                xr[k]     = fk * xr[k] + dxr;
+                xi[k]     = fk * xi[k] + dxi;
+                spk[k]    = fk_sb * spk[k] + dpk;
+                sxr[k]    = fk_sb * sxr[k] + dxr;
+                sxi[k]    = fk_sb * sxi[k] + dxi;
             }
         }
         free(wr);
     }
-    c->nblk = keep * c->nblk + 1.0;
+    c->sub_nblk[sb] = keep_sb * c->sub_nblk[sb] + 1.0;
+    c->nblk         = keep * c->nblk + 1.0;
     c->nblk_total++;
     /* integration time: blocks overlap by half */
     c->tint_s = keep * c->tint_s + ((c->nblk_total == 1) ? 1.0 : 0.5) * nt * c->cfg.dt;
@@ -908,6 +1507,13 @@ static void wl_reset(wl_core_t *c)
     memset(c->pii, 0, sizeof(float) * np);
     memset(c->pxr, 0, sizeof(float) * np);
     memset(c->pxi, 0, sizeof(float) * np);
+    for (int s = 0; s < WL_NSUB; s++)
+    {
+        memset(c->sub_pkk[s], 0, sizeof(float) * np);
+        memset(c->sub_pxr[s], 0, sizeof(float) * np);
+        memset(c->sub_pxi[s], 0, sizeof(float) * np);
+        c->sub_nblk[s] = 0.0;
+    }
     c->nbuf       = 0;
     c->nblk       = 0.0;
     c->nblk_total = 0;
@@ -1572,6 +2178,107 @@ static void wl_decompose(const wl_core_t *c, const float *sr, const float *si, c
 }
 
 /**
+ * wl_fresnel_refine() - Unbiased pole-free Rytov/Fresnel distance refinement
+ *
+ * Solves the linear-in-(x, a), pole-free score equation:
+ *   sum_m w_m g_m [ cos(th_m) x_m - g_m (sin(th_m) / th_m) z a_m ] = 0,  th_m = pi lambda z f_m^2
+ * Reduces identically to z_geom as th_m -> 0, avoids errors-in-variables a_m^2 bias, and stays
+ * nonsingular across the first Talbot zero (th_m = pi/2).
+ */
+static double wl_fresnel_refine(const wl_core_t *c, const double *a, const double *x,
+                                const double *ca, const double *cx, double wmax, int ksign,
+                                double z_geom)
+{
+    const wl_cfg_t *g = &c->cfg;
+    if (!g->fresnel || !(g->lambda_m > 0.0) || !isfinite(z_geom) || !(z_geom > 0.0) ||
+        !(wmax > 0.0))
+    {
+        return z_geom;
+    }
+    if (WL_PI * g->lambda_m * z_geom * g->fmaxk * g->fmaxk < 0.05)
+    {
+        return z_geom;
+    }
+    const double lam = g->lambda_m;
+    double       z   = z_geom;
+    for (int it = 0; it < 12; it++)
+    {
+        double num = 0.0, den = 0.0;
+        for (int m = 0; m < c->nm; m++)
+        {
+            double f2 = c->mfx[m] * c->mfx[m] + c->mfy[m] * c->mfy[m];
+            double fr = sqrt(f2);
+            if (fr < g->fmin || fr > g->fmaxk)
+            {
+                continue;
+            }
+            double gn = -ksign * c->gain[m];
+            if (gn == 0.0)
+            {
+                continue;
+            }
+            double w   = c->mw[m] * sqrt(ca[m] * cx[m]) / wmax;
+            double th  = WL_PI * lam * z * f2;
+            double snc = (fabs(th) < 1e-6) ? 1.0 : (sin(th) / th);
+            num += w * gn * cos(th) * x[m];
+            den += w * gn * gn * snc * a[m];
+        }
+        if (!(den > 0.0))
+        {
+            return z_geom;
+        }
+        double zn = num / den;
+        if (!(zn > 0.0) || zn > 2.5 * z_geom)
+        {
+            return z_geom;
+        }
+        if (fabs(zn - z) <= 1e-4 * z)
+        {
+            return zn;
+        }
+        z = 0.5 * (z + zn);
+    }
+    return z;
+}
+
+/** @brief Compute lag spectrum S(tau, f) from one accumulated power/cross-spectrum buffer. */
+static void wl_lag_one(const wl_core_t *c, const float *pr, const float *pi, double nblk,
+                       double t0, float *sr, float *si)
+{
+    const int nfft = c->nfft;
+    const int lmax = c->lmax;
+    const int nl   = 2 * lmax + 1;
+
+#pragma omp parallel
+    {
+        float *wr = (float *) malloc(sizeof(float) * (size_t) nfft * 2);
+        float *wi = wr + nfft;
+#pragma omp for schedule(static)
+        for (int m = 0; m < c->nm; m++)
+        {
+            if (wr == NULL)
+            {
+                continue;
+            }
+            for (int k = 0; k < nfft; k++)
+            {
+                wr[k] = pr[(size_t) m * nfft + k];
+                wi[k] = (pi != NULL) ? -pi[(size_t) m * nfft + k] : 0.0f;
+            }
+            wl_fft_fwd(&c->fft, wr, wi);
+            for (int tau = -lmax; tau <= lmax; tau++)
+            {
+                int    idx = (tau >= 0) ? tau : (nfft + tau);
+                double nrm = 1.0 / ((double) nfft * nblk * (c->nt - abs(tau)) * t0);
+                sr[(size_t) m * nl + tau + lmax] = (float) (wr[idx] * nrm);
+                si[(size_t) m * nl + tau + lmax] = (float) (-wi[idx] * nrm);
+            }
+        }
+        free(wr);
+    }
+}
+
+/**
  * wl_analyze() - Velocity maps, layer detection, layer split and distances
  *
  * Return: number of layers found (>= 0), or -1 when nothing has been accumulated yet.
@@ -1615,6 +2322,8 @@ static int wl_analyze(wl_core_t *c)
     int ksign = g->ksign;
     if (ksign == 0)
     {
+        double m0 = 0.0, s0 = 1.0;
+        wl_map_stats(c, c->vmap_x, c->vsup_x, 1.0, &m0, &s0);
         double vlo = 0.0, vhi = 0.0;
         for (size_t q = 0; q < (size_t) c->nv * c->nv; q++)
         {
@@ -1627,7 +2336,8 @@ static int wl_analyze(wl_core_t *c)
                 vhi = c->vmap_x[q];
             }
         }
-        ksign = (vhi > -vlo) ? -1 : 1;
+        double peak = fmax(vhi - m0, m0 - vlo);
+        ksign       = (peak < 3.0 * s0) ? 1 : ((vhi > -vlo) ? -1 : 1);
     }
     c->ksign_used = ksign;
 
@@ -1740,7 +2450,7 @@ static int wl_analyze(wl_core_t *c)
                 wmax = w;
             }
         }
-        double num = 0.0, den = 0.0, sa = 0.0, sb = 0.0, sx = 0.0, pa = 0.0, pb = 0.0;
+        double num = 0.0, num_i = 0.0, den = 0.0, sa = 0.0, sb = 0.0, sx = 0.0, pa = 0.0, pb = 0.0;
         double nax = 0.0, dax = 0.0, ndg = 0.0, ddg = 0.0;
         double bn[WL_NZBINS], bd[WL_NZBINS], bf[WL_NZBINS], bw[WL_NZBINS];
         for (int b = 0; b < WL_NZBINS; b++)
@@ -1753,6 +2463,7 @@ static int wl_analyze(wl_core_t *c)
             double a  = ar[(size_t) l * nm + m];
             double b  = br[(size_t) l * nm + m];
             double x  = xr[(size_t) l * nm + m];
+            double y  = xi[(size_t) l * nm + m];
             if (fr >= g->fmin && fr <= g->fmax)
             {
                 pb += c->mw[m] * b;
@@ -1768,11 +2479,12 @@ static int wl_analyze(wl_core_t *c)
                 continue;
             }
             double w = c->mw[m] * sqrt(ca[(size_t) l * nm + m] * cx[(size_t) l * nm + m]) / wmax;
-            num += w * gn * x;
-            den += w * gn * gn * a;
-            sa  += w * a;
-            sb  += w * b;
-            sx  += w * x;
+            num   += w * gn * x;
+            num_i += w * gn * y;
+            den   += w * gn * gn * a;
+            sa    += w * a;
+            sb    += w * b;
+            sx    += w * x;
             int ib = (int) ((fr - g->fmin) / fbin);
             ib     = (ib < 0) ? 0 : ((ib >= WL_NZBINS) ? WL_NZBINS - 1 : ib);
             bn[ib] += w * gn * x;
@@ -1798,8 +2510,11 @@ static int wl_analyze(wl_core_t *c)
         }
         L->frac_k = (tot_k > 0.0) ? pa / tot_k : 0.0;
         L->frac_i = (tot_i > 0.0) ? pb / tot_i : 0.0;
-        L->z      = (den > 0.0) ? num / den : NAN;
+        double zg = (den > 0.0) ? (num / den) : NAN;
+        L->z      = wl_fresnel_refine(c, ar + (size_t) l * nm, xr + (size_t) l * nm,
+                                      ca + (size_t) l * nm, cx + (size_t) l * nm, wmax, ksign, zg);
         L->coh    = (sa > 0.0 && sb > 0.0) ? (-ksign * sx / sqrt(sa * sb)) : 0.0;
+        L->xarg   = (den > 0.0) ? atan2(num_i, num) : 0.0;
         L->z_axis = (dax > 0.0) ? nax / dax : NAN;
         L->z_diag = (ddg > 0.0) ? ndg / ddg : NAN;
         L->nzf    = 0;
@@ -1811,11 +2526,100 @@ static int wl_analyze(wl_core_t *c)
                 L->ff[L->nzf] = bf[b] / bw[b];
                 L->zf[L->nzf] = bn[b] / bd[b];
                 s1 += bd[b];
-                s2 += bd[b] * (L->zf[L->nzf] - L->z) * (L->zf[L->nzf] - L->z);
+                s2 += bd[b] * (L->zf[L->nzf] - zg) * (L->zf[L->nzf] - zg);
                 L->nzf++;
             }
         }
-        L->zerr = (L->nzf > 1 && s1 > 0.0) ? sqrt(s2 / s1 / (L->nzf - 1)) : NAN;
+        L->zerr_f   = (L->nzf > 1 && s1 > 0.0) ? sqrt(s2 / s1 / (L->nzf - 1)) : NAN;
+        L->zerr_blk = NAN;
+        L->zerr     = L->zerr_f;
+    }
+
+    /* disjoint block-subset variance (WL_NSUB subsets) for honest inter-block zerr_blk */
+    int have_sub = 1;
+    for (int s = 0; s < WL_NSUB; s++)
+    {
+        if (c->sub_nblk[s] < 0.5)
+        {
+            have_sub = 0;
+        }
+    }
+    if (have_sub)
+    {
+        size_t ns   = (size_t) nm * nl;
+        float *tk_r = (float *) malloc(sizeof(float) * ns * 4);
+        if (tk_r != NULL)
+        {
+            float *tk_i = tk_r + ns;
+            float *tx_r = tk_i + ns;
+            float *tx_i = tx_r + ns;
+            double zsub[WL_MAXLAYERS][WL_NSUB];
+            int    zcnt[WL_MAXLAYERS] = { 0 };
+            for (int s = 0; s < WL_NSUB; s++)
+            {
+                wl_lag_one(c, c->sub_pkk[s], NULL, c->sub_nblk[s], c->t0_kk, tk_r, tk_i);
+                wl_lag_one(c, c->sub_pxr[s], c->sub_pxi[s], c->sub_nblk[s], c->t0_ki, tx_r, tx_i);
+                wl_decompose(c, tk_r, tk_i, c->tap_kk, nk, vx, vy, 0.0, ar, ai, ca);
+                wl_decompose(c, tx_r, tx_i, c->tap_ki, nk, vx, vy, g->klag, xr, xi, cx);
+                for (int l = 0; l < nk; l++)
+                {
+                    double wm = 0.0, sn = 0.0, sd = 0.0;
+                    for (int m = 0; m < nm; m++)
+                    {
+                        double w = sqrt(ca[(size_t) l * nm + m] * cx[(size_t) l * nm + m]);
+                        if (w > wm)
+                        {
+                            wm = w;
+                        }
+                    }
+                    if (!(wm > 0.0))
+                    {
+                        continue;
+                    }
+                    for (int m = 0; m < nm; m++)
+                    {
+                        double fr = hypot(c->mfx[m], c->mfy[m]);
+                        double gn = -ksign * c->gain[m];
+                        if (fr < g->fmin || fr > g->fmaxk || gn == 0.0)
+                        {
+                            continue;
+                        }
+                        double w = c->mw[m] *
+                                   sqrt(ca[(size_t) l * nm + m] * cx[(size_t) l * nm + m]) / wm;
+                        sn += w * gn * xr[(size_t) l * nm + m];
+                        sd += w * gn * gn * ar[(size_t) l * nm + m];
+                    }
+                    if (sd > 0.0)
+                    {
+                        double zg = sn / sd;
+                        zsub[l][zcnt[l]++] =
+                            wl_fresnel_refine(c, ar + (size_t) l * nm, xr + (size_t) l * nm,
+                                              ca + (size_t) l * nm, cx + (size_t) l * nm, wm,
+                                              ksign, zg);
+                    }
+                }
+            }
+            for (int l = 0; l < nk; l++)
+            {
+                wl_layer_t *L = &c->layers[l];
+                if (zcnt[l] >= 2)
+                {
+                    double zm = 0.0, zv = 0.0;
+                    for (int s = 0; s < zcnt[l]; s++)
+                    {
+                        zm += zsub[l][s];
+                    }
+                    zm /= zcnt[l];
+                    for (int s = 0; s < zcnt[l]; s++)
+                    {
+                        zv += (zsub[l][s] - zm) * (zsub[l][s] - zm);
+                    }
+                    L->zerr_blk = sqrt(zv / ((zcnt[l] - 1) * zcnt[l]));
+                    L->zerr     = isfinite(L->zerr_f) ? fmax(L->zerr_f, L->zerr_blk) : L->zerr_blk;
+                }
+            }
+            free(tk_r);
+        }
     }
     free(cx);
     free(buf);
