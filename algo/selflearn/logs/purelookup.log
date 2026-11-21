@@ -1,0 +1,20 @@
+modes 0-49: linear 96.2%   persistence (last frame) 94.4%
+  pure lookup, % of baseline residual variance removed; rows = key dims (PCA), cols = k
+                               5      20      50     200    1000
+  q=   2 (13.2% var)      -33.3   -13.0    -4.3     5.7    13.7
+  q=   4 (22.9% var)      -34.0   -24.2   -10.1    12.4    20.2
+  q=   8 (37.8% var)      -18.5   -12.6    -2.6    15.8    22.6
+  q=  16 (56.7% var)      -18.2   -10.3     0.0    16.4    24.1
+  q=  32 (78.5% var)       -7.4     1.3    12.4    27.3    30.2
+  q=  64 (93.7% var)       -1.6     6.3    17.6    32.9    33.6
+  q= 128 (97.1% var)       -1.6     5.4    16.7    32.7    33.5
+modes 200-249: linear 51.3%   persistence (last frame) 29.2%
+  pure lookup, % of baseline residual variance removed; rows = key dims (PCA), cols = k
+                               5      20      50     200    1000
+  q=   2 (11.8% var)      -35.1   -14.8    -7.3    -0.7     2.3
+  q=   4 (20.1% var)      -51.9   -24.2   -10.1     0.2     4.1
+  q=   8 (31.6% var)      -46.0   -18.9    -4.9     4.9     7.3
+  q=  16 (44.2% var)      -42.7   -16.0    -2.2     7.3     8.9
+  q=  32 (59.5% var)      -38.1   -10.3     2.5    10.0    10.8
+  q=  64 (75.7% var)      -30.4    -3.6     7.5    13.6    12.9
+  q= 128 (85.6% var)      -27.2    -2.0     8.9    14.6    13.5

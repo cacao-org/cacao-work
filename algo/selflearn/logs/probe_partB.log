@@ -1,0 +1,137 @@
+[   1.1s] loaded W (20000, 1965), D (20000, 1965); DM frame written 0.11 ms (wall) after WFS
+rms over time, median over modes: WFS 0.001139  DM 0.002626 (um)
+
+=== Part B: global linear predictor vs lookup, held-out ===
+
+--- modes 0-49, 10 past frames of WFS+DM -> WFS residual 2 frames ahead, inject=0
+  train 13991 / test 1832 frames, 1000 features, lambda 0.0001
+  global linear predictor removes 96.2% of the baseline residual variance
+  pure lookup (kNN in 8 PCA dims, k=20, no linear stage) removes -12.6%
+  pure lookup (kNN in 8 PCA dims, k=200, no linear stage) removes 15.8%
+  second stage on what the linear predictor leaves (gain = further variance removed):
+[  70.0s] matching space q=4
+  matching space: top 4 PCA dims of the state
+    kNN mean residual, k=20                        gain  -19.68%   shifted control  -20.69%
+    kNN mean residual, k=200                       gain   -3.93%   shifted control   -4.38%
+    kNN local-linear in Z, k=200                   gain  -13.83%   shifted control  -14.59%
+    K= 1 clusters, linear in global prediction     gain   -0.04%   shifted control   -0.04%
+    K= 1 clusters, full linear refit               gain   -0.91%   shifted control   -0.71%
+    K= 4 clusters, linear in global prediction     gain   -0.15%   shifted control   -0.21%
+    K= 4 clusters, full linear refit               gain   -3.30%   shifted control   -3.83%
+    K=16 clusters, linear in global prediction     gain   -0.81%   shifted control   -1.16%
+[  78.9s] matching space q=16
+  matching space: top 16 PCA dims of the state
+    kNN mean residual, k=20                        gain  -18.47%   shifted control  -19.22%
+    kNN mean residual, k=200                       gain   -3.53%   shifted control   -3.95%
+    K= 1 clusters, linear in global prediction     gain   -0.04%   shifted control   -0.04%
+    K= 1 clusters, full linear refit               gain   -0.91%   shifted control   -0.71%
+    K= 4 clusters, linear in global prediction     gain   -0.08%   shifted control   -0.17%
+    K= 4 clusters, full linear refit               gain   -3.23%   shifted control   -3.65%
+    K=16 clusters, linear in global prediction     gain   -1.23%   shifted control   -1.15%
+  matching space: residual-energy scalar only (1-D)
+    kNN mean residual, k=20                        gain   -5.96%   shifted control   -6.13%
+    kNN mean residual, k=200                       gain   -1.22%   shifted control   -0.90%
+    K= 1 clusters, linear in global prediction     gain   -0.04%   shifted control   -0.04%
+    K= 1 clusters, full linear refit               gain   -0.91%   shifted control   -0.71%
+    K= 4 clusters, linear in global prediction     gain   -0.30%   shifted control   -0.33%
+    K= 4 clusters, full linear refit               gain   -3.13%   shifted control   -2.84%
+    K=16 clusters, linear in global prediction     gain   -0.56%   shifted control   -0.50%
+  matching space: top 4 PCA dims + residual-energy scalar
+    kNN mean residual, k=20                        gain  -17.48%   shifted control  -17.72%
+    kNN mean residual, k=200                       gain   -3.67%   shifted control   -3.73%
+    kNN local-linear in Z, k=200                   gain  -11.50%   shifted control  -10.89%
+    K= 1 clusters, linear in global prediction     gain   -0.04%   shifted control   -0.04%
+    K= 1 clusters, full linear refit               gain   -0.91%   shifted control   -0.71%
+    K= 4 clusters, linear in global prediction     gain   -0.28%   shifted control   -0.17%
+    K= 4 clusters, full linear refit               gain   -3.97%   shifted control   -3.59%
+    K=16 clusters, linear in global prediction     gain   -1.20%   shifted control   -1.08%
+[ 105.3s] block done
+
+--- modes 0-49, 10 past frames of WFS+DM -> WFS residual 2 frames ahead, inject=0.1
+  train 13991 / test 1832 frames, 1000 features, lambda 0.001
+  global linear predictor removes 95.6% of the baseline residual variance
+  oracle for the injected term: 14.5% of what the linear predictor leaves
+  pure lookup (kNN in 8 PCA dims, k=20, no linear stage) removes -9.9%
+  pure lookup (kNN in 8 PCA dims, k=200, no linear stage) removes 16.5%
+  second stage on what the linear predictor leaves (gain = further variance removed):
+[ 133.9s] matching space q=4
+  matching space: top 4 PCA dims of the state
+    kNN mean residual, k=20                        gain  -28.00%   shifted control  -26.74%
+    kNN mean residual, k=200                       gain   -8.22%   shifted control   -5.92%
+    kNN local-linear in Z, k=200                   gain  -23.74%   shifted control  -21.76%
+    K= 1 clusters, linear in global prediction     gain   -0.29%   shifted control   -0.29%
+    K= 1 clusters, full linear refit               gain   -1.59%   shifted control   -1.09%
+    K= 4 clusters, linear in global prediction     gain   -0.45%   shifted control   -0.60%
+    K= 4 clusters, full linear refit               gain   -6.82%   shifted control   -5.73%
+    K=16 clusters, linear in global prediction     gain   -2.57%   shifted control   -1.85%
+[ 139.6s] matching space q=16
+  matching space: top 16 PCA dims of the state
+    kNN mean residual, k=20                        gain  -23.15%   shifted control  -27.56%
+    kNN mean residual, k=200                       gain   -5.83%   shifted control   -6.49%
+    K= 1 clusters, linear in global prediction     gain   -0.29%   shifted control   -0.29%
+    K= 1 clusters, full linear refit               gain   -1.59%   shifted control   -1.09%
+    K= 4 clusters, linear in global prediction     gain   -0.17%   shifted control   -0.45%
+    K= 4 clusters, full linear refit               gain   -6.99%   shifted control   -6.92%
+    K=16 clusters, linear in global prediction     gain   -2.11%   shifted control   -2.39%
+  matching space: residual-energy scalar only (1-D)
+    kNN mean residual, k=20                        gain   -9.07%   shifted control   -8.70%
+    kNN mean residual, k=200                       gain   -4.05%   shifted control   -3.35%
+    K= 1 clusters, linear in global prediction     gain   -0.29%   shifted control   -0.29%
+    K= 1 clusters, full linear refit               gain   -1.59%   shifted control   -1.09%
+    K= 4 clusters, linear in global prediction     gain   +6.22%   shifted control   -4.63%
+    K= 4 clusters, full linear refit               gain   +2.80%   shifted control   -6.87%
+    K=16 clusters, linear in global prediction     gain   +5.90%   shifted control   -5.85%
+  matching space: top 4 PCA dims + residual-energy scalar
+    kNN mean residual, k=20                        gain  -22.12%   shifted control  -22.85%
+    kNN mean residual, k=200                       gain   -5.42%   shifted control   -7.09%
+    kNN local-linear in Z, k=200                   gain  -14.86%   shifted control  -17.94%
+    K= 1 clusters, linear in global prediction     gain   -0.29%   shifted control   -0.29%
+    K= 1 clusters, full linear refit               gain   -1.59%   shifted control   -1.09%
+    K= 4 clusters, linear in global prediction     gain   -0.75%   shifted control   -1.29%
+    K= 4 clusters, full linear refit               gain   -5.17%   shifted control   -6.84%
+    K=16 clusters, linear in global prediction     gain   -2.39%   shifted control   -3.09%
+[ 160.3s] block done
+
+--- modes 200-249, 10 past frames of WFS+DM -> WFS residual 2 frames ahead, inject=0
+  train 13991 / test 1832 frames, 1000 features, lambda 0.1
+  global linear predictor removes 51.3% of the baseline residual variance
+  pure lookup (kNN in 8 PCA dims, k=20, no linear stage) removes -18.9%
+  pure lookup (kNN in 8 PCA dims, k=200, no linear stage) removes 4.9%
+  second stage on what the linear predictor leaves (gain = further variance removed):
+[ 192.1s] matching space q=4
+  matching space: top 4 PCA dims of the state
+    kNN mean residual, k=20                        gain  -11.93%   shifted control  -11.76%
+    kNN mean residual, k=200                       gain   -1.69%   shifted control   -1.50%
+    kNN local-linear in Z, k=200                   gain   -4.93%   shifted control   -4.77%
+    K= 1 clusters, linear in global prediction     gain   +0.01%   shifted control   +0.01%
+    K= 1 clusters, full linear refit               gain   +0.16%   shifted control   -0.18%
+    K= 4 clusters, linear in global prediction     gain   -0.02%   shifted control   -0.05%
+    K= 4 clusters, full linear refit               gain   -1.41%   shifted control   -1.47%
+    K=16 clusters, linear in global prediction     gain   -0.29%   shifted control   -0.40%
+[ 197.7s] matching space q=16
+  matching space: top 16 PCA dims of the state
+    kNN mean residual, k=20                        gain  -11.74%   shifted control  -11.58%
+    kNN mean residual, k=200                       gain   -1.54%   shifted control   -1.36%
+    K= 1 clusters, linear in global prediction     gain   +0.01%   shifted control   +0.01%
+    K= 1 clusters, full linear refit               gain   +0.16%   shifted control   -0.18%
+    K= 4 clusters, linear in global prediction     gain   -0.04%   shifted control   -0.08%
+    K= 4 clusters, full linear refit               gain   -1.42%   shifted control   -1.56%
+    K=16 clusters, linear in global prediction     gain   -0.33%   shifted control   -0.33%
+  matching space: residual-energy scalar only (1-D)
+    kNN mean residual, k=20                        gain   -5.18%   shifted control   -5.30%
+    kNN mean residual, k=200                       gain   -0.62%   shifted control   -0.65%
+    K= 1 clusters, linear in global prediction     gain   +0.01%   shifted control   +0.01%
+    K= 1 clusters, full linear refit               gain   +0.16%   shifted control   -0.18%
+    K= 4 clusters, linear in global prediction     gain   -0.08%   shifted control   -0.02%
+    K= 4 clusters, full linear refit               gain   -0.93%   shifted control   -1.21%
+    K=16 clusters, linear in global prediction     gain   -0.22%   shifted control   -0.16%
+  matching space: top 4 PCA dims + residual-energy scalar
+    kNN mean residual, k=20                        gain  -10.61%   shifted control  -10.09%
+    kNN mean residual, k=200                       gain   -1.58%   shifted control   -1.28%
+    kNN local-linear in Z, k=200                   gain   -4.89%   shifted control   -4.47%
+    K= 1 clusters, linear in global prediction     gain   +0.01%   shifted control   +0.01%
+    K= 1 clusters, full linear refit               gain   +0.16%   shifted control   -0.18%
+    K= 4 clusters, linear in global prediction     gain   -0.03%   shifted control   -0.04%
+    K= 4 clusters, full linear refit               gain   -1.27%   shifted control   -1.50%
+    K=16 clusters, linear in global prediction     gain   -0.32%   shifted control   -0.23%
+[ 212.6s] block done

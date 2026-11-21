@@ -1,0 +1,35 @@
+[   0.2s] loaded W (20000, 1965), D (20000, 1965); DM frame written 0.11 ms (wall) after WFS
+rms over time, median over modes: WFS 0.001139  DM 0.002626 (um)
+
+=== Part A: recurrence of the state (database = earlier frames only) ===
+rho = d(best match)/d(typical frame); corr = 1 - rho^2 = correlation of a state with
+its best match.  'night' = power-law extrapolation of rho to an 8 h log (optimistic).
+state                                               2s      4s      8s     16s  corr@16s   d_rec  rho@night corr@night
+DM (~turbulence),    2 modes whitened, 1 frame   0.237   0.100   0.042   0.022     0.999     0.9      0.000      1.000
+DM (~turbulence),    5 modes whitened, 1 frame   0.463   0.424   0.322   0.260     0.933     3.5      0.030      0.999
+DM (~turbulence),   10 modes whitened, 1 frame   0.610   0.583   0.490   0.466     0.783     7.0      0.161      0.974
+DM (~turbulence),   20 modes whitened, 1 frame   0.660   0.653   0.603   0.587     0.655    16.2      0.369      0.864
+DM (~turbulence),   50 modes whitened, 1 frame   0.804   0.781   0.743   0.712     0.493    16.7      0.454      0.794
+DM (~turbulence),  100 modes whitened, 1 frame   0.839   0.817   0.787   0.767     0.411    22.6      0.551      0.696
+DM (~turbulence),  300 modes whitened, 1 frame   0.871   0.840   0.807   0.791     0.374    21.3      0.556      0.691
+DM (~turbulence), 1000 modes whitened, 1 frame   0.883   0.850   0.784   0.780     0.392    15.2      0.477      0.773
+DM (~turbulence), 1965 modes whitened, 1 frame   0.873   0.850   0.772   0.767     0.412    14.3      0.453      0.795
+DM, all modes, raw um, 1 frame                   0.730   0.705   0.657   0.619     0.617    12.2      0.335      0.888
+DM, all modes whitened, 16 frames                0.877   0.853   0.775   0.769     0.409    14.2      0.453      0.795
+WFS residual,    2 modes whitened, 1 frame       0.037   0.025   0.014   0.009     1.000     1.5      0.000      1.000
+WFS residual,    5 modes whitened, 1 frame       0.315   0.269   0.205   0.166     0.972     3.2      0.016      1.000
+WFS residual,   10 modes whitened, 1 frame       0.494   0.461   0.392   0.362     0.869     6.4      0.111      0.988
+WFS residual,   20 modes whitened, 1 frame       0.609   0.590   0.557   0.535     0.714    15.5      0.329      0.892
+WFS residual,   50 modes whitened, 1 frame       0.743   0.724   0.703   0.687     0.528    26.4      0.518      0.732
+WFS residual,  300 modes whitened, 1 frame       0.819   0.825   0.823   0.818     0.331  2043.6      0.815      0.336
+WFS residual, 1965 modes whitened, 1 frame       0.905   0.910   0.912   0.910     0.172     inf      0.928      0.138
+WFS residual, all modes, raw um, 1 frame         0.905   0.903   0.891   0.884     0.218    83.4      0.808      0.347
+WFS residual,    2 modes whitened, 16 frames     0.227   0.205   0.162   0.139     0.981     4.1      0.022      1.000
+WFS residual,    5 modes whitened, 16 frames     0.452   0.400   0.341   0.293     0.914     4.7      0.060      0.996
+WFS residual,   10 modes whitened, 16 frames     0.594   0.564   0.501   0.472     0.778     8.5      0.196      0.962
+WFS residual,   50 modes whitened, 16 frames     0.793   0.778   0.759   0.746     0.444    33.3      0.595      0.645
+WFS residual, 1965 modes whitened, 16 frames     0.911   0.919   0.921   0.919     0.155     inf      0.951      0.096
+WFS+DM, all modes whitened, 16 frames            0.919   0.911   0.872   0.868     0.246    32.0      0.687      0.528
+PCA of DM (raw um): participation ratio 4.4, comps for 90% / 99% variance: 25 / 316
+PCA of WFS residual (raw um): participation ratio 127.9, comps for 90% / 99% variance: 1097 / 1782
+[  30.2s] part A done
