@@ -1,0 +1,299 @@
+#!/usr/bin/env -S milk-script -q
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Basis-matched Pass-1 & Pass-2 3D RM calibration on live GPU Subaru ao3k_scexao.bench:
+#   - Stage 1 (64x64 ALPAO plate DM, 1 kHz NIR PyWFS):
+#       Pass-1 3D RM (32 leading aol1_CMmodesDM modes) -> MIMO dm01_preshaper_m32.fits (2 kHz)
+#       Pass-2 3D RM (with dmpreshaper-01 active in 2 kHz lockstep) -> H_mimo_stg1_p2.fits
+#   - Stage 2 (50x50 MEMS DM, 2 kHz Vis PyWFS):
+#       3D RM (4 leading aol2_CMmodesDM modes) -> uniform H_diag_stg2.fits ([1, 8])
+
+set -euo pipefail
+
+OUT_DIR="${1:-${CACAO_WORK_ROOT:-/home/guyon/src/cacao-work}/_work/ao3k_phases1to5_calib}"
+RM_DIR="${2:-${CACAO_WORK_ROOT:-/home/guyon/src/cacao-work}/_work/ao3k_scexao_rm}"
+N_DYN="${3:-32}"
+
+OUT_DIR="$(realpath -m "${OUT_DIR}")"
+RM_DIR="$(realpath -m "${RM_DIR}")"
+mkdir -p "${OUT_DIR}"
+
+WORK_ROOT="/tmp/ao3k_p15cal_$$"
+CSIM_DIR="${WORK_ROOT}/csim"
+STG1_ROOT="${WORK_ROOT}/ao3k"
+STG2_ROOT="${WORK_ROOT}/scexao"
+mkdir -p "${WORK_ROOT}" "${CSIM_DIR}"
+
+BENCH_SRC="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
+BENCH_CAL="${WORK_ROOT}/ao3k_p15cal.bench"
+LOOP_CTRL="${CACAO_WORK_ROOT}/benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk"
+
+# Reroute Stage-1 DM command input to dm01shaped so dmpreshaper sits transparently in front
+awk '
+    /^\[/ { sec = $0 }
+    sec == "[dm.ao3k]" && /^in_cmd[ \t]*=/ { print "in_cmd       = \"dm01shaped\""; next }
+    { print }
+' "${BENCH_SRC}" > "${BENCH_CAL}"
+
+cleanup() {
+    milk-fps-runstop -q dmps_cal mdr_p1 mdr_p2 mdr_s2 >/dev/null 2>&1 || true
+    milk-fps-rm -f -q --ignore-missing dmps_cal mdr_p1 mdr_p2 mdr_s2 >/dev/null 2>&1 || true
+    CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 teardown --purge-dm \
+        >/dev/null 2>&1 || true
+    CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 teardown --purge-dm \
+        >/dev/null 2>&1 || true
+    cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
+    milk-stream-rm -q --ignore-missing dm01shaped dm01disp dm02disp >/dev/null 2>&1 || true
+    rm -rf "${WORK_ROOT}" >/dev/null 2>&1 || true
+}
+@defer --exit cleanup
+
+echo "================================================================================"
+echo " AO3k + SCExAO Basis-Matched Pass-1 / Pass-2 3D RM Calibration (N_dyn=${N_DYN})"
+echo "   RM Source : ${RM_DIR}"
+echo "   Output Dir: ${OUT_DIR}"
+echo "================================================================================"
+
+# 1. Extract leading N_DYN Stage-1 CMmodesDM & leading 4 Stage-2 CMmodesDM + outmasks
+"${PYTHON_BIN:-python3}" - "${RM_DIR}" "${OUT_DIR}" "${N_DYN}" <<'PY'
+import sys
+from pathlib import Path
+import numpy as np
+from astropy.io import fits
+
+rm_dir, out_dir, n_dyn = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+cm1 = fits.getdata(rm_dir / "stage1" / "CMmodesDM.fits").astype(np.float32)
+cm2 = fits.getdata(rm_dir / "stage2" / "CMmodesDM.fits").astype(np.float32)
+n_m1, n_m2 = cm1.shape[0], cm2.shape[0]
+fits.writeto(out_dir / "poke_s1.fits", cm1[:n_dyn].copy(), overwrite=True)
+fits.writeto(out_dir / "cm1_b0.fits", cm1[:128].copy(), overwrite=True)
+fits.writeto(out_dir / "poke_s2.fits", cm2[:4].copy(), overwrite=True)
+m1 = np.zeros((1, n_m1), dtype=np.float32)
+m1[0, :n_dyn] = 1.0
+fits.writeto(out_dir / "outmask_s1.fits", m1, overwrite=True)
+m2 = np.zeros((1, n_m2), dtype=np.float32)
+m2[0, :4] = 1.0
+fits.writeto(out_dir / "outmask_s2.fits", m2, overwrite=True)
+print(f"[calib] Extracted poke_s1 {cm1[:n_dyn].shape}, outmask_s1 {m1.shape}, poke_s2 {cm2[:4].shape}")
+PY
+
+# 2. Deploy fused optical bench (no turbulence, fpcam OFF, paced 1600 Hz subticks = 400 Hz Vis / 200 Hz NIR)
+cacaosim.deploy "${BENCH_CAL}" .mode="fused" .oversample=4 .atmturb=0 .workdir="${CSIM_DIR}" >/dev/null
+milk-fps-runstop -q csim_htsim >/dev/null 2>&1 || true
+milk-fps-wait -q -t 10 csim_htsim >/dev/null 2>&1 || true
+milk-fps-set -q \
+    "csim_htsim.turb_gain=0.0" \
+    "csim_htsim.enable_fpcam=OFF" \
+    "csim_htsim.export_enable=OFF" \
+    "csim_htsim.wfstat_enable=OFF" \
+    "csim_htsim.frame_rate=1200.0" \
+    "csim_htsim.procinfo.triggermode=0"
+milk-fps-runstart -q csim_htsim
+milk-stream-wait -q -t 20 csim_wfs_nir csim_wfs_vis dm01shaped dm02disp
+
+# 3. Deploy & load Stage-1 and Stage-2 RMs so aol1_modevalWFS & aol2_modevalWFS stream live
+CACAO_LOOPROOTDIR="${STG1_ROOT}" CACAO_WFSFRATE="150" "${LOOP_CTRL}" --stage 1 deploy >/dev/null
+CACAO_LOOPROOTDIR="${STG2_ROOT}" CACAO_WFSFRATE="300" "${LOOP_CTRL}" --stage 2 deploy >/dev/null
+CACAO_LOOPROOTDIR="${STG1_ROOT}" CACAO_WFSFRATE="150" "${LOOP_CTRL}" --stage 1 calibrate \
+    --load-rm "${RM_DIR}/stage1" --svdlim 0.004 --nframes 40 >/dev/null
+CACAO_LOOPROOTDIR="${STG2_ROOT}" CACAO_WFSFRATE="300" "${LOOP_CTRL}" --stage 2 calibrate \
+    --load-rm "${RM_DIR}/stage2" --svdlim 0.004 --nframes 40 >/dev/null
+CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero >/dev/null
+CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 zero >/dev/null
+
+# Stop DMch2disp so measdynresp & dmpreshaper own dm01disp / dm01shaped / dm02disp cleanly
+milk-fps-runstop -q DMch2disp-01 DMch2disp-02 >/dev/null 2>&1 || true
+milk-fps-wait -q -t 10 DMch2disp-01 DMch2disp-02 >/dev/null 2>&1 || true
+milk-stream-wait -q -t 20 "aol1_modevalWFS+10" "aol2_modevalWFS+10"
+
+cd "${OUT_DIR}"
+
+# 4. Stage-1 Pass-1 3D RM (unshaped 64x64 ALPAO plate DM, lockstep NBsubfr=2 on csim_wfs_vis)
+echo "[calib] Step 1/4: Stage-1 Pass-1 3D RM (unshaped 64x64 plate DM, ${N_DYN} modes, 2 kHz lockstep)..."
+milk-fps-init -q mdr_p1 cacao-fpsexec-cacaoac-measdynresp >/dev/null
+milk-fps-set -q \
+    mdr_p1.streamin=dm01shaped \
+    mdr_p1.streamout=aol1_modevalWFS \
+    mdr_p1.trigstream=csim_wfs_vis \
+    mdr_p1.inmodes=poke_s1.fits \
+    mdr_p1.outmask=outmask_s1.fits \
+    mdr_p1.outcube=resp3d_s1_p1.fits \
+    mdr_p1.ampl=0.035 \
+    mdr_p1.timing.WFSfrequ=1000.0 \
+    mdr_p1.timing.NBsubfr=2 \
+    mdr_p1.timing.NBrespfr=12 \
+    mdr_p1.timing.NBprefr=2 \
+    mdr_p1.timing.NBsettlefr=2 \
+    mdr_p1.timing.NBcycle=2 \
+    mdr_p1.pokemode=1 \
+    mdr_p1.phaseorder=1 \
+    mdr_p1.procinfo.loopcntMax=1
+milk-fps-runstart -q mdr_p1
+milk-fps-wait -q -t 180 mdr_p1
+milk-fps-rm -f -q mdr_p1
+
+# 5. Synthesize Stage-1 MIMO Pre-Shaper Kernel (dt=500 us = 2 kHz lockstep, Texp=1000 us)
+echo "[calib] Step 2/4: Synthesizing 2 kHz MIMO pre-shaper kernel (compdmpreshaper)..."
+milk-fps-init -q cps_s1 cacao-fpsexec-cacaocc-compdmpreshaper >/dev/null
+milk-fps-set -q \
+    cps_s1.resp3d=resp3d_s1_p1.fits \
+    cps_s1.inmodes=poke_s1.fits \
+    cps_s1.outkernel=dm01_preshaper_m32.fits \
+    cps_s1.mode=0 \
+    cps_s1.n_taps=14 \
+    cps_s1.tau_target_us=120.0 \
+    cps_s1.dt_us=500.0 \
+    cps_s1.texp_us=1000.0 \
+    cps_s1.lambda_ctrl=0.04 \
+    cps_s1.lambda_diff=0.03 \
+    cps_s1.max_gain=2.2 \
+    cps_s1.procinfo.loopcntMax=1
+milk-fps-runstart -q cps_s1
+milk-fps-wait -q -t 60 cps_s1
+milk-fps-info cps_s1 > compdmpreshaper_info.txt
+milk-fps-rm -f -q cps_s1
+
+# 6. Stage-1 Pass-2 3D RM with live 2 kHz lockstep dmpreshaper (dm01disp -> dmpreshaper -> dm01shaped)
+echo "[calib] Step 3/4: Stage-1 Pass-2 3D RM (with live 2 kHz lockstep dmpreshaper)..."
+milk-fps-init -q dmps_cal cacao-fpsexec-dmpreshaper >/dev/null
+milk-fps-set -q \
+    dmps_cal.streamin=dm01disp \
+    dmps_cal.streamout=dm01shaped \
+    dmps_cal.kernelfile=dm01_preshaper_m32.fits \
+    dmps_cal.trigstream=csim_wfs_vis \
+    dmps_cal.rate_hz=2000.0 \
+    dmps_cal.enable=ON \
+    dmps_cal.gain=1.0 \
+    dmps_cal.procinfo.loopcntMax=-1
+milk-fps-runstart -q dmps_cal
+sleep 0.2
+
+milk-fps-init -q mdr_p2 cacao-fpsexec-cacaoac-measdynresp >/dev/null
+milk-fps-set -q \
+    mdr_p2.streamin=dm01disp \
+    mdr_p2.streamout=aol1_modevalWFS \
+    mdr_p2.trigstream=csim_wfs_vis \
+    mdr_p2.inmodes=poke_s1.fits \
+    mdr_p2.outmask=outmask_s1.fits \
+    mdr_p2.outcube=resp3d_s1_p2.fits \
+    mdr_p2.ampl=0.035 \
+    mdr_p2.timing.WFSfrequ=1000.0 \
+    mdr_p2.timing.NBsubfr=2 \
+    mdr_p2.timing.NBrespfr=12 \
+    mdr_p2.timing.NBprefr=2 \
+    mdr_p2.timing.NBsettlefr=2 \
+    mdr_p2.timing.NBcycle=2 \
+    mdr_p2.pokemode=1 \
+    mdr_p2.phaseorder=1 \
+    mdr_p2.procinfo.loopcntMax=1
+milk-fps-runstart -q mdr_p2
+milk-fps-wait -q -t 180 mdr_p2
+milk-fps-rm -f -q mdr_p2
+milk-fps-runstop -q dmps_cal
+milk-fps-wait -q -t 10 dmps_cal
+milk-fps-rm -f -q dmps_cal
+
+# 7. Factor Pass-1 & Pass-2 Stage-1 3D RMs into WFS-rate H_mimo & H_diag kernels
+for tag in p1 p2; do
+    milk-fps-init -q "fdr_${tag}" cacao-fpsexec-cacaoac-factordynrm >/dev/null
+    milk-fps-set -q \
+        "fdr_${tag}.resp3d=resp3d_s1_${tag}.fits" \
+        "fdr_${tag}.outmimo=H_mimo_stg1_${tag}.fits" \
+        "fdr_${tag}.outdiag=H_diag_stg1_${tag}.fits" \
+        "fdr_${tag}.n_taps=12" \
+        "fdr_${tag}.phase_fr=0.0" \
+        "fdr_${tag}.procinfo.loopcntMax=1"
+    milk-fps-runstart -q "fdr_${tag}"
+    milk-fps-wait -q -t 60 "fdr_${tag}"
+    milk-fps-info "fdr_${tag}" > "factordynrm_stg1_${tag}_info.txt"
+    milk-fps-rm -f -q "fdr_${tag}"
+done
+
+# 8. Stage-2 3D RM (50x50 MEMS DM, 4 modes, 2 kHz lockstep NBsubfr=1 -> uniform H_diag_stg2.fits)
+echo "[calib] Step 4/4: Stage-2 3D RM (50x50 MEMS DM, 4 modes) -> H_diag_stg2.fits..."
+milk-fps-init -q mdr_s2 cacao-fpsexec-cacaoac-measdynresp >/dev/null
+milk-fps-set -q \
+    mdr_s2.streamin=dm02disp \
+    mdr_s2.streamout=aol2_modevalWFS \
+    mdr_s2.trigstream=csim_wfs_vis \
+    mdr_s2.inmodes=poke_s2.fits \
+    mdr_s2.outmask=outmask_s2.fits \
+    mdr_s2.outcube=resp3d_s2.fits \
+    mdr_s2.ampl=0.025 \
+    mdr_s2.timing.WFSfrequ=2000.0 \
+    mdr_s2.timing.NBsubfr=1 \
+    mdr_s2.timing.NBrespfr=8 \
+    mdr_s2.timing.NBprefr=2 \
+    mdr_s2.timing.NBsettlefr=2 \
+    mdr_s2.timing.NBcycle=2 \
+    mdr_s2.pokemode=1 \
+    mdr_s2.phaseorder=1 \
+    mdr_s2.procinfo.loopcntMax=1
+milk-fps-runstart -q mdr_s2
+milk-fps-wait -q -t 60 mdr_s2
+milk-fps-rm -f -q mdr_s2
+
+milk-fps-init -q fdr_s2 cacao-fpsexec-cacaoac-factordynrm >/dev/null
+milk-fps-set -q \
+    fdr_s2.resp3d=resp3d_s2.fits \
+    fdr_s2.outmimo=H_mimo_stg2_4.fits \
+    fdr_s2.outdiag=H_diag_stg2_4.fits \
+    fdr_s2.n_taps=8 \
+    fdr_s2.phase_fr=0.0 \
+    fdr_s2.procinfo.loopcntMax=1
+milk-fps-runstart -q fdr_s2
+milk-fps-wait -q -t 30 fdr_s2
+milk-fps-info fdr_s2 > factordynrm_stg2_info.txt
+milk-fps-rm -f -q fdr_s2
+
+# Collapse 4 identical decoupled MEMS modes into a [1, 8] uniform broadcast kernel for all 1255 modes
+"${PYTHON_BIN:-python3}" - "${OUT_DIR}" <<'PY'
+import json, sys
+from pathlib import Path
+import numpy as np
+from astropy.io import fits
+
+out_dir = Path(sys.argv[1])
+hd4 = fits.getdata(out_dir / "H_diag_stg2_4.fits").astype(np.float64)  # (L, 4)
+h_uni = np.mean(hd4, axis=1, keepdims=True)  # (L, 1) -> FITS [1, L]
+h_uni /= np.sum(h_uni)
+fits.writeto(out_dir / "H_diag_stg2.fits", h_uni.astype(np.float32), overwrite=True)
+
+def parse_info(path):
+    import re
+    res = {}
+    txt = re.sub(r"\x1b\[[0-9;]*m", "", path.read_text())
+    for line in txt.splitlines():
+        p = line.split()
+        if len(p) >= 4 and p[2] in ("FLOAT32", "FLOAT64", "UINT32", "UINT64"):
+            try:
+                res[p[1].lstrip(".")] = float(p[3])
+            except ValueError:
+                pass
+    return res
+
+s_cps = parse_info(out_dir / "compdmpreshaper_info.txt")
+s_p1 = parse_info(out_dir / "factordynrm_stg1_p1_info.txt")
+s_p2 = parse_info(out_dir / "factordynrm_stg1_p2_info.txt")
+s_s2 = parse_info(out_dir / "factordynrm_stg2_info.txt")
+
+summary = {
+    "compdmpreshaper": s_cps,
+    "stg1_pass1": s_p1,
+    "stg1_pass2": s_p2,
+    "stg2_mems": s_s2,
+    "stg2_h_uniform": [round(float(x), 5) for x in h_uni.ravel()],
+}
+(out_dir / "calib_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+print("[calib] === Pass-1 vs Pass-2 Stage-1 64x64 Plate DM (CMmodesDM[0:32]) ===")
+print(f"  Pre-shaper predicted err: {s_cps.get('out.err_before',0):.4f} -> {s_cps.get('out.err_after',0):.4f} "
+      f"({s_cps.get('out.err_reduction_x',0):.2f}x), ov: {s_cps.get('out.ov_before_pct',0):.2f}% -> {s_cps.get('out.ov_after_pct',0):.2f}%")
+print(f"  Pass-1 factor: cent={s_p1.get('out.lat_centroid_fr',0):.3f} fr | PSOL 2tap={s_p1.get('out.psol_2tap_pct',0):.2f}% "
+      f"diag={s_p1.get('out.psol_diag_pct',0):.2f}% mimo={s_p1.get('out.psol_mimo_pct',0):.2f}% | "
+      f"ov={s_p1.get('out.peak_overshoot_pct',0):.2f}% offdiag_pk={s_p1.get('out.peak_offdiag_pct',0):.2f}%")
+print(f"  Pass-2 factor: cent={s_p2.get('out.lat_centroid_fr',0):.3f} fr | PSOL 2tap={s_p2.get('out.psol_2tap_pct',0):.2f}% "
+      f"diag={s_p2.get('out.psol_diag_pct',0):.2f}% mimo={s_p2.get('out.psol_mimo_pct',0):.2f}% | "
+      f"ov={s_p2.get('out.peak_overshoot_pct',0):.2f}% offdiag_pk={s_p2.get('out.peak_offdiag_pct',0):.2f}%")
+print(f"  Stage-2 MEMS : cent={s_s2.get('out.lat_centroid_fr',0):.3f} fr | h={summary['stg2_h_uniform']}")
+PY

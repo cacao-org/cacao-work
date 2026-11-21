@@ -129,6 +129,21 @@ PF_MKTHREADS="${CACAO_PF_MKTHREADS:-8}"
 PF_MIX="${CACAO_PF_MIX:-${DEF_PF_MIX}}"
 PF_MGAIN_EXP="${CACAO_PF_MGAIN_EXP:-0.50}"
 PF_MAXWAITUS="${CACAO_PF_MAXWAITUS:-3000}"
+DYNPSOL_KERNEL="${CACAO_DYNPSOL_KERNEL:-}"
+PF_ZOH_RIDGE="${CACAO_PF_ZOH_RIDGE:-}"
+PF_GRAM_HALFLIFE="${CACAO_PF_GRAM_HALFLIFE:-0}"
+PF_DM_KERNEL="${CACAO_PF_DM_KERNEL:-}"
+PF_WL_LAYERS="${CACAO_PF_WL_LAYERS:-}"
+PF_DMMODES="${CACAO_PF_DMMODES:-}"
+PF_PUP_DIAM="${CACAO_PF_PUP_DIAM:-7.95}"
+PF_DM_DX="${CACAO_PF_DM_DX:-0.0}"
+PF_FRATE_HZ="${CACAO_PF_FRATE_HZ:-1000.0}"
+PF_N_PRIOR="${CACAO_PF_N_PRIOR:-1024.0}"
+PF_WL_SWITCH_DECAY="${CACAO_PF_WL_SWITCH_DECAY:-0.20}"
+PF_REGIME_KMAX="${CACAO_PF_REGIME_KMAX:-0}"
+PF_REGIME_KAPPA="${CACAO_PF_REGIME_KAPPA:-0.10}"
+PF_REGIME_BW="${CACAO_PF_REGIME_BW:-3.0}"
+PF_REGIME_RLIM="${CACAO_PF_REGIME_RLIM:-4.0}"
 
 if [[ "${PF_MODE}" == "eof" ]]; then
     PF_MK_UNIT="mkEOFPF-${N}"
@@ -576,6 +591,13 @@ measlinresp-${N}.procinfo.MeasureTiming = ON
 mctrlstats-${N}.AOloopindex           = ${N}
 mctrlstats-${N}.procinfo.MeasureTiming = ON
 EOF
+
+    if [[ -n "${DYNPSOL_KERNEL}" && -f "${DYNPSOL_KERNEL}" ]]; then
+        ln -sfn "$(realpath "${DYNPSOL_KERNEL}")" "../conf/dynpsol_kern.fits"
+        milk-fps-set -q \
+            "mfilt-${N}.comp.dynpsol.kernel=../conf/dynpsol_kern.fits" \
+            "mfilt-${N}.comp.dynpsol.enable=ON"
+    fi
 
     if [[ "${PF_MODE}" == "eof" ]]; then
         milk-fps-set -q \
@@ -1370,6 +1392,9 @@ cmd_close() {
 
 cmd_pf_on() {
     local mix="${1:-${PF_MIX}}" pflat="${2:-}"
+    if [[ -d "${ROOTDIR}/${LOOPNAME}-rundir" ]]; then
+        cd "${ROOTDIR}/${LOOPNAME}-rundir"
+    fi
     if @exists "s.${PFX}mgainfact" && @exists "s.${PFX}mPFmixfact"; then
         @calc "s.${PFX}mPFmixfact = pow(s.${PFX}mgainfact, ${PF_MGAIN_EXP})"
     fi
@@ -1390,9 +1415,35 @@ cmd_pf_on() {
             "${PF_MK_UNIT}.minsamples=${PF_MINSAMPLES}" \
             "${PF_MK_UNIT}.diagminsamples=${PF_DIAGMINSAMPLES}" \
             "${PF_MK_UNIT}.updateperiod=${PF_UPDATEPERIOD}" \
+            "${PF_MK_UNIT}.gram_halflife=${PF_GRAM_HALFLIFE}" \
+            "${PF_MK_UNIT}.regime_kmax=${PF_REGIME_KMAX}" \
+            "${PF_MK_UNIT}.regime_kappa=${PF_REGIME_KAPPA}" \
+            "${PF_MK_UNIT}.regime_bw=${PF_REGIME_BW}" \
+            "${PF_MK_UNIT}.regime_rlim=${PF_REGIME_RLIM}" \
+            "${PF_MK_UNIT}.pup_diam=${PF_PUP_DIAM}" \
+            "${PF_MK_UNIT}.dm_dx=${PF_DM_DX}" \
+            "${PF_MK_UNIT}.frate_hz=${PF_FRATE_HZ}" \
+            "${PF_MK_UNIT}.n_prior=${PF_N_PRIOR}" \
+            "${PF_MK_UNIT}.wl_switch_decay=${PF_WL_SWITCH_DECAY}" \
             "${PF_APP_UNIT}.blocksize=${PF_BLOCKSIZE}" \
             "${PF_APP_UNIT}.diagorder=${PF_DIAGORDER}" \
             "${PF_APP_UNIT}.nthreads=${PF_NTHREADS}"
+        if [[ -n "${PF_ZOH_RIDGE}" ]]; then
+            milk-fps-set -q "${PF_MK_UNIT}.zoh_ridge=${PF_ZOH_RIDGE}"
+        fi
+        if [[ -n "${PF_DM_KERNEL}" && -f "${PF_DM_KERNEL}" ]]; then
+            local k_link="${ROOTDIR}/conf/pf_dm_kern.fits"
+            ln -sfn "$(realpath "${PF_DM_KERNEL}")" "${k_link}"
+            milk-fps-set -q "${PF_MK_UNIT}.dm_kernel=../conf/pf_dm_kern.fits"
+        fi
+        if [[ -n "${PF_WL_LAYERS}" ]]; then
+            milk-fps-set -q "${PF_MK_UNIT}.wl_layers=${PF_WL_LAYERS}"
+        fi
+        if [[ -n "${PF_DMMODES}" && -f "${PF_DMMODES}" ]]; then
+            local d_link="${ROOTDIR}/conf/pf_dmmodes.fits"
+            ln -sfn "$(realpath "${PF_DMMODES}")" "${d_link}"
+            milk-fps-set -q "${PF_MK_UNIT}.dmmodes=../conf/pf_dmmodes.fits"
+        fi
     fi
     if [[ -n "${PF_MAXNORM2}" ]]; then
         milk-fps-set -q "${PF_MK_UNIT}.maxnorm2=${PF_MAXNORM2}"

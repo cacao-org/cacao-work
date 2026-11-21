@@ -69,6 +69,29 @@ SYSID_MODES="40"
 SYSID_WHITEN_ORDER="4"
 SKIP_MICROBENCH="0"
 COMPARE_JSON=""
+DM1_PRESHAPER=""
+DYNPSOL1=""
+DYNPSOL2=""
+ONLINE_OG1="0"
+OG1_AMPL="0.008"
+OG1_NBMODE="128"
+OG1_STRIDE="4"
+OG1_HOLD="3"
+OG1_APPLY="1"
+LIVE_2WFS1DM_SEC="0"
+WINDLAYERS1="0"
+PF_ZOH_RIDGE=""
+PF_ZOH_RIDGE2=""
+PF_GRAM_HALFLIFE="0"
+PF_REGIME_KMAX="0"
+PF_FX1=""
+PF_FX2=""
+PF_DMMODES1=""
+PF_N_PRIOR="1024"
+PF_WL_SWITCH_DECAY="0.20"
+WIND_SWITCH_SEC="0"
+WIND_SWITCH_DEG="60.0"
+RUN_MODALWHITE="0"
 
 usage() {
     cat <<EOF
@@ -205,8 +228,31 @@ while (( $# > 0 )); do
         --sysid-modes)        SYSID_MODES="$2"; shift 2 ;;
         --sysid-whiten-order) SYSID_WHITEN_ORDER="$2"; shift 2 ;;
         --skip-microbench)    SKIP_MICROBENCH="1"; shift ;;
-        --compare-modes)   COMPARE_JSON="$2"; shift 2 ;;
-        -h|--help)         usage; exit 0 ;;
+        --compare-modes)      COMPARE_JSON="$2"; shift 2 ;;
+        --dm1-preshaper)      DM1_PRESHAPER="$2"; shift 2 ;;
+        --dynpsol1)           DYNPSOL1="$2"; shift 2 ;;
+        --dynpsol2)           DYNPSOL2="$2"; shift 2 ;;
+        --online-og1)         ONLINE_OG1="1"; shift ;;
+        --og1-ampl)           OG1_AMPL="$2"; shift 2 ;;
+        --og1-nbmode)         OG1_NBMODE="$2"; shift 2 ;;
+        --og1-stride)         OG1_STRIDE="$2"; shift 2 ;;
+        --og1-hold)           OG1_HOLD="$2"; shift 2 ;;
+        --og1-no-apply)       OG1_APPLY="0"; shift ;;
+        --live-2wfs1dm-sec)   LIVE_2WFS1DM_SEC="$2"; shift 2 ;;
+        --windlayers1)        WINDLAYERS1="1"; shift ;;
+        --pf-zoh-ridge)       PF_ZOH_RIDGE="$2"; shift 2 ;;
+        --pf-zoh-ridge2)      PF_ZOH_RIDGE2="$2"; shift 2 ;;
+        --pf-gram-halflife)   PF_GRAM_HALFLIFE="$2"; shift 2 ;;
+        --pf-regime-kmax)     PF_REGIME_KMAX="$2"; shift 2 ;;
+        --pf-fx1)             PF_FX1="$2"; shift 2 ;;
+        --pf-fx2)             PF_FX2="$2"; shift 2 ;;
+        --pf-dmmodes1)        PF_DMMODES1="$2"; shift 2 ;;
+        --pf-n-prior)         PF_N_PRIOR="$2"; shift 2 ;;
+        --pf-wl-switch-decay) PF_WL_SWITCH_DECAY="$2"; shift 2 ;;
+        --wind-switch-sec)    WIND_SWITCH_SEC="$2"; shift 2 ;;
+        --wind-switch-deg)    WIND_SWITCH_DEG="$2"; shift 2 ;;
+        --modalwhite)         RUN_MODALWHITE="1"; shift ;;
+        -h|--help)            usage; exit 0 ;;
         *) echo "[ao3k-scexao] Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
@@ -315,13 +361,17 @@ BENCH_CFG_SRC="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
 BENCH_CFG="${BENCH_CFG_SRC}"
 if (( EFF_PSF_NAVG != 20 )) || [[ -n "${CLOCK_SKEW_US}" ]] || \
    [[ -n "${WFS1_MOD_RAD}" ]] || [[ -n "${WFS2_MOD_RAD}" ]] || \
-   [[ -n "${STAR_MAG}" ]]; then
+   [[ -n "${STAR_MAG}" ]] || [[ -n "${DM1_PRESHAPER}" ]]; then
     BENCH_CFG="${WORK_ROOT}/ao3k_scexao_run.bench"
     awk -v nv="${EFF_PSF_NAVG}" -v skew="${CLOCK_SKEW_US}" \
-        -v m1="${WFS1_MOD_RAD}" -v m2="${WFS2_MOD_RAD}" -v smag="${STAR_MAG}" '
+        -v m1="${WFS1_MOD_RAD}" -v m2="${WFS2_MOD_RAD}" -v smag="${STAR_MAG}" \
+        -v dm1ps="${DM1_PRESHAPER}" '
         /^\[/ { sec = $0 }
         sec == "[bench]" && smag != "" && /^star_mag[ \t]*=/ {
             printf "star_mag      = %s\n", smag; next
+        }
+        sec == "[dm.ao3k]" && dm1ps != "" && /^in_cmd[ \t]*=/ {
+            print "in_cmd       = \"dm01shaped\""; next
         }
         sec == "[pyrwfs.wfs_vis]" && /^\[pyrwfs\.wfs_vis\]/ && skew != "" {
             print; printf "clock_offset_us = %s\n", skew; next
@@ -471,8 +521,9 @@ start_tlm_loggers() {
 cleanup_sim() {
     sysmon.stop >/dev/null 2>&1 || true
     cleanup_tlm_loggers
-    milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
-    milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
+    milk-fps-runstop -q dmpreshaper-01 modalog-1 wl-1 csim_wfstat >/dev/null 2>&1 || true
+    milk-fps-rm -f -q --ignore-missing dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
+        >/dev/null 2>&1 || true
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 teardown \
         >/dev/null 2>&1 || true
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 teardown --purge-dm \
@@ -480,8 +531,10 @@ cleanup_sim() {
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 teardown --purge-dm \
         >/dev/null 2>&1 || true
     cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
-    milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 >/dev/null 2>&1 || true
-    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" >/dev/null 2>&1 || true
+    milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 dm01shaped \
+        wl1_layers wl1_vmapk wl1_vmapi wl1_vmapx >/dev/null 2>&1 || true
+    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" \
+        "/tmp/.p15_ps_${$}.fits" "/tmp/.p15_ogk_${$}.fits" >/dev/null 2>&1 || true
 }
 @defer --exit cleanup_sim
 
@@ -624,6 +677,24 @@ CACAO_PF_MINSAMPLES="${PF_MINSAMPLES1}" \
 CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
     "${LOOP_CTRL}" --stage 1 deploy
 
+if [[ -n "${DM1_PRESHAPER}" && -f "${DM1_PRESHAPER}" ]]; then
+    ln -sfn "$(realpath "${DM1_PRESHAPER}")" "/tmp/.p15_ps_${$}.fits"
+    milk-fps-rm -f -q --ignore-missing dmpreshaper-01 >/dev/null 2>&1 || true
+    milk-fps-init -q dmpreshaper-01 cacao-fpsexec-dmpreshaper >/dev/null
+    milk-fps-set -q \
+        "dmpreshaper-01.streamin=dm01disp" \
+        "dmpreshaper-01.streamout=dm01shaped" \
+        "dmpreshaper-01.kernelfile=/tmp/.p15_ps_${$}.fits" \
+        "dmpreshaper-01.trigstream=csim_wfs_vis" \
+        "dmpreshaper-01.rate_hz=2000.0" \
+        "dmpreshaper-01.enable=ON" \
+        "dmpreshaper-01.gain=1.0" \
+        "dmpreshaper-01.procinfo.loopcntMax=-1"
+    milk-fps-runstart -q dmpreshaper-01
+    sleep 0.15
+    echo "[ao3k-scexao]   -> Stage-1 DM Pre-Shaper ON (2 kHz lockstep: dm01disp -> dm01shaped)"
+fi
+
 CACAO_LOOPROOTDIR="${STG2_ROOT}" \
 CACAO_WFSFRATE="${CAL_RATE}" \
 CACAO_LOOPGAIN="${GAIN2}" \
@@ -728,9 +799,13 @@ if (( RUN_SELFRM )); then
     if [[ "${BENCH_MODE}" == "fused" ]] && (( FAST_CALIB )); then
         SRMC_FAST_ARG=(--fast)
     fi
+    declare -a SRMC1_FAST_ARG=("${SRMC_FAST_ARG[@]}")
+    if [[ -n "${DM1_PRESHAPER}" ]]; then
+        SRMC1_FAST_ARG=()
+    fi
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 selfrm \
         "${OUT_DIR}/selfRM_calib_stg1.fits" \
-        --nbmode "${SELFRM_MODES}" --ampl 0.015 --nbiter 1 --nbsettle 2 "${SRMC_FAST_ARG[@]}"
+        --nbmode "${SELFRM_MODES}" --ampl 0.015 --nbiter 1 --nbsettle 2 "${SRMC1_FAST_ARG[@]}"
     cp -f "${OUT_DIR}/selfRM_calib_stg1.fits" "${STG1_ROOT}/conf/selfRM_calib.fits"
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
     milk-stream-wait -q -t 20 "csim_wfs_vis+15"
@@ -763,13 +838,25 @@ if (( PREDICTIVE )); then
     sysmon.mark "testol_calib" "Closed-loop PSOL latency & optical gain calibration (testOL)"
     echo "[ao3k-scexao] Step 4c/7: Calibrating closed-loop PSOL latency & gain (testOL)..."
     if [[ "${BENCH_MODE}" == "fused" ]]; then
-        @set "f.csim_htsim.enable_fpcam=ON"
+        # Pace testOL at ~300 Hz WFS2 wall-clock (matching closed-loop science lockstep rate)
+        # so measured IPC/pipeline latency matches science telemetry to <0.05 fr.
+        TOL_MASTER_RATE="$(awk -v k="${EFF_OV}" 'BEGIN { printf "%.2f", 300.0 * k }')"
+        milk-fps-set -q \
+            "csim_htsim.enable_fpcam=ON" \
+            "csim_htsim.frame_rate=${TOL_MASTER_RATE}"
     fi
     milk-stream-wait -q -t 20 "csim_wfs_vis+20"
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 close "${GAIN1}"
     milk-stream-wait -q -t 30 "csim_wfs_nir+15"
     CACAO_LOOPROOTDIR="${STG1_ROOT}" CACAO_PF_MODE="${PF_MODE}" \
         "${LOOP_CTRL}" --stage 1 testol 2 0.025 180 1.0
+    tol1_ps_lat=2.5
+    @get tol1_ps_lat="f.${PF_MK_PFX}-1.PFlatency"
+    if [[ -n "${DM1_PRESHAPER}" ]]; then
+        # Also calibrate unshaped modes (m >= 32) so 2-tap fallback & modalog match m >= 32 exactly
+        CACAO_LOOPROOTDIR="${STG1_ROOT}" CACAO_PF_MODE="${PF_MODE}" \
+            "${LOOP_CTRL}" --stage 1 testol 40 0.025 180 1.0
+    fi
     CACAO_LOOPROOTDIR="${STG1_ROOT}" CACAO_PF_MODE="${PF_MODE}" "${LOOP_CTRL}" --stage 1 zero
     milk-stream-wait -q -t 30 "csim_wfs_vis+15"
 
@@ -779,12 +866,99 @@ if (( PREDICTIVE )); then
         "${LOOP_CTRL}" --stage 2 testol 2 0.020 220 1.0
     CACAO_LOOPROOTDIR="${STG2_ROOT}" CACAO_PF_MODE="${PF_MODE}" "${LOOP_CTRL}" --stage 2 zero
     milk-stream-wait -q -t 30 "csim_wfs_vis+15"
+    if [[ "${BENCH_MODE}" == "fused" ]]; then
+        @set "f.csim_htsim.frame_rate=${WALL_MASTER_RATE}"
+    fi
 
-    tol1_lat=0 tol1_wf=0 tol2_lat=0 tol2_wf=0
+    tol1_lat=2.5 tol1_wf=1.0 tol2_lat=2.8 tol2_wf=1.0
     @get tol1_lat="f.${PF_MK_PFX}-1.PFlatency" tol1_wf="f.mfilt-1.comp.WFSfact" \
          tol2_lat="f.${PF_MK_PFX}-2.PFlatency" tol2_wf="f.mfilt-2.comp.WFSfact"
-    echo "[ao3k-scexao]      testOL Stage 1: lag=${tol1_lat} fr, WFSfact=${tol1_wf}" \
-         "| Stage 2: lag=${tol2_lat} fr, WFSfact=${tol2_wf}"
+    echo "[ao3k-scexao]      testOL Stage 1: lag=${tol1_lat} fr (preshaped=${tol1_ps_lat} fr)," \
+         "WFSfact=${tol1_wf} | Stage 2: lag=${tol2_lat} fr, WFSfact=${tol2_wf}"
+fi
+
+# Align open-loop 3D RM kernels (dmDisp -> modevalWFS) to exact closed-loop testOL lag
+# (modevalDM -> modevalWFS) so dynpsol, modalog, 2WFS1DM, and Filtered-X EOF stay phase-matched.
+DYNPSOL1_EFF="${DYNPSOL1}"
+DYNPSOL2_EFF="${DYNPSOL2}"
+PF_FX1_EFF="${PF_FX1}"
+PF_FX2_EFF="${PF_FX2}"
+align_dm_kernel() {
+    local src="$1" target_lat="$2" dst="$3" label="$4"
+    "${PYTHON_BIN:-python3}" - "${src}" "${target_lat}" "${dst}" "${label}" <<'PY'
+import sys
+import numpy as np
+from astropy.io import fits
+
+src, target_s, dst, label = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+target = float(target_s)
+H = fits.getdata(src).astype(np.float64)
+taps = np.arange(H.shape[0], dtype=np.float64)
+if H.ndim == 3:
+    hm = np.array([np.mean(np.diag(H[l])) for l in range(H.shape[0])])
+elif H.ndim == 2:
+    hm = np.mean(H, axis=1)
+else:
+    hm = H.copy()
+c0 = float(np.sum(taps * hm) / np.sum(hm)) if abs(np.sum(hm)) > 1e-9 else target
+shift = target - c0
+if shift > 1e-4:
+    k0 = int(np.floor(shift))
+    alpha = shift - k0
+    max_l = min(24, H.shape[0] + k0 + 2)
+    out = np.zeros((max_l,) + H.shape[1:], dtype=np.float64)
+    for l in range(H.shape[0]):
+        i0 = min(l + k0, max_l - 1)
+        i1 = min(l + k0 + 1, max_l - 1)
+        out[i0] += (1.0 - alpha) * H[l]
+        out[i1] += alpha * H[l]
+else:
+    out = H.copy()
+out[0] = 0.0
+# Preserve exact unity DC gain (sum_l H[l] = I)
+dc = np.sum(out, axis=0)
+if out.ndim == 3:
+    c_new = np.sum(np.arange(out.shape[0]) * np.array([np.mean(np.diag(out[l])) for l in range(out.shape[0])])) / np.mean(np.diag(dc))
+else:
+    c_new = np.sum(np.arange(out.shape[0]) * np.mean(out, axis=1)) / np.mean(dc)
+fits.writeto(dst, out.astype(np.float32), overwrite=True)
+print(f"[ao3k-scexao]      Aligned {label}: centroid {c0:.3f} -> {c_new:.3f} fr (shift {shift:+.3f} fr, L={out.shape[0]})")
+PY
+}
+
+if [[ -n "${DYNPSOL1}" && -f "${DYNPSOL1}" ]]; then
+    DYNPSOL1_EFF="${WORK_ROOT}/H1_aligned.fits"
+    align_dm_kernel "${DYNPSOL1}" "${tol1_ps_lat:-${tol1_lat:-2.5}}" "${DYNPSOL1_EFF}" "Stage-1 dynpsol"
+    cp -f "${DYNPSOL1_EFF}" "${STG1_ROOT}/conf/dynpsol_kern.fits"
+    milk-fps-set -q \
+        "mfilt-1.comp.dynpsol.kernel=../conf/dynpsol_kern.fits" \
+        "mfilt-1.comp.dynpsol.enable=ON" \
+        "mfilt-1.comp.dynpsol.reload=ON"
+fi
+if [[ -n "${DYNPSOL2}" && -f "${DYNPSOL2}" ]]; then
+    DYNPSOL2_EFF="${WORK_ROOT}/H2_aligned.fits"
+    align_dm_kernel "${DYNPSOL2}" "${tol2_lat:-2.8}" "${DYNPSOL2_EFF}" "Stage-2 dynpsol"
+    cp -f "${DYNPSOL2_EFF}" "${STG2_ROOT}/conf/dynpsol_kern.fits"
+    milk-fps-set -q \
+        "mfilt-2.comp.dynpsol.kernel=../conf/dynpsol_kern.fits" \
+        "mfilt-2.comp.dynpsol.enable=ON" \
+        "mfilt-2.comp.dynpsol.reload=ON"
+fi
+if [[ -n "${PF_FX1}" && -f "${PF_FX1}" ]]; then
+    if [[ "${PF_FX1}" == "${DYNPSOL1}" && -f "${DYNPSOL1_EFF}" ]]; then
+        PF_FX1_EFF="${DYNPSOL1_EFF}"
+    else
+        PF_FX1_EFF="${WORK_ROOT}/H1_fx_aligned.fits"
+        align_dm_kernel "${PF_FX1}" "${tol1_lat:-2.5}" "${PF_FX1_EFF}" "Stage-1 PF_FX"
+    fi
+fi
+if [[ -n "${PF_FX2}" && -f "${PF_FX2}" ]]; then
+    if [[ "${PF_FX2}" == "${DYNPSOL2}" && -f "${DYNPSOL2_EFF}" ]]; then
+        PF_FX2_EFF="${DYNPSOL2_EFF}"
+    else
+        PF_FX2_EFF="${WORK_ROOT}/H2_fx_aligned.fits"
+        align_dm_kernel "${PF_FX2}" "${tol2_lat:-2.8}" "${PF_FX2_EFF}" "Stage-2 PF_FX"
+    fi
 fi
 
 sysmon.mark "closed_loop_warmup" "Enable turbulence & lock Stage 1 + Stage 2 closed loops"
@@ -840,10 +1014,96 @@ fi
 if (( ENABLE_LOWFS )); then
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 close "${GAIN3}"
 fi
+
+# Optional Phase 3: Stage-1 live online optical gain via closed-loop DM pokes (modalog-1)
+if (( ONLINE_OG1 )); then
+    milk-fps-set -q \
+        "mfilt-1.comp.ogprobe.ampl=${OG1_AMPL}" \
+        "mfilt-1.comp.ogprobe.nbmode=${OG1_NBMODE}" \
+        "mfilt-1.comp.ogprobe.stride=${OG1_STRIDE}" \
+        "mfilt-1.comp.ogprobe.hold=${OG1_HOLD}" \
+        "mfilt-1.comp.ogprobe.enable=ON"
+    milk-fps-rm -f -q --ignore-missing modalog-1 >/dev/null 2>&1 || true
+    milk-fps-init -q modalog-1 cacao-fpsexec-modalog >/dev/null
+    OG1_KERN_ARG=""
+    if [[ -n "${DYNPSOL1_EFF}" && -f "${DYNPSOL1_EFF}" ]]; then
+        ln -sfn "$(realpath "${DYNPSOL1_EFF}")" "/tmp/.p15_ogk_${$}.fits"
+        OG1_KERN_ARG="modalog-1.kernel=/tmp/.p15_ogk_${$}.fits"
+    fi
+    OG1_APP_STR="OFF"
+    if (( OG1_APPLY )); then
+        OG1_APP_STR="ON"
+        # Reset scalar comp.WFSfact to 1.0 so testOL does not double-multiply modalog mWFSfact
+        milk-fps-set -q "mfilt-1.comp.WFSfact=1.0" >/dev/null 2>&1 || true
+    fi
+    milk-fps-set -q \
+        "modalog-1.AOloopindex=1" \
+        "modalog-1.inwfs=aol1_modevalWFS_buff" \
+        "modalog-1.indm=aol1_modevalDM_buff" \
+        "modalog-1.inprobe=aol1_modevalprobe_buff" \
+        "modalog-1.latency_fr=${tol1_lat:-2.5}" \
+        "modalog-1.NBwin=1024" \
+        "modalog-1.use_diff=ON" \
+        "modalog-1.n_free=2" \
+        "modalog-1.smooth_bw=2.0" \
+        "modalog-1.snr_min=3.0" \
+        "modalog-1.g_min=0.35" \
+        "modalog-1.g_max=1.50" \
+        "modalog-1.ema_alpha=0.35" \
+        "modalog-1.apply=${OG1_APP_STR}" \
+        "modalog-1.procinfo.triggermode=3" \
+        "modalog-1.procinfo.triggersname=aol1_modevalWFS_buff" \
+        "modalog-1.procinfo.loopcntMax=-1" \
+        ${OG1_KERN_ARG}
+    milk-fps-runstart -q modalog-1
+    echo "[ao3k-scexao]   -> Phase 3 Stage-1 modalog ON (ampl=${OG1_AMPL}, M=${OG1_NBMODE}," \
+         "stride=${OG1_STRIDE}, hold=${OG1_HOLD}, lat=${tol1_lat:-2.5}, apply=${OG1_APP_STR})"
+fi
+
+# Optional Phase 5a: Live mlt-windlayers on Stage-1 NIR PyWFS + DM1 OPD
+WL1_STREAM=""
+if (( WINDLAYERS1 )); then
+    milk-fps-rm -f -q --ignore-missing wl-1 >/dev/null 2>&1 || true
+    milk-fps-init -q wl-1 milk-fpsexec-mlt-windlayers >/dev/null
+    milk-fps-set -q \
+        "wl-1.wfs=csim_wfs_nir" \
+        "wl-1.pha=aol1_dmC" \
+        "wl-1.outname=wl1" \
+        "wl-1.wfsmode=0" \
+        "wl-1.frate=1000.0" \
+        "wl-1.tbin=2" \
+        "wl-1.diam=7.95" \
+        "wl-1.diampix=75.0" \
+        "wl-1.phapitch=0.1325" \
+        "wl-1.twarm=0.4" \
+        "wl-1.tmean=2.0" \
+        "wl-1.lagmax=0.25" \
+        "wl-1.vmax=50.0" \
+        "wl-1.dv=0.75" \
+        "wl-1.nsigma=6.0" \
+        "wl-1.tupdate=0.75" \
+        "wl-1.tavg=1.25" \
+        "wl-1.modrad=${WFS1_MOD_RAD:-3.0}" \
+        "wl-1.lambda=1.22" \
+        "wl-1.phaunit=2e-6" \
+        "wl-1.phasign=0" \
+        "wl-1.nthread=4" \
+        "wl-1.procinfo.loopcntMax=-1" \
+        "wl-1.procinfo.triggermode=3" \
+        "wl-1.procinfo.triggersname=csim_wfs_nir"
+    milk-fps-runstart -q wl-1
+    WL1_STREAM="wl1_layers"
+    echo "[ao3k-scexao]   -> Phase 5a live mlt-windlayers ON (csim_wfs_nir + aol1_dmC -> wl1_layers)"
+fi
+
 if (( PREDICTIVE )); then
     sysmon.mark "pf_warmup" "Train & ramp PSOL predictive filters (${PF_MODE}, Stage 1 & Stage 2)"
-    echo "[ao3k-scexao]   -> Enabling PSOL ${PF_MODE} predictive control" \
-         "(order=${PF_ORDER}, B=${PF_BLOCKSIZE}, mix1=${PF_MIX}, mix2=${PF_MIX2})..."
+    echo "[ao3k-scexao]   -> Enabling Stage-1 PSOL ${PF_MODE} predictive control" \
+         "(order=${PF_ORDER}, B=${PF_BLOCKSIZE}, mix1=${PF_MIX})..."
+    PF1_DMM="${PF_DMMODES1}"
+    if [[ -z "${PF1_DMM}" && -n "${WL1_STREAM}" && -f "${STG1_ROOT}/conf/CMmodesDM.fits" ]]; then
+        PF1_DMM="${STG1_ROOT}/conf/CMmodesDM.fits"
+    fi
     CACAO_LOOPROOTDIR="${STG1_ROOT}" \
     CACAO_PF_MODE="${PF_MODE}" \
     CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
@@ -853,7 +1113,85 @@ if (( PREDICTIVE )); then
     CACAO_PF_NBTRAIN="${PF_NBTRAIN1}" \
     CACAO_PF_MINSAMPLES="${PF_MINSAMPLES1}" \
     CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
+    CACAO_PF_ZOH_RIDGE="${PF_ZOH_RIDGE}" \
+    CACAO_PF_GRAM_HALFLIFE="${PF_GRAM_HALFLIFE}" \
+    CACAO_PF_REGIME_KMAX="${PF_REGIME_KMAX}" \
+    CACAO_PF_DM_KERNEL="${PF_FX1_EFF}" \
+    CACAO_PF_WL_LAYERS="${WL1_STREAM}" \
+    CACAO_PF_DMMODES="${PF1_DMM}" \
+    CACAO_PF_PUP_DIAM="7.95" \
+    CACAO_PF_DM_DX="0.1325" \
+    CACAO_PF_FRATE_HZ="1000.0" \
+    CACAO_PF_N_PRIOR="${PF_N_PRIOR}" \
+    CACAO_PF_WL_SWITCH_DECAY="${PF_WL_SWITCH_DECAY}" \
         "${LOOP_CTRL}" --stage 1 pf-on "${PF_MIX}"
+    milk-stream-wait -q -t 60 "aol1_${PF_MAT_SFX}+1"
+fi
+
+# Optional Phase 4: Live mid-run 2WFS1DM (ivdiff) -> live Stage-2 mWFSfact + WFSzpogain
+# Runs while Stage-1 PF is already active (preventing Stage-1 spider petaling) and Stage-2
+# is in integrator lock (maximizing usable DM2 signal for Stage-2 optical-gain calibration).
+LIVE_2WFS_TICKS="$(awk -v s="${LIVE_2WFS1DM_SEC}" 'BEGIN { printf "%d", int(s * 2000.0 + 0.5) }')"
+if (( LIVE_2WFS_TICKS > 0 )) && command -v milk-mlt-calib2wfs1dm >/dev/null 2>&1; then
+    echo "[ao3k-scexao]   -> Phase 4 live 2WFS1DM burst (${LIVE_2WFS1DM_SEC} s)..."
+    L2_DIR="${WORK_ROOT}/live2wfs_tlm"
+    L2_OUT="${OUT_DIR}/live_2wfs1dm"
+    mkdir -p "${L2_DIR}" "${L2_OUT}"
+    ln -sfn "${L2_DIR}" "/tmp/.l2tlm_$$"
+    l2_n1=$(( LIVE_2WFS_TICKS / 2 + 64 ))
+    l2_n2=$(( LIVE_2WFS_TICKS + 128 ))
+    for _pair in "l2_a:aol1_modevalWFS:${l2_n1}" "l2_b:aol2_modevalWFS:${l2_n2}" \
+                 "l2_d:aol2_modevalDM:${l2_n2}"; do
+        IFS=':' read -r _u _s _n <<< "${_pair}"
+        milk-fps-rm -f -q --ignore-missing "${_u}" >/dev/null 2>&1 || true
+        milk-fps-init -q "${_u}" milk-fpsexec-mem-streamFITSlog >/dev/null
+        milk-fps-set -q "${_u}.sname=${_s}" "${_u}.dirname=/tmp/.l2tlm_$$" \
+            "${_u}.cubesize=${_n}" "${_u}.maxframecnt=${_n}" "${_u}.maxfilecnt=4" \
+            "${_u}.zslice=-1" "${_u}.saveON=ON" "${_u}.procinfo.loopcntMax=-1" \
+            "${_u}.procinfo.triggermode=3" "${_u}.procinfo.triggersname=${_s}" \
+            "${_u}.procinfo.triggertimeout=0.5"
+    done
+    milk-fps-runstart -q l2_a l2_b l2_d
+    milk-stream-wait -q -t 90 "csim_wfs_vis+${LIVE_2WFS_TICKS}"
+    milk-fps-set -q l2_a.saveON=OFF l2_b.saveON=OFF l2_d.saveON=OFF >/dev/null 2>&1 || true
+    sleep 0.6
+    milk-fps-runstop -q l2_a l2_b l2_d >/dev/null 2>&1 || true
+    milk-fps-wait -q -t 30 l2_a l2_b l2_d >/dev/null 2>&1 || true
+    milk-fps-rm -f -q --ignore-missing l2_a l2_b l2_d >/dev/null 2>&1 || true
+    rm -f "/tmp/.l2tlm_$$"
+    cat > "${L2_DIR}/telemetry_manifest.env" <<EOF
+TLM_FS1="1000.0"
+TLM_FS2="2000.0"
+EOF
+    L2_KARG=""
+    [[ -n "${DYNPSOL2_EFF}" && -f "${DYNPSOL2_EFF}" ]] && L2_KARG=".dm_kernel=${DYNPSOL2_EFF}"
+    L2_NA=$(( SYSID_MODES * 4 ))
+    (( L2_NA < 160 )) && L2_NA=160
+    OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=1 \
+        milk-mlt-calib2wfs1dm "${L2_DIR}" "${L2_OUT}" \
+        aol1_modevalWFS aol2_modevalWFS aol2_modevalDM \
+        "${L2_NA}" "${SYSID_MODES}" "${SYSID_MODES}" auto auto 4 0.02 0.70 "" "" \
+        ".method=ivdiff" ".b_offset_us=${CLOCK_SKEW_US:-0.0}" ${L2_KARG} >/dev/null 2>&1 || true
+    if [[ -f "${L2_OUT}/sysid_summary.txt" ]]; then
+        l2_app_msg="$(milk-cli -q -e -o -c "mlt.apply2wfs1dm '${L2_OUT}' 2" 2>&1 || true)"
+        l2_g="$(awk -F= '/^mdb_diag_med=/{print $2}' "${L2_OUT}/sysid_summary.txt" || echo "?")"
+        l2_u="$(awk -F= '/^usable_med=/{print $2}' "${L2_OUT}/sysid_summary.txt" || echo "?")"
+        l2_ok="$(awk -F= '/^usable_ok=/{print $2}' "${L2_OUT}/sysid_summary.txt" || echo "0")"
+        echo "[ao3k-scexao]      Live 2WFS1DM: g2_med=${l2_g} usable=${l2_u} ok=${l2_ok}"
+        [[ -n "${l2_app_msg}" ]] && echo "[ao3k-scexao]      ${l2_app_msg}"
+    fi
+    if (( ONLINE_OG1 )); then
+        _ogm=1 _ognv=0 _ogsnr=0
+        @get _ogm="f.modalog-1.out.og_med" _ognv="f.modalog-1.out.n_valid_modes" \
+             _ogsnr="f.modalog-1.out.snr_med" 2>/dev/null || true
+        echo "[ao3k-scexao]      Stage-1 modalog (pre-PF2): og_med=${_ogm} n_valid=${_ognv} snr=${_ogsnr}"
+    fi
+fi
+
+if (( PREDICTIVE )); then
+    echo "[ao3k-scexao]   -> Enabling Stage-2 PSOL ${PF_MODE} predictive control" \
+         "(order=${PF_ORDER}, B=${PF_BLOCKSIZE}, mix2=${PF_MIX2})..."
+    PF_ZOH_RIDGE2_EFF="${PF_ZOH_RIDGE2:-${PF_ZOH_RIDGE}}"
     CACAO_LOOPROOTDIR="${STG2_ROOT}" \
     CACAO_PF_MODE="${PF_MODE}" \
     CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
@@ -863,8 +1201,14 @@ if (( PREDICTIVE )); then
     CACAO_PF_NBTRAIN="${PF_NBTRAIN2}" \
     CACAO_PF_MINSAMPLES="${PF_MINSAMPLES2}" \
     CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
+    CACAO_PF_ZOH_RIDGE="${PF_ZOH_RIDGE2_EFF}" \
+    CACAO_PF_GRAM_HALFLIFE="${PF_GRAM_HALFLIFE}" \
+    CACAO_PF_REGIME_KMAX="${PF_REGIME_KMAX}" \
+    CACAO_PF_DM_KERNEL="${PF_FX2_EFF}" \
+    CACAO_PF_FRATE_HZ="2000.0" \
+    CACAO_PF_N_PRIOR="0.0" \
         "${LOOP_CTRL}" --stage 2 pf-on "${PF_MIX2}"
-    milk-stream-wait -q -t 60 "aol2_${PF_MAT_SFX}+2" "aol1_${PF_MAT_SFX}+1"
+    milk-stream-wait -q -t 60 "aol2_${PF_MAT_SFX}+2"
     milk-stream-wait -q -t 30 "csim_wfs_vis+160"
 
     PF_WARMUP_TICKS="$(awk -v s="${PF_WARMUP_SEC}" 'BEGIN { printf "%d", int(s * 2000.0 + 0.5) }')"
@@ -969,6 +1313,7 @@ milk-fps-set -q "csim_atmturb.procinfo.triggerdelay=${ATM_TRIG_DT}"
 
 rem="${LONG_READOUTS}"
 done_rd=0
+WIND_SWITCHED="0"
 chunk=$(( (2000 + EFF_PSF_NAVG - 1) / EFF_PSF_NAVG ))
 (( chunk < 1 )) && chunk=1
 while (( rem > 0 )); do
@@ -978,6 +1323,12 @@ while (( rem > 0 )); do
     done_rd=$(( done_rd + step ))
     phys_done="$(awk -v d="${done_rd}" -v nv="${EFF_PSF_NAVG}" \
         'BEGIN { printf "%.2f", d * nv * 0.0005 }')"
+    if (( ! WIND_SWITCHED )) && \
+       awk -v p="${phys_done}" -v sw="${WIND_SWITCH_SEC}" 'BEGIN { exit !(sw > 0 && p + 0.01 >= sw) }'; then
+        @set "f.csim_atmturb.wind_rot_deg=${WIND_SWITCH_DEG}"
+        WIND_SWITCHED="1"
+        echo "[ao3k-scexao]   -> LIVE PHASE-CONTINUOUS WIND SWITCH: +${WIND_SWITCH_DEG} deg at t_phys=${phys_done} s"
+    fi
     s1="" s2="" sv="" sc="" fl=""
     if [[ "${BENCH_MODE}" == "modular" ]]; then
         @get s1="f.csim_nir_stg1.strehl_ave" s2="f.csim_nir_final.strehl_ave" \
@@ -1183,14 +1534,38 @@ if (( PREDICTIVE )); then
          pf2_rp="f.${PF_MK_PFX}-2.out.rms_pred" pf2_vr="f.${PF_MK_PFX}-2.out.var_red_pct" \
          pf2_af="f.${PF_APP_PFX}-2.out.active_frames" pf2_to="f.mfilt-2.PF.timeout_cnt"
     if [[ "${PF_MODE}" == "eof" ]]; then
+        pf1_eff=0 pf1_phy=0 pf1_fx=0 pf1_rk=0 pf1_sw=0
+        pf1_rzo=0 pf1_rpo=0 pf1_vro=0 pf1_ovr=0 pf1_rhod=0
+        pf2_eff=0 pf2_phy=0 pf2_fx=0 pf2_rk=0 pf2_sw=0
+        pf2_rzo=0 pf2_rpo=0 pf2_vro=0 pf2_ovr=0 pf2_rhod=0
         @get pf1_ea="f.${PF_MK_PFX}-1.out.eof_active" \
              pf1_neu="f.${PF_MK_PFX}-1.out.n_eof_updates" \
              pf1_odf="f.${PF_MK_PFX}-1.out.offdiag_frac" \
              pf1_lam="f.${PF_MK_PFX}-1.out.last_lam" \
+             pf1_eff="f.${PF_MK_PFX}-1.out.eff_samples" \
+             pf1_phy="f.${PF_MK_PFX}-1.out.phys_active" \
+             pf1_fx="f.${PF_MK_PFX}-1.out.fx_active" \
+             pf1_rk="f.${PF_MK_PFX}-1.out.regime_k" \
+             pf1_sw="f.${PF_MK_PFX}-1.out.wl_switches" \
+             pf1_rzo="f.${PF_MK_PFX}-1.out.rms_zoh_oos" \
+             pf1_rpo="f.${PF_MK_PFX}-1.out.rms_pred_oos" \
+             pf1_vro="f.${PF_MK_PFX}-1.out.var_red_oos_pct" \
+             pf1_ovr="f.${PF_MK_PFX}-1.out.overfit_ratio" \
+             pf1_rhod="f.${PF_MK_PFX}-1.out.oos_rho_d_b0" \
              pf2_ea="f.${PF_MK_PFX}-2.out.eof_active" \
              pf2_neu="f.${PF_MK_PFX}-2.out.n_eof_updates" \
              pf2_odf="f.${PF_MK_PFX}-2.out.offdiag_frac" \
-             pf2_lam="f.${PF_MK_PFX}-2.out.last_lam" 2>/dev/null || true
+             pf2_lam="f.${PF_MK_PFX}-2.out.last_lam" \
+             pf2_eff="f.${PF_MK_PFX}-2.out.eff_samples" \
+             pf2_phy="f.${PF_MK_PFX}-2.out.phys_active" \
+             pf2_fx="f.${PF_MK_PFX}-2.out.fx_active" \
+             pf2_rk="f.${PF_MK_PFX}-2.out.regime_k" \
+             pf2_sw="f.${PF_MK_PFX}-2.out.wl_switches" \
+             pf2_rzo="f.${PF_MK_PFX}-2.out.rms_zoh_oos" \
+             pf2_rpo="f.${PF_MK_PFX}-2.out.rms_pred_oos" \
+             pf2_vro="f.${PF_MK_PFX}-2.out.var_red_oos_pct" \
+             pf2_ovr="f.${PF_MK_PFX}-2.out.overfit_ratio" \
+             pf2_rhod="f.${PF_MK_PFX}-2.out.oos_rho_d_b0" 2>/dev/null || true
     fi
     cat > "${OUT_DIR}/pf_stats.json" <<EOF
 {
@@ -1211,10 +1586,20 @@ if (( PREDICTIVE )); then
     "n_eof_updates": ${pf1_neu:-0},
     "eof_active": ${pf1_ea:-0},
     "n_samples": ${pf1_ns:-0},
+    "eff_samples": ${pf1_eff:-0},
+    "phys_active": ${pf1_phy:-0},
+    "fx_active": ${pf1_fx:-0},
+    "regime_k": ${pf1_rk:-0},
+    "wl_switches": ${pf1_sw:-0},
     "rms_ol": ${pf1_rol:-0},
     "rms_zoh": ${pf1_rz:-0},
     "rms_pred": ${pf1_rp:-0},
     "var_red_pct": ${pf1_vr:-0},
+    "rms_zoh_oos": ${pf1_rzo:-0},
+    "rms_pred_oos": ${pf1_rpo:-0},
+    "var_red_oos_pct": ${pf1_vro:-0},
+    "overfit_ratio": ${pf1_ovr:-0},
+    "oos_rho_d_b0": ${pf1_rhod:-0},
     "offdiag_frac": ${pf1_odf:-0},
     "last_lam": ${pf1_lam:-0},
     "active_frames": ${pf1_af:-0},
@@ -1227,10 +1612,20 @@ if (( PREDICTIVE )); then
     "n_eof_updates": ${pf2_neu:-0},
     "eof_active": ${pf2_ea:-0},
     "n_samples": ${pf2_ns:-0},
+    "eff_samples": ${pf2_eff:-0},
+    "phys_active": ${pf2_phy:-0},
+    "fx_active": ${pf2_fx:-0},
+    "regime_k": ${pf2_rk:-0},
+    "wl_switches": ${pf2_sw:-0},
     "rms_ol": ${pf2_rol:-0},
     "rms_zoh": ${pf2_rz:-0},
     "rms_pred": ${pf2_rp:-0},
     "var_red_pct": ${pf2_vr:-0},
+    "rms_zoh_oos": ${pf2_rzo:-0},
+    "rms_pred_oos": ${pf2_rpo:-0},
+    "var_red_oos_pct": ${pf2_vro:-0},
+    "overfit_ratio": ${pf2_ovr:-0},
+    "oos_rho_d_b0": ${pf2_rhod:-0},
     "offdiag_frac": ${pf2_odf:-0},
     "last_lam": ${pf2_lam:-0},
     "active_frames": ${pf2_af:-0},
@@ -1238,6 +1633,36 @@ if (( PREDICTIVE )); then
   }
 }
 EOF
+fi
+
+if (( ONLINE_OG1 )); then
+    og1_med=1 og1_lo=1 og1_hi=1 og1_nv=0 og1_ns=0 og1_ac=0
+    @get og1_med="f.modalog-1.out.og_med" og1_lo="f.modalog-1.out.og_lo_med" \
+         og1_hi="f.modalog-1.out.og_hi_med" og1_nv="f.modalog-1.out.n_valid_modes" \
+         og1_ns="f.modalog-1.out.n_samples" og1_ac="f.modalog-1.out.applied_cnt" \
+         2>/dev/null || true
+    cat > "${OUT_DIR}/online_og_stg1.json" <<EOF
+{
+  "og_med": ${og1_med:-1},
+  "og_lo_med": ${og1_lo:-1},
+  "og_hi_med": ${og1_hi:-1},
+  "n_valid_modes": ${og1_nv:-0},
+  "n_samples": ${og1_ns:-0},
+  "applied_cnt": ${og1_ac:-0}
+}
+EOF
+    if @exists "s.aol1_mWFSfact"; then
+        fpspipe.savefits "aol1_mWFSfact" "${OUT_DIR}/aol1_mWFSfact.fits"
+    fi
+    @set "f.mfilt-1.comp.ogprobe.enable=OFF" >/dev/null 2>&1 || true
+    milk-fps-runstop -q modalog-1 >/dev/null 2>&1 || true
+fi
+if @exists "s.aol2_mWFSfact"; then
+    fpspipe.savefits "aol2_mWFSfact" "${OUT_DIR}/aol2_mWFSfact.fits"
+fi
+if (( WINDLAYERS1 )) && @exists "s.wl1_layers"; then
+    fpspipe.savefits "wl1_layers" "${OUT_DIR}/wl1_layers.fits"
+    milk-fps-info wl-1 > "${OUT_DIR}/wl1_info.txt" 2>/dev/null || true
 fi
 
 if (( RUN_SELFRM )); then
@@ -1326,6 +1751,8 @@ if (( CALIB_2WFS1DM )) && [[ "${SAVE_TELEMETRY}" != "none" ]] && \
     [[ -f "${SC2_PATH}" ]] || SC2_PATH=""
     [[ -f "${SS2_PATH}" ]] || SS2_PATH=""
     rm -rf "${OUT_DIR}/calib_2wfs1dm"
+    C2_KARG=""
+    [[ -n "${DYNPSOL2_EFF}" && -f "${DYNPSOL2_EFF}" ]] && C2_KARG=".dm_kernel=${DYNPSOL2_EFF}"
     OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 \
         milk-mlt-calib2wfs1dm \
         "${TELEM_DIR}" "${OUT_DIR}/calib_2wfs1dm" \
@@ -1333,7 +1760,7 @@ if (( CALIB_2WFS1DM )) && [[ "${SAVE_TELEMETRY}" != "none" ]] && \
         "${SYSID_MODES_A}" "${SYSID_MODES}" "${SYSID_MODES}" \
         auto auto "${SYSID_WHITEN_ORDER}" 0.02 0.70 \
         "${SC2_PATH}" "${SS2_PATH}" \
-        ".method=ivdiff" ".b_offset_us=${CLOCK_SKEW_US:-0.0}" || true
+        ".method=ivdiff" ".b_offset_us=${CLOCK_SKEW_US:-0.0}" ${C2_KARG} || true
 elif (( ! CALIB_2WFS1DM )); then
     rm -rf "${OUT_DIR}/calib_2wfs1dm" "${OUT_DIR}/calib_2wfs1dm_summary.json" \
         "${OUT_DIR}/calib_2wfs1dm_summary_2x2.png"
