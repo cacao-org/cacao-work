@@ -182,7 +182,9 @@ def build_stack_guide_html(hierarchy: dict[str, object]) -> str:
         [
             "<h1>Open-Source AO Stack &amp; Reproduction Guide</h1>",
             "<p>Complete source repository provenance, CMake build instructions, and "
-            "automated CLI commands to reproduce all simulations and technical reports.</p>",
+            "automated CLI commands to reproduce all simulations and technical reports. "
+            'Browse every optical bench key, FPS parameter, and CLI flag in the '
+            '<a href="../reference/index.html"><strong>Simulator Options Reference</strong></a>.</p>',
             '<h2 id="github-repositories">Open-Source GitHub Repositories</h2>',
             "<p>All source repositories build into one relocatable prefix "
             "(<code>milk/_install/milk-&lt;version&gt;</code>) via "

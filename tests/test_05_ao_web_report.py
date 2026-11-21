@@ -1088,3 +1088,221 @@ def test_cacaosim_ao_report_replot_eof_pf(
     assert "Block-EOF(B=16, P=4)" in rep_txt
     assert "eof_pf_matrix_3d.png" in rep_txt
     assert "eof_pf_lag_slices.png" in rep_txt
+
+
+def test_runner_cli_and_cacaoloop_env_drift_guards(repo_root: Path) -> None:
+    """Verify zero drift between sim-ao3k-scexao.milk, cacaoloop, usage(), and catalog."""
+    import re
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from report_site.extractors.options_catalog import (
+        CACAOLOOP_ENV_VARS,
+        RUNNER_CLI_OPTIONS,
+        build_options_catalog,
+    )
+
+    sim_text = (repo_root / "benches" / "ao3k_scexao" / "sim-ao3k-scexao.milk").read_text(
+        encoding="utf-8"
+    )
+    usage_m = re.search(r"usage\(\)\s*\{\s*cat <<EOF\n(.*?)\nEOF\n\}", sim_text, re.DOTALL)
+    assert usage_m is not None, "Could not locate usage() heredoc in sim-ao3k-scexao.milk"
+    usage_body = usage_m.group(1)
+
+    case_m = re.search(r'case "\$1" in\n(.*?)\n\s*esac', sim_text, re.DOTALL)
+    assert case_m is not None, "Could not locate option case block in sim-ao3k-scexao.milk"
+    parsed_flags = set(re.findall(r"(--[a-z0-9-]+)", case_m.group(1)))
+    usage_flags = set(re.findall(r"(--[a-z0-9-]+)", usage_body))
+    catalog_flags = {
+        tok
+        for item in RUNNER_CLI_OPTIONS
+        for tok in re.findall(r"(--[a-z0-9-]+)", str(item["flag"]))
+    }
+
+    assert len(parsed_flags) >= 54
+    missing_usage = parsed_flags - usage_flags
+    missing_catalog = parsed_flags - catalog_flags
+    extra_catalog = catalog_flags - parsed_flags
+    assert not missing_usage, f"Flags parsed in case but missing from usage(): {missing_usage}"
+    assert not missing_catalog, f"Flags parsed in case but missing from catalog: {missing_catalog}"
+    assert not extra_catalog, f"Stale flags in RUNNER_CLI_OPTIONS: {extra_catalog}"
+
+    loop_lines = (
+        repo_root / "benches" / "ao3k_scexao" / "cacaoloop-ao3k-scexao.milk"
+    ).read_text(encoding="utf-8").splitlines()
+    env_block = "\n".join(loop_lines[94:162])
+    script_envs = set(re.findall(r"\$\{(CACAO_[A-Z0-9_]+):-", env_block))
+    catalog_envs = {item["name"] for item in CACAOLOOP_ENV_VARS}
+    assert len(script_envs) >= 40
+    assert not (script_envs - catalog_envs), (
+        f"CACAO_* env vars missing from CACAOLOOP_ENV_VARS: {script_envs - catalog_envs}"
+    )
+
+    catalog = build_options_catalog()
+    counts = catalog["counts"]
+    assert counts["bench_options"] >= 160
+    assert counts["cacaosim_units"] == 12
+    assert counts["atmturb_units"] == 5
+    assert counts["fps_params"] >= 400
+    unit_names = {(u["package"], u["unit"]) for u in catalog["fps_units"]}
+    assert ("cacaosim", "wfstat") in unit_names
+    assert ("cacaosim", "htsim") in unit_names
+    assert ("milkatmturb", "mkwfs") in unit_names
+    assert ("milkatmturb", "aoloop") in unit_names
+
+
+def test_options_reference_config_and_run_options_tracking(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify /reference/, non-truncated config.html, Advanced customizer, & auto-diff."""
+    from html.parser import HTMLParser
+
+    class _Checker(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.has_style = False
+            self.hrefs: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "style":
+                self.has_style = True
+            for k, v in attrs:
+                if k in ("href", "src") and v:
+                    self.hrefs.append(v)
+
+    def _make_run(slug: str, clock_skew: float, extra_bench: bool = False) -> Path:
+        rdir = tmp_path / slug
+        _create_synthetic_report(rdir)
+        bench_lines = [
+            "[bench]",
+            'name = "subaru_ao3k_scexao"',
+            "nwf = 256",
+            "cobs = 0.307",
+            "oversample = 4",
+            "[pyrwfs.vis]",
+            "in = b_vis",
+            "out_cam = csim_wfs_vis",
+            "ncam = 120",
+            "lambda_um = 0.75",
+            "bw_frac = 0.25",
+            "n_lambda = 5",
+            "mod_rad = 3.0",
+            "mod_pts = 16",
+            "mod_mode = circle",
+            "mod_rev = 1",
+            "mod_phase_deg = 0.0",
+            "pup_sep = 1.15",
+            "pup_rad_px = 24.0",
+            "roof_rad = 0.0",
+            "fstop_frac = 1.0",
+            "pad_factor = 2",
+            "chrom_sep = 1",
+            "ron_e = 0.4",
+            "qe = 0.85",
+            "tput = 0.90",
+            "rate_hz = 2000.0",
+        ]
+        if extra_bench:
+            bench_lines.append("rng_seed = 4242")
+        (rdir / "ao3k_scexao.bench").write_text("\n".join(bench_lines) + "\n", encoding="utf-8")
+        (rdir / "run_options.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "runner": "sim-ao3k-scexao.milk",
+                    "options": {
+                        "seeing": 0.6,
+                        "phys_time": 10.0,
+                        "bench_mode": "fused",
+                        "eff_oversample": 4,
+                        "clock_skew_us": clock_skew,
+                        "pf_mix2": 0.85,
+                        "fast_calib": 0,
+                        "save_telemetry": "speckle",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return rdir
+
+    r1 = _make_run("sim_skew_0", 0.0, extra_bench=True)
+    r2 = _make_run("sim_skew_125", 125.0)
+    site_dir = tmp_path / "web_site"
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+    for rdir, slug in ((r1, "sim_skew_0"), (r2, "sim_skew_125")):
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(rdir),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+
+    pub = site_dir / "public"
+    ref_path = pub / "reference" / "index.html"
+    assert ref_path.is_file()
+    ref_html = ref_path.read_text(encoding="utf-8")
+    assert 'id="ref-panel-bench"' in ref_html
+    assert 'id="ref-panel-fps"' in ref_html
+    assert 'id="ref-panel-cli"' in ref_html
+    assert 'id="opt-bench-pyrwfs-mod_rad"' in ref_html
+    assert 'id="opt-bench-bench-oversample"' in ref_html
+    assert 'id="opt-fps-cacaosim-wfstat-trig_beam"' in ref_html
+    assert 'id="opt-fps-milkatmturb-mkwfs-fresnel"' in ref_html
+    assert 'id="opt-cli-run-ao3k-scexao-sh-pf-mix2"' in ref_html
+    assert 'id="opt-cli-cacaoloop-env-cacao_pf_mode"' in ref_html
+    assert "../sim_skew_0/config.html" in ref_html
+
+    idx_js = (pub / "assets" / "js" / "search-index.js").read_text(encoding="utf-8")
+    assert idx_js.startswith("window.CACAO_SEARCH_INDEX=")
+    idx_items = json.loads(idx_js[len("window.CACAO_SEARCH_INDEX=") :].rstrip(";\n"))
+    paths = {it["path"] for it in idx_items}
+    assert "reference/index.html" in paths
+    assert "reference/index.html#opt-bench-pyrwfs-mod_rad" in paths
+    assert "reference/index.html#opt-fps-milkatmturb-mkwfs-fresnel" in paths
+
+    cfg_html = (pub / "sim_skew_0" / "config.html").read_text(encoding="utf-8")
+    # 21 keys in [pyrwfs.vis] + rng_seed (22nd key) must ALL appear (no [:14] truncation)
+    assert "rng_seed" in cfg_html
+    assert "4242" in cfg_html
+    assert "../reference/index.html#opt-bench-pyrwfs-mod_rad" in cfg_html
+    assert "opt-nondefault" in cfg_html
+    assert 'id="bench-flat-table"' in cfg_html
+    assert 'id="resolved-runner-options"' in cfg_html
+    assert "--clock-skew-us" in cfg_html
+
+    htr_html = (pub / "sim_skew_0" / "how_to_run.html").read_text(encoding="utf-8")
+    assert 'class="adv-customizer"' in htr_html
+    assert 'id="howtorun-adv-specs"' in htr_html
+    assert "../reference/index.html#opt-cli-run-ao3k-scexao-sh-seeing" in htr_html
+    assert 'id="cust-adv-clock_skew_us"' in htr_html
+
+    sims_html = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert "Clock Skew" in sims_html
+    assert "125 us" in sims_html
+
+    # Verify zero inline <style> tags and zero broken relative links across all pages
+    for html_file in pub.rglob("*.html"):
+        chk = _Checker()
+        chk.feed(html_file.read_text(encoding="utf-8"))
+        assert not chk.has_style, f"Inline <style> found in {html_file}"
+        for raw_href in chk.hrefs:
+            if raw_href.startswith(("http://", "https://", "#", "mailto:", "data:")):
+                continue
+            target = raw_href.split("#", 1)[0].split("?", 1)[0]
+            if not target:
+                continue
+            resolved = (html_file.parent / target).resolve()
+            assert resolved.exists(), f"Broken link {raw_href!r} in {html_file}"

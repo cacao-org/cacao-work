@@ -36,8 +36,11 @@ TRACKED_PARAMS: list[tuple[str, str]] = [
 ]
 
 
-def extract_run_parameters(data: dict[str, object]) -> dict[str, str]:
-    """Extract normalized simulation parameters from a metrics JSON dictionary."""
+def extract_run_parameters(
+    data: dict[str, object],
+    run_options: dict[str, object] | None = None,
+) -> dict[str, str]:
+    """Extract normalized simulation parameters from metrics JSON and optional run_options.json."""
     params: dict[str, str] = {}
     sa = data.get("star_and_atmosphere")
     repro = data.get("reproducibility")
@@ -144,6 +147,48 @@ def extract_run_parameters(data: dict[str, object]) -> dict[str, str]:
         tlm_mode = _parse_cmd_flag(cmd, "--save-telemetry")
     if tlm_mode:
         params["telemetry"] = tlm_mode
+
+    if isinstance(run_options, dict):
+        raw_opts = (
+            run_options.get("options")
+            if isinstance(run_options.get("options"), dict)
+            else run_options
+        )
+        if isinstance(raw_opts, dict):
+            if "bench_mode" not in params and raw_opts.get("bench_mode"):
+                params["bench_mode"] = str(raw_opts["bench_mode"])
+            if "oversample" not in params and raw_opts.get("eff_oversample"):
+                params["oversample"] = f'{int(raw_opts["eff_oversample"])}x'
+            if "telemetry" not in params and raw_opts.get("save_telemetry"):
+                params["telemetry"] = str(raw_opts["save_telemetry"])
+            extra_fmt: tuple[tuple[str, str], ...] = (
+                ("clock_skew_us", "{:g} us"),
+                ("pf_mix2", "{:.2f}"),
+                ("pf_reg2", "{:g}"),
+                ("pf_maxnorm2", "{:g}"),
+                ("pf_warmup_sec", "{:g} s"),
+                ("pf_nbtrain1", "{}"),
+                ("pf_nbtrain2", "{}"),
+                ("pf_minsamples1", "{}"),
+                ("pf_minsamples2", "{}"),
+                ("nbloop", "{}"),
+                ("selfrm_modes", "{}"),
+                ("eff_psf_navg", "{}"),
+                ("wall_rate", "{} Hz"),
+                ("wfstat_validate", "{}"),
+                ("fast_calib", "{}"),
+            )
+            for ek, fmt in extra_fmt:
+                ev = raw_opts.get(ek)
+                if ev is None or ev == "" or ek in params:
+                    continue
+                if ek in ("wfstat_validate", "fast_calib"):
+                    params[ek] = "ON" if str(ev) not in ("0", "False", "false") else "OFF"
+                else:
+                    try:
+                        params[ek] = fmt.format(ev)
+                    except (ValueError, TypeError):
+                        params[ek] = str(ev)
 
     return params
 

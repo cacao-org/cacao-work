@@ -14,7 +14,9 @@ from .assets import stage_site_assets, write_search_index_js
 from .constants import ASSET_EXTS
 from .cross_links import refresh_cross_links
 from .extractors import (
+    build_bench_opt_lookup,
     build_compute_unit_catalog,
+    build_options_catalog,
     extract_eof_pf_data,
     extract_metrics_highlights,
     extract_optical_explorer_data,
@@ -23,6 +25,7 @@ from .extractors import (
     extract_runtime_summary,
     find_bench_path,
     is_tech_report_meta,
+    load_cacaosim_schema,
     load_json_safe,
     parse_bench_file,
 )
@@ -30,6 +33,7 @@ from .markdown import RenderContext, convert_markdown_to_html, split_simulation_
 from .pages import (
     build_extra_figures_section,
     build_front_page_html,
+    build_options_reference_html,
     build_sim_config_html,
     build_sim_how_to_run_html,
     build_sim_optical_html,
@@ -95,7 +99,8 @@ def write_root_indices_and_firebase(
     hierarchy = build_site_hierarchy(metas, taxonomy)
 
     stage_site_assets(public_dir)
-    write_search_index_js(public_dir, hierarchy)
+    options_catalog = build_options_catalog(public_dir)
+    write_search_index_js(public_dir, hierarchy, options_catalog=options_catalog)
 
     front_html = build_front_page_html(hierarchy)
     (public_dir / "reports.html").write_text(front_html, encoding="utf-8")
@@ -105,6 +110,12 @@ def write_root_indices_and_firebase(
     sims_dir.mkdir(parents=True, exist_ok=True)
     (sims_dir / "index.html").write_text(
         build_simulations_catalog_html(hierarchy), encoding="utf-8"
+    )
+
+    ref_dir = public_dir / "reference"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    (ref_dir / "index.html").write_text(
+        build_options_reference_html(hierarchy, options_catalog), encoding="utf-8"
     )
 
     stack_dir = public_dir / "stack"
@@ -326,6 +337,10 @@ def build_site(
         )
         (out_slug_dir / "index.html").write_text(overview_html, encoding="utf-8")
 
+        bench_opt_lookup = build_bench_opt_lookup(load_cacaosim_schema())
+        ropts_path = out_slug_dir / "run_options.json"
+        run_options = load_json_safe(ropts_path) if ropts_path.is_file() else None
+
         config_html = build_sim_config_html(
             slug=slug,
             title=report_title,
@@ -340,6 +355,7 @@ def build_site(
             ctx=ctx,
             has_compute_report=has_compute,
             updated_utc=updated_utc,
+            bench_opt_lookup=bench_opt_lookup,
         )
         (out_slug_dir / "config.html").write_text(config_html, encoding="utf-8")
 
@@ -386,6 +402,7 @@ def build_site(
             ctx=ctx,
             has_compute_report=has_compute,
             updated_utc=updated_utc,
+            run_options=run_options,
         )
         (out_slug_dir / "how_to_run.html").write_text(how_to_run_html, encoding="utf-8")
 

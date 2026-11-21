@@ -6,6 +6,11 @@
   if (defEl) {
     var defs = {};
     try { defs = JSON.parse(defEl.textContent || "{}"); } catch (e) {}
+    var advSpecs = [];
+    var advEl = document.getElementById("howtorun-adv-specs");
+    if (advEl) {
+      try { advSpecs = JSON.parse(advEl.textContent || "[]"); } catch (e) {}
+    }
     var fields = ["seeing", "phys_time", "bench_mode", "oversample", "gain1", "gain2",
       "gain3", "llowfs", "pf_mode", "pf_order", "pf_blocksize", "pf_reg",
       "calib_2wfs1dm", "telemetry"];
@@ -13,6 +18,15 @@
       fields.forEach(function(k) {
         var el = document.getElementById("cust-" + k);
         if (el && defs[k] !== undefined) el.value = String(defs[k]);
+      });
+      advSpecs.forEach(function(sp) {
+        var el = document.getElementById("cust-adv-" + sp.key);
+        if (!el) return;
+        if (sp.type === "bool") {
+          el.checked = sp.init === "1" || sp.init === "true" || sp.init === "ON";
+        } else {
+          el.value = sp.init || "";
+        }
       });
       updateCmds();
     }
@@ -40,6 +54,16 @@
       }
       if (val("calib_2wfs1dm") === "on") cmd += " --calib-2wfs1dm";
       if (val("telemetry") !== "none") cmd += " --save-telemetry " + val("telemetry");
+      advSpecs.forEach(function(sp) {
+        var el = document.getElementById("cust-adv-" + sp.key);
+        if (!el) return;
+        if (sp.type === "bool") {
+          if (el.checked) cmd += " " + sp.flag;
+        } else {
+          var v = (el.value || "").trim();
+          if (v !== "") cmd += " " + sp.flag + " " + v;
+        }
+      });
       cmd += " --save-rm _work/ao3k_scexao_rm --outdir _work/" + slug;
 
       var c1 = document.getElementById("cmd-turnkey");
@@ -101,6 +125,13 @@
     fields.forEach(function(k) {
       var el = document.getElementById("cust-" + k);
       if (el) el.addEventListener("change", updateCmds);
+    });
+    advSpecs.forEach(function(sp) {
+      var el = document.getElementById("cust-adv-" + sp.key);
+      if (el) {
+        el.addEventListener("change", updateCmds);
+        el.addEventListener("input", updateCmds);
+      }
     });
     var rst = document.getElementById("cust-reset");
     if (rst) rst.addEventListener("click", loadDefs);

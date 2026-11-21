@@ -46,7 +46,12 @@ def stage_site_assets(public_dir: Path) -> None:
             shutil.copy2(src, js_dst / src.name)
 
 
-def write_search_index_js(public_dir: Path, hierarchy: dict[str, object]) -> None:
+def write_search_index_js(
+    public_dir: Path,
+    hierarchy: dict[str, object],
+    *,
+    options_catalog: dict[str, object] | None = None,
+) -> None:
     """Generate <public_dir>/assets/js/search-index.js for file:// and HTTP search."""
     entries: list[dict[str, str]] = [
         {
@@ -62,6 +67,16 @@ def write_search_index_js(public_dir: Path, hierarchy: dict[str, object]) -> Non
             "kind": "Catalog",
             "domain": "All Domains",
             "summary": "Filterable and comparable simulation matrix across all runs",
+        },
+        {
+            "title": "Simulator Options & Parameter Reference",
+            "path": "reference/index.html",
+            "kind": "Reference",
+            "domain": "Options Reference",
+            "summary": (
+                "Complete .bench optical keys, cacaosim & milkatmturb FPS compute unit "
+                "parameters, runner CLI flags, and CACAO_* environment variables"
+            ),
         },
         {
             "title": "Open-Source Stack & Reproduction Guide",
@@ -141,6 +156,75 @@ def write_search_index_js(public_dir: Path, hierarchy: dict[str, object]) -> Non
                     "summary": summary,
                 }
             )
+
+    if isinstance(options_catalog, dict):
+        for bo in options_catalog.get("bench_options") or []:
+            if not isinstance(bo, dict):
+                continue
+            sec = str(bo.get("section") or "")
+            key = str(bo.get("key") or "")
+            al = str(bo.get("aliases") or "")
+            anc = str(bo.get("anchor") or "")
+            desc = str(bo.get("description") or "")
+            summary = f"[{sec}] {desc}" + (f" (aliases: {al})" if al else "")
+            entries.append(
+                {
+                    "title": f"[{sec}] {key}",
+                    "path": f"reference/index.html#{anc}",
+                    "kind": ".bench Option",
+                    "domain": "Options Reference",
+                    "summary": summary,
+                }
+            )
+        for u in options_catalog.get("fps_units") or []:
+            if not isinstance(u, dict):
+                continue
+            pkg = str(u.get("package") or "")
+            uname = str(u.get("unit") or "")
+            uanc = str(u.get("anchor") or "")
+            entries.append(
+                {
+                    "title": f"{pkg}.{uname} ({u.get('binary', '')})",
+                    "path": f"reference/index.html#{uanc}",
+                    "kind": "FPS Unit",
+                    "domain": "Options Reference",
+                    "summary": str(u.get("description") or ""),
+                }
+            )
+            for p in u.get("params") or []:
+                if not isinstance(p, dict):
+                    continue
+                kw = str(p.get("keyword") or "")
+                panc = str(p.get("anchor") or "")
+                entries.append(
+                    {
+                        "title": f"{uname}{kw}",
+                        "path": f"reference/index.html#{panc}",
+                        "kind": f"FPS · {pkg}",
+                        "domain": "Options Reference",
+                        "summary": str(p.get("description") or ""),
+                    }
+                )
+        for group_key, kind_lbl in (
+            ("runner_cli", "Runner CLI"),
+            ("env_vars", "CACAO_* Env"),
+            ("cacaosim_cli", "cacaosim CLI"),
+        ):
+            for co in options_catalog.get(group_key) or []:
+                if not isinstance(co, dict):
+                    continue
+                flag = str(co.get("flag") or "")
+                tool = str(co.get("tool") or "")
+                anc = str(co.get("anchor") or "")
+                entries.append(
+                    {
+                        "title": f"{flag} ({tool})",
+                        "path": f"reference/index.html#{anc}",
+                        "kind": kind_lbl,
+                        "domain": "Options Reference",
+                        "summary": str(co.get("description") or ""),
+                    }
+                )
 
     js_dir = public_dir / "assets" / "js"
     js_dir.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,12 @@ import html
 from pathlib import Path
 
 from ..constants import friendly_figure_caption
+from ..extractors.common import load_json_safe
+from ..extractors.options_catalog import (
+    RUNNER_CLI_OPTIONS,
+    is_nondefault_bench_value,
+    make_runner_opt_anchor,
+)
 from ..markdown.context import RenderContext
 from ..markdown.parser import convert_markdown_to_html
 from ..markdown.sim_split import extract_toc_html, extract_toc_items
@@ -31,6 +37,7 @@ def build_sim_config_html(
     ctx: RenderContext,
     has_compute_report: bool,
     updated_utc: str,
+    bench_opt_lookup: dict[tuple[str, str], dict[str, object]] | None = None,
 ) -> str:
     """Build the simulation Configuration sub-page (config.html)."""
     heading_seen: dict[str, int] = {}
@@ -153,6 +160,7 @@ def build_sim_config_html(
 
     bench_html = ""
     if bench_sections:
+        opt_map = bench_opt_lookup or {}
         cats = sorted({str(s["category"]) for s in bench_sections})
         cat_btns = ['<button type="button" class="chip-btn active" data-bench-cat="all">All</button>']
         for c in cats:
@@ -161,21 +169,79 @@ def build_sim_config_html(
                 f"{html.escape(c)}</button>"
             )
         cards: list[str] = []
+        flat_rows: list[str] = []
         for s in bench_sections:
-            hdr = html.escape(str(s["header"]), quote=False)
-            cat = html.escape(str(s["category"]), quote=True)
+            hdr_raw = str(s["header"])
+            cat_raw = str(s["category"])
+            hdr = html.escape(hdr_raw, quote=False)
+            cat = html.escape(cat_raw, quote=True)
             params_d = s["params"]
             assert isinstance(params_d, dict)
-            kv_items = "".join(
-                f"<dt>{html.escape(k, quote=False)}</dt>"
-                f"<dd>{html.escape(str(v), quote=False)}</dd>"
-                for k, v in list(params_d.items())[:14]
-            )
+            kv_parts: list[str] = []
+            for k, v in params_d.items():
+                k_str = str(k)
+                v_str = str(v)
+                opt_meta = opt_map.get((cat_raw, k_str))
+                k_esc = html.escape(k_str, quote=False)
+                v_esc = html.escape(v_str, quote=False)
+                dflt_str = str(opt_meta.get("default") or "") if opt_meta else ""
+                unit_str = str(opt_meta.get("unit") or "") if opt_meta else ""
+                desc_str = str(opt_meta.get("description") or "") if opt_meta else ""
+                nondef = is_nondefault_bench_value(v_str, opt_meta)
+
+                if opt_meta and opt_meta.get("anchor"):
+                    anc = html.escape(str(opt_meta["anchor"]), quote=True)
+                    tip_bits = [
+                        b
+                        for b in (
+                            f"default: {dflt_str}" if dflt_str else "",
+                            f"unit: {unit_str}" if unit_str else "",
+                            desc_str,
+                        )
+                        if b
+                    ]
+                    tip = html.escape(" · ".join(tip_bits), quote=True)
+                    key_link = (
+                        f'<a class="opt-ref-link" href="../reference/index.html#{anc}" '
+                        f'title="{tip}">{k_esc}</a>'
+                    )
+                else:
+                    key_link = k_esc
+
+                if nondef:
+                    def_tip = html.escape(f"Default: {dflt_str}", quote=True)
+                    dd_html = (
+                        f'<dd class="opt-nondefault">{v_esc}'
+                        f'<span class="opt-nondefault-tag" title="{def_tip}">custom</span></dd>'
+                    )
+                    val_cell = (
+                        f'<code class="opt-nondefault">{v_esc}</code>'
+                        f'<span class="opt-nondefault-tag" title="{def_tip}">custom</span>'
+                    )
+                else:
+                    dd_html = f"<dd>{v_esc}</dd>"
+                    val_cell = f"<code>{v_esc}</code>"
+
+                kv_parts.append(f"<dt>{key_link}</dt>{dd_html}")
+                dflt_cell = (
+                    f"<code>{html.escape(dflt_str, quote=False)}</code>"
+                    if dflt_str
+                    else '<span class="muted">&mdash;</span>'
+                )
+                flat_rows.append(
+                    f'<tr class="bench-flat-row" data-cat="{cat}">'
+                    f"<td><code>[{hdr}]</code></td>"
+                    f"<td><code>{key_link}</code></td>"
+                    f"<td>{val_cell}</td>"
+                    f"<td>{dflt_cell}</td>"
+                    f'<td class="wrap-cell">{html.escape(desc_str, quote=False) or "&mdash;"}</td>'
+                    "</tr>"
+                )
             cards.append(
                 f'<div class="bench-card" data-cat="{cat}">'
                 f'<div class="bench-card-hdr"><strong><code>[{hdr}]</code></strong>'
                 f'<span class="metric-pill">{cat}</span></div>'
-                f'<dl class="bench-kv">{kv_items}</dl></div>'
+                f'<dl class="bench-kv">{"".join(kv_parts)}</dl></div>'
             )
         raw_bench = ""
         if bench_path and bench_path.is_file():
@@ -189,20 +255,84 @@ def build_sim_config_html(
         bench_html = (
             '<h2 id="bench-explorer">Interactive Optical Bench (<code>.bench</code>) Explorer '
             f'{render_section_badges(["simulation"])}</h2>'
+            '<p class="muted">Click any key to open its full definition in the '
+            '<a href="../reference/index.html">Options Reference</a>. '
+            'Values differing from schema defaults are highlighted.</p>'
             '<div class="toolbar">'
             f'<div class="toolbar-group">{"".join(cat_btns)}</div>'
+            '<div class="toolbar-group">'
+            '<button type="button" class="chip-btn active" id="bench-view-cards">Cards</button>'
+            '<button type="button" class="chip-btn" id="bench-view-table">Flat Table</button>'
             '<input type="search" id="bench-search" class="search-input" '
-            'placeholder="Filter components or streams...">'
-            "</div>"
+            'placeholder="Filter components, keys, or streams...">'
+            "</div></div>"
             f'<div class="bench-grid" id="bench-card-grid">{"".join(cards)}</div>'
+            '<div class="table-wrap hidden" id="bench-flat-wrap" data-sortable="1">'
+            '<table id="bench-flat-table"><thead><tr>'
+            "<th>Section</th><th>Key</th><th>Value</th><th>Default</th><th>Description</th>"
+            f'</tr></thead><tbody>{"".join(flat_rows)}</tbody></table></div>'
             f"{raw_bench}"
         )
+
+    run_opts_html = ""
+    ropts_path = out_slug_dir / "run_options.json"
+    if ropts_path.is_file():
+        ropts_data = load_json_safe(ropts_path)
+        ropts_map = (
+            ropts_data.get("options")
+            if isinstance(ropts_data.get("options"), dict)
+            else ropts_data
+        )
+        if isinstance(ropts_map, dict) and ropts_map:
+            runner_by_key = {str(o["key"]): o for o in RUNNER_CLI_OPTIONS}
+            key_aliases: dict[str, str] = {
+                "fast_calib": "no_fast_calib",
+                "enable_lowfs": "no_lowfs",
+                "run_selfrm": "no_selfrm",
+                "run_tlm_analysis": "no_tlm_analysis",
+                "eff_oversample": "oversample",
+                "eff_psf_navg": "psf_navg",
+                "selfrm_onsky_iter": "selfrm_iter",
+            }
+            r_rows: list[str] = []
+            for rk, rv in ropts_map.items():
+                if rv is None or rv == "":
+                    continue
+                rk_s = str(rk)
+                rv_s = str(rv)
+                rmeta = runner_by_key.get(rk_s) or runner_by_key.get(key_aliases.get(rk_s, ""))
+                if rmeta:
+                    flag_s = str(rmeta["flag"])
+                    anc = html.escape(make_runner_opt_anchor(flag_s), quote=True)
+                    key_cell = (
+                        f'<a class="opt-ref-link" href="../reference/index.html#{anc}">'
+                        f"<code>{html.escape(flag_s, quote=False)}</code></a>"
+                    )
+                    desc_cell = html.escape(str(rmeta.get("description") or ""), quote=False)
+                else:
+                    key_cell = f"<code>{html.escape(rk_s, quote=False)}</code>"
+                    desc_cell = '<span class="muted">Resolved runtime parameter</span>'
+                r_rows.append(
+                    f"<tr><td>{key_cell}</td>"
+                    f"<td><code>{html.escape(rv_s, quote=False)}</code></td>"
+                    f'<td class="wrap-cell">{desc_cell}</td></tr>'
+                )
+            if r_rows:
+                run_opts_html = (
+                    '<h2 id="resolved-runner-options">Resolved Runner Options '
+                    '(<code>run_options.json</code>) '
+                    f'{render_section_badges(["simulation", "loop_operation"])}</h2>'
+                    '<div class="table-wrap" data-sortable="1"><table><thead><tr>'
+                    "<th>Option / Flag</th><th>Resolved Value</th><th>Description</th>"
+                    f'</tr></thead><tbody>{"".join(r_rows)}</tbody></table></div>'
+                )
 
     raw_body = "\n\n".join(
         p
         for p in (
             f"<h1>{html.escape(title, quote=False)} &middot; Configuration</h1>",
             *summary_blocks,
+            run_opts_html,
             config_html,
             gui_tabs_html,
             bench_html,

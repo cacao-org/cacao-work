@@ -199,5 +199,7 @@ def extract_metrics_highlights(
 
     repro = data.get("reproducibility")
     repro_dict = repro if isinstance(repro, dict) else None
-    params_dict = extract_run_parameters(data)
+    ropts_path = out_slug_dir / "run_options.json"
+    run_options = load_json_safe(ropts_path) if ropts_path.is_file() else None
+    params_dict = extract_run_parameters(data, run_options=run_options)
     return badges, repro_dict, cmp_dict, params_dict, data

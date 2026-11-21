@@ -39,6 +39,7 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         + "</div>\n"
         '<div class="hero-actions">'
         '<a class="btn" href="./simulations/index.html">Browse All Simulations &rarr;</a>'
+        '<a class="btn btn-secondary" href="./reference/index.html">Options Reference</a>'
         '<a class="btn btn-secondary" href="./stack/index.html">Stack &amp; Reproduction Guide</a>'
         "</div>\n"
         "</section>"
@@ -197,6 +198,12 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         f"<p>Filter, compare, and inspect all {len(run_metas)} closed-loop runs with "
         "parameter diffs, optical Strehl/contrast charts, and runtime explorers.</p></div>"
         '<span class="subpage-cta">Open Simulation Catalog &rarr;</span></a>'
+        '<a class="subpage-card" href="./reference/index.html">'
+        '<div><h3>Simulator Options Reference</h3>'
+        "<p>Searchable tables for every <code>.bench</code> optical element key, "
+        "all 17 <code>cacaosim</code> &amp; <code>milkatmturb</code> FPS compute units, "
+        "runner CLI flags, and <code>CACAO_*</code> environment variables.</p></div>"
+        '<span class="subpage-cta">Open Options Reference &rarr;</span></a>'
         '<a class="subpage-card" href="./stack/index.html">'
         '<div><h3>Open-Source Stack &amp; Reproduction</h3>'
         "<p>Pinned commits across all 9 MILK/CACAO/cacaosim repositories, CMake build "

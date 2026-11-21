@@ -98,6 +98,8 @@ Options:
   --pf-mode <ar|eof>  Predictive filter type: ar (diag) or eof (block cross-mode, def: ${PF_MODE})
   --pf-blocksize <n>  Cross-mode EOF coupled block size B (default: ${PF_BLOCKSIZE})
   --pf-mix <float>    Predictive control mixing coefficient (default: ${PF_MIX})
+  --pf-mix1 <float>   Stage-1 AO3k predictive mixing coefficient (default: --pf-mix)
+  --pf-mix2 <float>   Stage-2 SCExAO predictive mixing coefficient (default: --pf-mix)
   --pf-order <int>    Predictive filter lookback tap order (default: ${PF_ORDER})
   --pf-reg <float>    Stage-1/default Tikhonov regularization lambda (default: ${PF_REG})
   --pf-reg2 <float>   Optional Stage-2 Tikhonov regularization lambda (default: --pf-reg)
@@ -1300,6 +1302,73 @@ fi
 
 sysmon.mark "ao_report" "Compile AO optical report & figures (cacaosim-ao-report)"
 cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
+"${PYTHON_BIN:-python3}" - "${OUT_DIR}/run_options.json" \
+    "seeing=${SEEING}" \
+    "phys_time=${PHYS_TIME}" \
+    "wall_rate=${WALL_RATE}" \
+    "calib_rate=${CAL_RATE}" \
+    "fast_calib=${USE_FAST_CALIB}" \
+    "bench_mode=${BENCH_MODE}" \
+    "oversample=${OVERSAMPLE}" \
+    "eff_oversample=${EFF_OV}" \
+    "clock_skew_us=${CLOCK_SKEW_US}" \
+    "wfstat_validate=${WFSTAT_VALIDATE}" \
+    "gain1=${GAIN1}" \
+    "gain2=${GAIN2}" \
+    "gain3=${GAIN3}" \
+    "mult1=${MULT1}" \
+    "mult2=${MULT2}" \
+    "mult3=${MULT3}" \
+    "mgain_alpha=${MGAIN_ALPHA}" \
+    "mgain_floor=${MGAIN_FLOOR}" \
+    "mgain_tt=${MGAIN_TT}" \
+    "svdlim1=${SVDLIM1}" \
+    "svdlim2=${SVDLIM2}" \
+    "svdlim3=${SVDLIM3}" \
+    "enable_lowfs=${ENABLE_LOWFS}" \
+    "predictive=${PREDICTIVE}" \
+    "pf_mode=${PF_MODE}" \
+    "pf_blocksize=${PF_BLOCKSIZE}" \
+    "pf_mix=${PF_MIX}" \
+    "pf_mix2=${PF_MIX2}" \
+    "pf_order=${PF_ORDER}" \
+    "pf_reg=${PF_REG}" \
+    "pf_reg2=${PF_REG2}" \
+    "pf_maxnorm2=${PF_MAXNORM2}" \
+    "pf_nbtrain1=${PF_NBTRAIN1}" \
+    "pf_nbtrain2=${PF_NBTRAIN2}" \
+    "pf_minsamples1=${PF_MINSAMPLES1}" \
+    "pf_minsamples2=${PF_MINSAMPLES2}" \
+    "pf_warmup_sec=${PF_WARMUP_SEC}" \
+    "pf_mgain_exp=${PF_MGAIN_EXP}" \
+    "nbloop=${NBLOOP}" \
+    "run_selfrm=${RUN_SELFRM}" \
+    "selfrm_modes=${SELFRM_MODES}" \
+    "selfrm_onsky_iter=${SELFRM_ONSKY_ITER}" \
+    "save_telemetry=${SAVE_TELEMETRY}" \
+    "psf_navg=${PSF_NAVG}" \
+    "eff_psf_navg=${EFF_PSF_NAVG}" \
+    "run_tlm_analysis=${RUN_TLM_ANALYSIS}" \
+    "calib_2wfs1dm=${CALIB_2WFS1DM}" \
+    "sysid_modes=${SYSID_MODES}" \
+    "sysid_whiten_order=${SYSID_WHITEN_ORDER}" \
+    "skip_microbench=${SKIP_MICROBENCH}" <<'PY'
+import json, pathlib, sys
+
+out_path = pathlib.Path(sys.argv[1])
+opts = {}
+for item in sys.argv[2:]:
+    k, _, v = item.partition("=")
+    if v == "":
+        opts[k] = None
+    else:
+        try:
+            opts[k] = int(v) if v.isdigit() else float(v)
+        except ValueError:
+            opts[k] = v
+payload = {"schema_version": 1, "runner": "sim-ao3k-scexao.milk", "options": opts}
+out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
 if command -v cacaosim-gui-screenshot >/dev/null 2>&1; then
     milk-fps-runstart -q csim_atmturb >/dev/null 2>&1 || true
     milk-stream-wait -q -t 10 "csim_wfs_vis+20" >/dev/null 2>&1 || true

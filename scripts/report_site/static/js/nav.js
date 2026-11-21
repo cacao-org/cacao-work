@@ -162,7 +162,7 @@
   if (searchClose) searchClose.addEventListener("click", closeSearch);
   if (searchModal) {
     searchModal.addEventListener("click", function(ev) {
-      if (ev.target === searchModal) closeSearch();
+      if (ev.target === searchModal || ev.target.closest("a.search-hit")) closeSearch();
     });
   }
   if (searchInput) {

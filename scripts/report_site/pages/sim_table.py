@@ -40,6 +40,24 @@ def render_simulations_section(
 
     changed_specs: list[tuple[str, str]] = []
     shared_items: list[tuple[str, str]] = []
+    tracked_keys = {k for k, _ in TRACKED_PARAMS}
+    extra_labels: dict[str, str] = {
+        "clock_skew_us": "Clock Skew",
+        "pf_mix2": "PF Mix2",
+        "pf_reg2": "PF Reg2",
+        "pf_maxnorm2": "PF Max ||F||^2",
+        "pf_warmup_sec": "PF Warmup",
+        "pf_nbtrain1": "PF N_train1",
+        "pf_nbtrain2": "PF N_train2",
+        "pf_minsamples1": "PF Min1",
+        "pf_minsamples2": "PF Min2",
+        "nbloop": "Hadamard Loops",
+        "selfrm_modes": "selfRM Modes",
+        "eff_psf_navg": "PSF N_avg",
+        "wall_rate": "Wall Rate",
+        "wfstat_validate": "WFStat Val",
+        "fast_calib": "Fast Calib",
+    }
     if len(run_metas) >= 2:
         for pkey, plabel in TRACKED_PARAMS:
             present = [pd[pkey] for pd in param_dicts if pkey in pd]
@@ -47,6 +65,14 @@ def render_simulations_section(
                 changed_specs.append((pkey, plabel))
             elif len(present) == len(run_metas) and len(set(present)) == 1:
                 shared_items.append((plabel, present[0]))
+        extra_keys = sorted(
+            {k for pd in param_dicts for k in pd if k not in tracked_keys}
+        )
+        for ekey in extra_keys:
+            present = [pd[ekey] for pd in param_dicts if ekey in pd]
+            if len(set(present)) >= 2:
+                elabel = extra_labels.get(ekey, ekey.replace("_", " ").title())
+                changed_specs.append((ekey, elabel))
     elif len(run_metas) == 1:
         for pkey, plabel in TRACKED_PARAMS:
             if pkey in param_dicts[0]:

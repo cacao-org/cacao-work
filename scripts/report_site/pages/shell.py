@@ -109,6 +109,7 @@ def render_nav_inner(
     home_cls = " active" if active_nav == "home" else ""
     top_cls = " active" if active_nav == "topics" else ""
     sim_cls = " active" if active_nav == "simulations" else ""
+    ref_cls = " active" if active_nav == "reference" else ""
     stk_cls = " active" if active_nav == "stack" else ""
 
     return (
@@ -130,6 +131,7 @@ def render_nav_inner(
         'Simulations <span class="nav-caret">&#9662;</span></button>\n'
         f'      <div class="nav-drop-menu">{"".join(sim_items)}</div>\n'
         "    </div>\n"
+        f'    <a class="nav-link{ref_cls}" href="{base}/reference/index.html">Reference</a>\n'
         '    <div class="nav-dropdown">\n'
         f'      <button type="button" class="nav-drop-btn{stk_cls}" aria-expanded="false">'
         'Stack &amp; Guides <span class="nav-caret">&#9662;</span></button>\n'
@@ -367,7 +369,7 @@ def render_page_shell(
 <div class="search-modal-backdrop" id="global-search-backdrop" role="dialog" aria-modal="true" aria-label="Search site">
   <div class="search-modal">
     <div class="search-modal-bar">
-      <input type="search" id="global-search-input" placeholder="Search AO topics, technical reports, simulations, or guides...">
+      <input type="search" id="global-search-input" placeholder="Search AO topics, reports, simulations, options, or guides...">
       <button type="button" class="btn-sm" id="global-search-close">Esc</button>
     </div>
     <div class="search-results" id="global-search-results"></div>

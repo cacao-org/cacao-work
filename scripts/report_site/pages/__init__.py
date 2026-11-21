@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from .fragments import build_extra_figures_section, build_telemetry_files_section
 from .front_page import build_front_page_html
+from .options_reference import build_options_reference_html
 from .sim_config import build_sim_config_html
 from .sim_how_to_run import build_sim_how_to_run_html
 from .sim_optical import build_sim_optical_html
@@ -20,6 +21,7 @@ from .topic_hub import build_topic_hub_html
 __all__ = [
     "build_extra_figures_section",
     "build_front_page_html",
+    "build_options_reference_html",
     "build_sim_config_html",
     "build_sim_how_to_run_html",
     "build_sim_optical_html",

@@ -41,6 +41,7 @@ def build_sim_how_to_run_html(
     ctx: RenderContext,
     has_compute_report: bool,
     updated_utc: str,
+    run_options: dict[str, object] | None = None,
 ) -> str:
     """Build the user-oriented How to Run It sub-page (how_to_run.html)."""
     ctx.has_mermaid = False
@@ -81,7 +82,7 @@ def build_sim_how_to_run_html(
         "telemetry": params.get("telemetry", "speckle"),
     }
 
-    customizer_html = render_customizer_section(raw_cmd, defaults)
+    customizer_html = render_customizer_section(raw_cmd, defaults, run_options=run_options)
     cacaosim_html = render_cacaosim_launcher_section(defaults)
 
     cu_by_cat: dict[str, list[dict[str, object]]] = {k: [] for k in COMPUTE_CATEGORY_ORDER}
