@@ -69,7 +69,7 @@ ron_e         = 0.5
 sat_adu       = 1.0e9
 out_dtype     = "float32"
 
-# --- Stage 1 (AO3k): 64x64 DM (D=60 act) + Intermediate PSFs + 160x160 J-Band PyWFS (1 kHz) ---
+# --- Stage 1 (AO3k): 64x64 ALPAO Magnetic DM (Plate PDE, D=60 act) + 160x160 J-Band PyWFS ---
 [dm.ao3k]
 in           = "b_pup"
 out          = "b_post_stg1"
@@ -78,12 +78,20 @@ out_opd      = "csim_dm01_opd"
 nact_x       = 64
 nact_y       = 64
 dm_diam      = 0.984375
-if_coupling  = 0.20
+if_coupling  = 0.08
 tput         = 0.98
 max_stroke   = 8.0
 dac_bits     = 16
-dyn_mode     = 1
-tau_us       = 200.0
+dyn_mode     = "plate"
+tau_us       = 20.0
+f0_hz        = 1000.0
+act_pitch_mm = 1.5
+wave_c       = 14.0
+bend_beta    = 0.0085
+damp_g0      = 195.0
+damp_g2      = 1.5
+plate_drive  = "force"
+rim_bc       = "free"
 delay_us     = 1000.0
 
 [fpcam.vis_stg1]

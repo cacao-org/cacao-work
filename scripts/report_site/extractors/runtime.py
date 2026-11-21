@@ -191,6 +191,8 @@ def extract_runtime_explorer_data(out_slug_dir: Path) -> dict[str, object]:
                 "jitter_us": round(float(p.get("jitter_us", 0.0) or 0.0), 1),
                 "loopcnt": int(p.get("loopcnt", 0) or 0),
                 "timeouts": int(p.get("timeouts", 0) or 0),
+                "triggermode": p.get("triggermode"),
+                "trigstream": str(p.get("trigstream", "") or ""),
             }
         )
     if procs_clean:

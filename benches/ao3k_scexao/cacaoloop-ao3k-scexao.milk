@@ -105,6 +105,7 @@ WFSX="${CACAO_WFSX:-${DEF_WFSX}}"
 WFSY="${CACAO_WFSY:-${DEF_WFSY}}"
 ROOTDIR="${CACAO_LOOPROOTDIR:-${PWD}/${LOOPNAME}-rootdir}"
 GPUINDEX="${CACAO_GPUINDEX:-0}"
+MVM_GPUINDEX_ENV="${CACAO_MVM_GPUINDEX:-}"
 RATE="${CACAO_WFSFRATE:-100}"
 LAT_FR="${CACAO_LATENCYHARDWFR:-1.5}"
 SOFT_LAT_FR="${CACAO_LATENCYSOFTWFR:-1.65}"
@@ -158,6 +159,23 @@ SELFRM_ZSIZE="${CACAO_SELFRM_ZSIZE:-8}"
 POKE_AMPL="${CACAO_POKEAMPL:-${DEF_AMPL}}"
 FAST_CALIB="${CACAO_FAST_CALIB:-0}"
 HTSIM_UNIT="${CACAO_HTSIM_UNIT:-csim_htsim}"
+
+if (( GPUINDEX < 0 )); then
+    COMPSTRCM_GPUINDEX=$(( -GPUINDEX - 1 ))
+else
+    COMPSTRCM_GPUINDEX="${GPUINDEX}"
+fi
+if [[ -n "${MVM_GPUINDEX_ENV}" ]]; then
+    MVM_GPUINDEX="${MVM_GPUINDEX_ENV}"
+elif (( MODAL_DIRECT )); then
+    # Tiny Stage-3 LLOWFS MVMs (14 modes) fit in L2 cache: CPU BLAS avoids 2 GPU contexts.
+    MVM_GPUINDEX="99"
+elif (( GPUINDEX >= 0 && GPUINDEX < 98 )); then
+    # Negative index enables MVMBackendCUDAGraph (pinned host staging + single graph launch).
+    MVM_GPUINDEX=$(( -(GPUINDEX + 1) ))
+else
+    MVM_GPUINDEX="${GPUINDEX}"
+fi
 
 XCENT="$(awk -v n="${DMX}" 'BEGIN { printf "%.2f", 0.5 * (n - 1.0) }')"
 YCENT="$(awk -v n="${DMY}" 'BEGIN { printf "%.2f", 0.5 * (n - 1.0) }')"
@@ -360,7 +378,6 @@ cmd_deploy() {
 acquWFS-${N}          cacao-fpsexec-cacaoiot-acquireWFS
 wfs2cmodeval-${N}     milk-fpsexec-linalg-MVMextract
 mfilt-${N}            cacao-fpsexec-mfilt
-${PF_MK_UNIT}         ${PF_MK_EXEC}
 ${PF_APP_UNIT}        ${PF_APP_EXEC}
 mvalC2dm-${N}         milk-fpsexec-linalg-MVMextract
 mlat-${N}             cacao-fpsexec-cacaopt-mlat
@@ -375,6 +392,9 @@ EOF
 
     fpspipe.init <<EOF
 ${init_manifest}
+EOF
+    OPENBLAS_NUM_THREADS="${PF_MKTHREADS}" OMP_NUM_THREADS="${PF_MKTHREADS}" fpspipe.init <<EOF
+${PF_MK_UNIT}         ${PF_MK_EXEC}
 EOF
 
     if (( OWNS_DM )); then
@@ -407,7 +427,7 @@ EOF
 
     if (( USE_ZPO_MVM )); then
         fpspipe.setparams <<EOF
-zpo-${N}.GPUindex                = ${GPUINDEX}
+zpo-${N}.GPUindex                = ${MVM_GPUINDEX}
 zpo-${N}.insname                 = ${PFX}dmzpo
 zpo-${N}.immodes                 = ${PFX}zrespM
 zpo-${N}.outcoeff                = ${PFX}wfszpo
@@ -438,7 +458,7 @@ acquWFS-${N}.procinfo.triggermode     = 3
 acquWFS-${N}.procinfo.triggersname    = ${PFX}wfsim
 acquWFS-${N}.procinfo.MeasureTiming   = ON
 
-wfs2cmodeval-${N}.GPUindex            = ${GPUINDEX}
+wfs2cmodeval-${N}.GPUindex            = ${MVM_GPUINDEX}
 wfs2cmodeval-${N}.insname             = ${PFX}imWFS2
 wfs2cmodeval-${N}.inmasksname         = ${PFX}wfsmask
 wfs2cmodeval-${N}.immodes             = ${PFX}CMmodesWFS
@@ -502,7 +522,7 @@ ${PF_APP_UNIT}.procinfo.triggermode   = 3
 ${PF_APP_UNIT}.procinfo.triggersname  = ${PFX}modevalOL
 ${PF_APP_UNIT}.procinfo.MeasureTiming = ON
 
-mvalC2dm-${N}.GPUindex                = ${GPUINDEX}
+mvalC2dm-${N}.GPUindex                = ${MVM_GPUINDEX}
 mvalC2dm-${N}.insname                 = ${PFX}modevalDM
 mvalC2dm-${N}.inmasksname             = ${PFX}dmmask
 mvalC2dm-${N}.immodes                 = ${PFX}CMmodesDM
@@ -544,7 +564,7 @@ compstrCM-${N}.wfsmask                = ../conf/wfsmask.fits
 compstrCM-${N}.CMmodesDM              = ../conf/CMmodesDM.fits
 compstrCM-${N}.CMmodesWFS             = ../conf/CMmodesWFS.fits
 compstrCM-${N}.svdlim                 = ${SVDLIM}
-compstrCM-${N}.GPUdevice              = ${GPUINDEX}
+compstrCM-${N}.GPUdevice              = ${COMPSTRCM_GPUINDEX}
 compstrCM-${N}.procinfo.loopcntMax    = 1
 compstrCM-${N}.procinfo.MeasureTiming = ON
 

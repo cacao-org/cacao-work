@@ -11,6 +11,7 @@
 set -euo pipefail
 
 SEEING="0.6"
+STAR_MAG=""
 PHYS_TIME="10.0"
 WALL_RATE=""
 USER_WALL_RATE_SET="0"
@@ -19,6 +20,8 @@ FAST_CALIB="1"
 BENCH_MODE="fused"
 OVERSAMPLE="0"
 CLOCK_SKEW_US=""
+WFS1_MOD_RAD=""
+WFS2_MOD_RAD=""
 WFSTAT_VALIDATE="0"
 GAIN1="0.35"
 GAIN2="0.35"
@@ -72,13 +75,16 @@ Usage: $(basename "$0") [options]
 
 Options:
   --seeing <arcsec>   Seeing FWHM at 0.50 um (default: ${SEEING})
+  --star-mag <mag>    Override guide/science star Vega mag mV=mH (default: bench = 6.0)
   --phys-time <sec>   Physical closed-loop integration time [s] (default: ${PHYS_TIME})
-  --wall-rate <hz>    Wall-clock master pacing rate [Hz] (default: 640 fused, 160 modular)
+  --wall-rate <hz>    Optional wall-clock rate cap [Hz] (def: lockstep fused, 160 modular)
   --calib-rate <hz>   Override wall-clock rate for mlat/takeref (default: matches --wall-rate)
   --no-fast-calib     Disable fused lockstep step-and-shoot RM; use real-time paced RM
   --bench-mode <mode> cacaosim optical bench mode: fused or modular (default: ${BENCH_MODE})
   --oversample <int>  Temporal oversampling factor K (default: bench config = 4)
   --clock-skew-us <f> Stage-2 WFS clock trigger offset [us] relative to Stage 1
+  --wfs1-mod-rad <f>  Override Stage-1 NIR PyWFS modulation radius [l/D] (0=unmodulated)
+  --wfs2-mod-rad <f>  Override Stage-2 Vis PyWFS modulation radius [l/D] (0=unmodulated)
   --wfstat-validate   Fused mode: also export beams and run CPU csim_wfstat into
                       <outdir>/wfstat_cpu to cross-check the in-DAG GPU statistics
   --gain1 <float>     Stage-1 AO3k integrator gain (default: ${GAIN1})
@@ -134,6 +140,7 @@ EOF
 while (( $# > 0 )); do
     case "$1" in
         --seeing)          SEEING="$2"; shift 2 ;;
+        --star-mag)        STAR_MAG="$2"; shift 2 ;;
         --phys-time)       PHYS_TIME="$2"; shift 2 ;;
         --wall-rate)       WALL_RATE="$2"; USER_WALL_RATE_SET="1"; shift 2 ;;
         --calib-rate)      CALIB_RATE="$2"; shift 2 ;;
@@ -141,6 +148,8 @@ while (( $# > 0 )); do
         --bench-mode)      BENCH_MODE="$2"; shift 2 ;;
         --oversample)      OVERSAMPLE="$2"; shift 2 ;;
         --clock-skew-us)   CLOCK_SKEW_US="$2"; shift 2 ;;
+        --wfs1-mod-rad)    WFS1_MOD_RAD="$2"; shift 2 ;;
+        --wfs2-mod-rad)    WFS2_MOD_RAD="$2"; shift 2 ;;
         --wfstat-validate) WFSTAT_VALIDATE="1"; shift ;;
         --gain1)           GAIN1="$2"; shift 2 ;;
         --gain2)           GAIN2="$2"; shift 2 ;;
@@ -222,22 +231,14 @@ if (( CALIB_2WFS1DM )) && [[ "${SAVE_TELEMETRY}" == "none" ]]; then
     echo "[ao3k-scexao] --calib-2wfs1dm enabled: promoting --save-telemetry none -> standard"
 fi
 
-# Fused csim_htsim with graphed WFS + FPCAM & GPU long-exposure reductions sustains lossless
-# 2-stage lockstep at 720 Hz (600 Hz in standard 100 Hz PSF telemetry, 480 Hz with 2 kHz
-# 4-camera speckle telemetry + 18 streamFITSlog recorders, 440 Hz in beam-export truth mode);
-# modular 14-daemon SHM chain runs at 160 Hz.
+# In fused mode, csim_atmturb runs in 1:1 semaphore lockstep with csim_wfs_vis (triggermode=3),
+# advancing at the maximum sustainable GPU/AO rate with zero dropped turbulence frames (or capped
+# at --wall-rate when explicitly specified). WALL_RATE sets calibration/testOL pacing in fused mode
+# (default 1000 Hz under CUDA MPS + CUDA Graph MVM) and modular 14-daemon pacing (default 160 Hz).
 if [[ -z "${WALL_RATE}" ]]; then
     WALL_RATE="160"
     if [[ "${BENCH_MODE}" == "fused" ]]; then
-        if [[ "${SAVE_TELEMETRY}" == "none" ]]; then
-            WALL_RATE="720"
-        elif [[ "${SAVE_TELEMETRY}" == "standard" ]]; then
-            WALL_RATE="600"
-        elif [[ "${SAVE_TELEMETRY}" == "speckle" ]]; then
-            WALL_RATE="500"
-        else
-            WALL_RATE="440"
-        fi
+        WALL_RATE="1000"
     fi
 fi
 
@@ -309,12 +310,30 @@ mkdir -p "${WORK_ROOT}" "${CSIM_DIR}"
 
 BENCH_CFG_SRC="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
 BENCH_CFG="${BENCH_CFG_SRC}"
-if (( EFF_PSF_NAVG != 20 )) || [[ -n "${CLOCK_SKEW_US}" ]]; then
+if (( EFF_PSF_NAVG != 20 )) || [[ -n "${CLOCK_SKEW_US}" ]] || \
+   [[ -n "${WFS1_MOD_RAD}" ]] || [[ -n "${WFS2_MOD_RAD}" ]] || \
+   [[ -n "${STAR_MAG}" ]]; then
     BENCH_CFG="${WORK_ROOT}/ao3k_scexao_run.bench"
-    awk -v nv="${EFF_PSF_NAVG}" -v skew="${CLOCK_SKEW_US}" '
+    awk -v nv="${EFF_PSF_NAVG}" -v skew="${CLOCK_SKEW_US}" \
+        -v m1="${WFS1_MOD_RAD}" -v m2="${WFS2_MOD_RAD}" -v smag="${STAR_MAG}" '
         /^\[/ { sec = $0 }
+        sec == "[bench]" && smag != "" && /^star_mag[ \t]*=/ {
+            printf "star_mag      = %s\n", smag; next
+        }
         sec == "[pyrwfs.wfs_vis]" && /^\[pyrwfs\.wfs_vis\]/ && skew != "" {
             print; printf "clock_offset_us = %s\n", skew; next
+        }
+        sec == "[pyrwfs.wfs_nir]" && m1 != "" && /^mod_rad[ \t]*=/ {
+            printf "mod_rad       = %s\n", m1; next
+        }
+        sec == "[pyrwfs.wfs_nir]" && m1 != "" && (m1 + 0) <= 0 && /^mod_npts[ \t]*=/ {
+            print "mod_npts      = 1"; next
+        }
+        sec == "[pyrwfs.wfs_vis]" && m2 != "" && /^mod_rad[ \t]*=/ {
+            printf "mod_rad       = %s\n", m2; next
+        }
+        sec == "[pyrwfs.wfs_vis]" && m2 != "" && (m2 + 0) <= 0 && /^mod_npts[ \t]*=/ {
+            print "mod_npts      = 1"; next
         }
         (sec == "[fpcam.vis_stg1]" || sec == "[fpcam.nir_stg1]" ||
          sec == "[fpcam.vis_final]" || sec == "[fpcam.nir_final]" ||
@@ -467,11 +486,20 @@ echo "==========================================================================
 echo " Subaru 7.95m AO3k + SCExAO + Lyot Coronagraph + LLOWFS Simulation (milk-script)"
 echo "   Sandbox SHM : ${MILK_SHM_DIR:-/milk/shm}"
 echo "   Bench Mode  : ${BENCH_MODE} (${MASTER_UNIT}) | Pupil: Subaru Nasmyth-IR | Tput: 20%"
-echo "   Seeing      : ${SEEING}\" @ 0.50 um | Star: mV = 6.0, mH = 6.0 (Teff = 9600 K)"
+STAR_MAG_EFF="${STAR_MAG:-6.0}"
+echo "   Seeing      : ${SEEING}\" @ 0.50 um | Star: mV = ${STAR_MAG_EFF}," \
+     "mH = ${STAR_MAG_EFF} (Teff = 9600 K)"
 echo "   Loop Speeds : Stg1 (AO3k) = 1.0 kHz | Stg2 (SCExAO) = 2.0 kHz | Stg3 (LLOWFS) = 0.5 kHz"
+if [[ -n "${WFS1_MOD_RAD}" || -n "${WFS2_MOD_RAD}" ]]; then
+    echo "   PyWFS Mod.  : Stg1 = ${WFS1_MOD_RAD:-3.0} l/D | Stg2 = ${WFS2_MOD_RAD:-3.0} l/D"
+fi
 echo "   Integration : ${PHYS_TIME} s physical (${MASTER_TICKS} ticks, ${LONG_READOUTS} exposures)"
-echo "   Wall Pacing : ${WALL_RATE} Hz (${WFS1_WALL_RATE} Stg1, ${WALL_RATE} Stg2," \
-     "${WFS3_WALL_RATE} Stg3)"
+if [[ "${BENCH_MODE}" == "fused" ]] && (( ! USER_WALL_RATE_SET )); then
+    echo "   Wall Pacing : 1:1 lockstep (unthrottled; calib/testOL @ ${CAL_RATE} Hz)"
+else
+    echo "   Wall Pacing : 1:1 lockstep <= ${WALL_RATE} Hz (${WFS1_WALL_RATE} Stg1," \
+         "${WALL_RATE} Stg2, ${WFS3_WALL_RATE} Stg3)"
+fi
 if (( USE_FAST_CALIB )); then
     echo "   Calib Pacing: ${CAL_RATE} Hz mlat/ref + unthrottled lockstep .calib_fast RM"
 else
@@ -761,10 +789,16 @@ echo "[ao3k-scexao] Step 5/7: Enabling 1:${EFF_OV} lockstep turbulence (${SEEING
 milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
 milk-fps-wait -q -t 10 "${MASTER_UNIT}" csim_atmturb >/dev/null 2>&1 || true
 ATM_STEP_S="0.0005"
-ATM_TRIG_DT="${WALL_DT}"
+ATM_LOCK_STREAM="csim_wfs_vis"
+if [[ "${BENCH_MODE}" == "fused" ]] && (( ! USER_WALL_RATE_SET )); then
+    ATM_TRIG_DT="0.0"
+else
+    ATM_TRIG_DT="${WALL_DT}"
+fi
 if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
     ATM_STEP_S="$(awk -v k="${EFF_OV}" 'BEGIN { printf "%.8f", 0.0005 / k }')"
     ATM_TRIG_DT="$(awk -v d="${WALL_DT}" -v k="${EFF_OV}" 'BEGIN { printf "%.7f", d / k }')"
+    ATM_LOCK_STREAM="b_pup"
 fi
 if [[ "${BENCH_MODE}" == "fused" ]]; then
     milk-fps-set -q "csim_htsim.enable_fpcam=ON"
@@ -772,26 +806,30 @@ fi
 milk-fps-set -q \
     "csim_atmturb.seeing=${SEEING}" \
     "csim_atmturb.time_step=${ATM_STEP_S}" \
-    "csim_atmturb.procinfo.triggermode=4" \
+    "csim_atmturb.procinfo.triggermode=3" \
+    "csim_atmturb.procinfo.triggersname=${ATM_LOCK_STREAM}" \
     "csim_atmturb.procinfo.triggerdelay=${ATM_TRIG_DT}" \
-    "${MASTER_UNIT}.turb_gain=0.20" \
+    "csim_atmturb.procinfo.triggertimeout=0.2" \
+    "${MASTER_UNIT}.turb_gain=0.10" \
     "${MASTER_UNIT}.frame_rate=0.0" \
     "${MASTER_UNIT}.procinfo.triggermode=3" \
     "${MASTER_UNIT}.procinfo.triggersname=outarraypha"
-milk-fps-runstart -q csim_atmturb
-milk-stream-wait -q -t 30 "outarraypha+5"
+# Start consumer (MASTER_UNIT) first so its outarraypha semaphore is armed before
+# csim_atmturb emits frame 0 and initiates 1:1 ping-pong lockstep on ATM_LOCK_STREAM.
 milk-fps-runstart -q "${MASTER_UNIT}"
-milk-stream-wait -q -t 30 "csim_wfs_vis+20"
+milk-fps-runstart -q csim_atmturb
+milk-stream-wait -q -t 30 "outarraypha+5" "csim_wfs_vis+20"
 
 echo "[ao3k-scexao] Step 6/7: Closing Stg1 (1kHz) -> Stg2 (2kHz) -> Stg3 LLOWFS (${PHYS_TIME} s)..."
 CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 close "${GAIN1}"
-milk-stream-wait -q -t 30 "csim_wfs_vis+60"
-CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
-milk-stream-wait -q -t 30 "csim_wfs_vis+60"
-@set "f.${MASTER_UNIT}.turb_gain=0.55"
 milk-stream-wait -q -t 30 "csim_wfs_vis+80"
-@set "f.${MASTER_UNIT}.turb_gain=1.0"
-milk-stream-wait -q -t 30 "csim_wfs_vis+120"
+for _tg in 0.25 0.40 0.55 0.70 0.85 1.0; do
+    @set "f.${MASTER_UNIT}.turb_gain=${_tg}"
+    milk-stream-wait -q -t 30 "csim_wfs_vis+120"
+done
+milk-stream-wait -q -t 30 "csim_wfs_vis+200"
+CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
+milk-stream-wait -q -t 30 "csim_wfs_vis+200"
 if (( ENABLE_LOWFS )); then
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 close "${GAIN3}"
 fi
@@ -965,6 +1003,10 @@ if [[ "${BENCH_MODE}" == "fused" ]]; then
         sleep 0.05
     done
 fi
+
+# Close closed_loop_10s phase BEFORE throttling csim_atmturb or flushing loggers so
+# 50 ms throttle pauses and logger teardown do not pollute closed-loop jitter or duration.
+sysmon.mark "flush_tlm" "Stop loggers & flush closed-loop telemetry"
 
 # Throttle master turbulence clock (preserving continuous phase screen for selfRM) while saving
 if (( RUN_SELFRM )); then
@@ -1202,9 +1244,6 @@ if (( RUN_SELFRM )); then
     SRM_ONSKY_DT="${ATM_TRIG_DT}"
     if [[ "${BENCH_MODE}" == "fused" ]]; then
         @set "f.csim_htsim.enable_fpcam=OFF"
-        if (( ! USER_WALL_RATE_SET )); then
-            SRM_ONSKY_DT="$(awk 'BEGIN { printf "%.7f", 1.0 / 720.0 }')"
-        fi
     fi
     milk-fps-set -q "csim_atmturb.procinfo.triggerdelay=${SRM_ONSKY_DT}"
     milk-stream-wait -q -t 30 "csim_wfs_vis+40"
@@ -1304,6 +1343,7 @@ sysmon.mark "ao_report" "Compile AO optical report & figures (cacaosim-ao-report
 cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
 "${PYTHON_BIN:-python3}" - "${OUT_DIR}/run_options.json" \
     "seeing=${SEEING}" \
+    "star_mag=${STAR_MAG}" \
     "phys_time=${PHYS_TIME}" \
     "wall_rate=${WALL_RATE}" \
     "calib_rate=${CAL_RATE}" \
@@ -1312,6 +1352,8 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "oversample=${OVERSAMPLE}" \
     "eff_oversample=${EFF_OV}" \
     "clock_skew_us=${CLOCK_SKEW_US}" \
+    "wfs1_mod_rad=${WFS1_MOD_RAD}" \
+    "wfs2_mod_rad=${WFS2_MOD_RAD}" \
     "wfstat_validate=${WFSTAT_VALIDATE}" \
     "gain1=${GAIN1}" \
     "gain2=${GAIN2}" \
@@ -1378,10 +1420,8 @@ if command -v cacaosim-gui-screenshot >/dev/null 2>&1; then
         "${OUT_DIR}/ao3k_scexao.bench" >/dev/null 2>&1 || true
     milk-fps-runstop -q csim_atmturb >/dev/null 2>&1 || true
 fi
-REP_TICKS="${d_pha}"
-if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
-    REP_TICKS="${d_wfs2}"
-fi
+REP_TICKS="${d_wfs2}"
+(( REP_TICKS <= 0 )) && REP_TICKS="${d_pha}"
 REP_TLM_DIR=""
 [[ "${SAVE_TELEMETRY}" != "none" ]] && REP_TLM_DIR="${TELEM_DIR}"
 CACAOSIM_TELEMETRY_DIR="${REP_TLM_DIR}" \

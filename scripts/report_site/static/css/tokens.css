@@ -52,6 +52,9 @@
   --domain-bench-runtime: #7e22ce;
   --domain-bench-runtime-soft: #f3e8ff;
   --domain-bench-runtime-text: #6b21a8;
+  --domain-hardware-dynamics: #be123c;
+  --domain-hardware-dynamics-soft: #ffe4e6;
+  --domain-hardware-dynamics-text: #9f1239;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -106,6 +109,9 @@
     --domain-bench-runtime: #a855f7;
     --domain-bench-runtime-soft: rgba(147, 51, 234, 0.22);
     --domain-bench-runtime-text: #e9d5ff;
+    --domain-hardware-dynamics: #fb7185;
+    --domain-hardware-dynamics-soft: rgba(225, 29, 72, 0.22);
+    --domain-hardware-dynamics-text: #fecdd3;
   }
 }
 
@@ -160,4 +166,7 @@
   --domain-bench-runtime: #a855f7;
   --domain-bench-runtime-soft: rgba(147, 51, 234, 0.22);
   --domain-bench-runtime-text: #e9d5ff;
+  --domain-hardware-dynamics: #fb7185;
+  --domain-hardware-dynamics-soft: rgba(225, 29, 72, 0.22);
+  --domain-hardware-dynamics-text: #fecdd3;
 }

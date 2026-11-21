@@ -39,8 +39,66 @@ sandbox_init() {
     export SANDBOX_WORK_DIR
     export SANDBOX_OWNED_SHM
     export SANDBOX_OWNED_WORK
+    export SANDBOX_OWNED_MPS=0
 
     mkdir -p "${MILK_SHM_DIR}" "${MILK_PROC_DIR}" "${SANDBOX_WORK_DIR}" "${CACAOSIM_WORKDIR}"
+    sandbox_start_mps
+}
+
+sandbox_start_mps() {
+    if [[ "${CACAO_CUDA_MPS:-1}" == "0" ]]; then
+        return 0
+    fi
+    if [[ -n "${CUDA_MPS_PIPE_DIRECTORY:-}" ]]; then
+        return 0
+    fi
+    if ! command -v nvidia-cuda-mps-control >/dev/null 2>&1; then
+        return 0
+    fi
+    local mps_pipe="${MILK_SHM_DIR}/mps"
+    local mps_log="${SANDBOX_WORK_DIR}/mps_log"
+    mkdir -p "${mps_pipe}" "${mps_log}"
+    export CUDA_MPS_PIPE_DIRECTORY="${mps_pipe}"
+    export CUDA_MPS_LOG_DIRECTORY="${mps_log}"
+    if nvidia-cuda-mps-control -d >/dev/null 2>&1; then
+        local _i
+        for _i in 1 2 3 4 5 6 7 8 9 10; do
+            if printf 'get_server_list\n' | nvidia-cuda-mps-control >/dev/null 2>&1; then
+                export SANDBOX_OWNED_MPS=1
+                return 0
+            fi
+            sleep 0.05
+        done
+    fi
+    unset CUDA_MPS_PIPE_DIRECTORY CUDA_MPS_LOG_DIRECTORY
+    export SANDBOX_OWNED_MPS=0
+    rm -rf "${mps_pipe}" "${mps_log}" >/dev/null 2>&1 || true
+}
+
+sandbox_stop_mps() {
+    local mps_pipe=""
+    if [[ "${SANDBOX_OWNED_MPS:-0}" -eq 1 && -n "${CUDA_MPS_PIPE_DIRECTORY:-}" ]]; then
+        mps_pipe="${CUDA_MPS_PIPE_DIRECTORY}"
+    elif [[ -n "${MILK_SHM_DIR:-}" && -d "${MILK_SHM_DIR}/mps" ]]; then
+        mps_pipe="${MILK_SHM_DIR}/mps"
+    else
+        return 0
+    fi
+    if [[ -d "${mps_pipe}" ]] && command -v nvidia-cuda-mps-control >/dev/null 2>&1; then
+        CUDA_MPS_PIPE_DIRECTORY="${mps_pipe}" \
+            nvidia-cuda-mps-control <<<'quit' >/dev/null 2>&1 || true
+        local _i
+        for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+            if ! CUDA_MPS_PIPE_DIRECTORY="${mps_pipe}" \
+                 nvidia-cuda-mps-control <<<'get_server_list' >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.05
+        done
+    fi
+    rm -rf "${mps_pipe}" >/dev/null 2>&1 || true
+    export SANDBOX_OWNED_MPS=0
+    unset CUDA_MPS_PIPE_DIRECTORY CUDA_MPS_LOG_DIRECTORY
 }
 
 sandbox_stop_all() {
@@ -67,6 +125,7 @@ sandbox_stop_all() {
     fi
 
     rm -rf "${MILK_SHM_DIR}"/cacaoloop-* >/dev/null 2>&1 || true
+    sandbox_stop_mps
 }
 
 sandbox_cleanup() {
@@ -74,6 +133,7 @@ sandbox_cleanup() {
         return 0
     fi
     sandbox_stop_all
+    sandbox_stop_mps
     if [[ "${SANDBOX_OWNED_SHM:-0}" -eq 1 && -n "${MILK_SHM_DIR:-}" ]] &&
        [[ "${MILK_SHM_DIR}" == /dev/shm/cacao_* ]]; then
         rm -rf "${MILK_SHM_DIR}"

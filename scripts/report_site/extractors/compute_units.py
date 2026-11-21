@@ -78,6 +78,15 @@ def build_compute_unit_catalog(
     sa = metrics_data.get("star_and_atmosphere")
     seeing = float(sa.get("seeing_arcsec_500nm", 0.60)) if isinstance(sa, dict) else 0.60
     ov = int(sa.get("oversample", 4)) if isinstance(sa, dict) else 4
+    atm_pm = proc_map.get("csim_atmturb", {})
+    atm_tm = atm_pm.get("triggermode")
+    atm_ts = str(atm_pm.get("trigstream", "") or "").strip()
+    if atm_tm == 3 and atm_ts:
+        atm_trig_lbl = f"3 ({atm_ts})"
+    elif atm_tm is not None:
+        atm_trig_lbl = str(atm_tm)
+    else:
+        atm_trig_lbl = "3 (csim_wfs_vis)" if bench_mode == "fused" else "4"
     add_unit(
         "csim_atmturb",
         "milk-fpsexec-atmturb-mkwfs",
@@ -87,7 +96,7 @@ def build_compute_unit_catalog(
         "Maunakea 7-layer config",
         "outarraypha (256x256)",
         "Frozen-flow + boiling multi-layer atmospheric OPD generator",
-        {"seeing": f"{seeing:.2f}", "time_step": "0.0005", "triggermode": "4"},
+        {"seeing": f"{seeing:.2f}", "time_step": "0.0005", "triggermode": atm_trig_lbl},
     )
     if bench_mode == "modular":
         for sec in bench_sections:
@@ -169,6 +178,12 @@ def build_compute_unit_catalog(
             "WFS normalization, dark/reference & ZPO subtraction",
             {"WFSnormalize": "ON", "WFSrefsub": "ON", "wfszpo": f"aol{idx}_wfszpo"},
         )
+        wfs_mvm_pm = proc_map.get(f"wfs2cmodeval-{idx}", {})
+        wfs_mvm_gpu = (
+            "99 (CPU BLAS)"
+            if (idx == "3" and float(wfs_mvm_pm.get("vram_mib", 0.0) or 0.0) <= 0.0)
+            else ("-1 (CUDA Graph)" if idx in ("1", "2") else "0")
+        )
         add_unit(
             f"wfs2cmodeval-{idx}",
             "milk-fpsexec-linalg-MVMextract",
@@ -178,7 +193,7 @@ def build_compute_unit_catalog(
             f"aol{idx}_imWFS2, aol{idx}_CMmodesWFS",
             f"aol{idx}_modevalWFS ({n_cm})",
             "GPU/CPU MVM projection from WFS pixels to control modes",
-            {"axmode": "0", "MODENORM": "ON", "GPUindex": "0"},
+            {"axmode": "0", "MODENORM": "ON", "GPUindex": wfs_mvm_gpu},
         )
         add_unit(
             f"mfilt-{idx}",
@@ -198,6 +213,12 @@ def build_compute_unit_catalog(
             always_active=is_act,
         )
         dm_out_ch = f"dm{dm}disp04" if idx == "3" else f"dm{dm}disp03"
+        dm_mvm_pm = proc_map.get(f"mvalC2dm-{idx}", {})
+        dm_mvm_gpu = (
+            "99 (CPU BLAS)"
+            if (idx == "3" and float(dm_mvm_pm.get("vram_mib", 0.0) or 0.0) <= 0.0)
+            else ("-1 (CUDA Graph)" if idx in ("1", "2") else "0")
+        )
         add_unit(
             f"mvalC2dm-{idx}",
             "milk-fpsexec-linalg-MVMextract",
@@ -207,7 +228,7 @@ def build_compute_unit_catalog(
             f"aol{idx}_modevalDM, aol{idx}_CMmodesDM",
             f"aol{idx}_dmC -> {dm_out_ch}",
             "GPU/CPU MVM synthesis from modal commands to DM grid",
-            {"axmode": "1", "MODENORM": "OFF", "GPUindex": "0"},
+            {"axmode": "1", "MODENORM": "OFF", "GPUindex": dm_mvm_gpu},
             always_active=is_act,
         )
         add_unit(

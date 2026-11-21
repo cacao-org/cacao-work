@@ -114,6 +114,33 @@
         "deployment",
         "shm"
       ]
+    },
+    {
+      "id": "hardware-dynamics",
+      "title": "Hardware & DM Dynamics",
+      "short_title": "Hardware & DM",
+      "accent": "#be123c",
+      "description": "Physical component-level AO hardware modeling: ALPAO 64×64 magnetic facesheet wave dynamics and eigenmodes, MEMS actuator response, WFS modulation, and detector physics.",
+      "subgroups": [
+        {
+          "id": "dm-dynamics",
+          "label": "Deformable Mirror Dynamics"
+        },
+        {
+          "id": "wfs-detectors",
+          "label": "WFS & Detector Physics"
+        }
+      ],
+      "keywords": [
+        "dm_dynamics",
+        "dm dynamics",
+        "plate",
+        "facesheet",
+        "ripple",
+        "alpao",
+        "mems",
+        "hardware"
+      ]
     }
   ]
 }

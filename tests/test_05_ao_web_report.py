@@ -824,7 +824,13 @@ def test_topic_hierarchy_crossrefs_and_link_integrity(
         assert res.returncode == 0, res.stderr + res.stdout
 
     pub_dir = site_dir / "public"
-    for did in ("wavefront-control", "calibration-sysid", "coronagraphy-lowfs", "bench-runtime"):
+    for did in (
+        "wavefront-control",
+        "calibration-sysid",
+        "coronagraphy-lowfs",
+        "bench-runtime",
+        "hardware-dynamics",
+    ):
         hub = pub_dir / "topics" / did / "index.html"
         assert hub.is_file(), f"Missing topic hub: {hub}"
     cal_hub_html = (pub_dir / "topics" / "calibration-sysid" / "index.html").read_text(

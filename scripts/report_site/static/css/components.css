@@ -120,6 +120,7 @@ kbd {
 .domain-card.domain-calibration-sysid { border-top-color: var(--domain-calibration-sysid); }
 .domain-card.domain-coronagraphy-lowfs { border-top-color: var(--domain-coronagraphy-lowfs); }
 .domain-card.domain-bench-runtime { border-top-color: var(--domain-bench-runtime); }
+.domain-card.domain-hardware-dynamics { border-top-color: var(--domain-hardware-dynamics); }
 
 .domain-card-hdr {
   display: flex;
@@ -180,6 +181,12 @@ kbd {
   background: var(--domain-bench-runtime-soft);
   color: var(--domain-bench-runtime-text);
   border-color: var(--domain-bench-runtime);
+}
+
+.domain-badge.domain-hardware-dynamics {
+  background: var(--domain-hardware-dynamics-soft);
+  color: var(--domain-hardware-dynamics-text);
+  border-color: var(--domain-hardware-dynamics);
 }
 
 blockquote.callout {

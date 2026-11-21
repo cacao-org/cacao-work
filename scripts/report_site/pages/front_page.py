@@ -223,8 +223,9 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         '      <div class="guide-step-title"><span class="guide-num">1</span>'
         "<strong>Browse by Research Domain</strong></div>\n"
         '      <p>Use <strong>Topics &#9662;</strong> or the '
-        '<a href="#research-domains">4 domain cards</a> below for Wavefront Control, '
-        "Calibration &amp; SysID, Coronagraphy &amp; LLOWFS, or Optical Bench &amp; Runtime hubs.</p>\n"
+        f'<a href="#research-domains">{len(domains)} domain cards</a> below for Wavefront Control, '
+        "Calibration &amp; SysID, Coronagraphy &amp; LLOWFS, Optical Bench &amp; Runtime, "
+        "or Hardware &amp; DM Dynamics hubs.</p>\n"
         "    </div>\n"
         '    <div class="guide-step">\n'
         '      <div class="guide-step-title"><span class="guide-num">2</span>'

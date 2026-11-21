@@ -148,6 +148,15 @@ def build_stack_guide_html(hierarchy: dict[str, object]) -> str:
                 if any(isinstance(m, dict) and m.get("slug") == "calib_2wfs1dm_report" for m in study_metas)
                 else []
             ),
+            *(
+                [
+                    "",
+                    "# 3d. Compile ALPAO 64x64 DM Spatiotemporal Dynamics Report & 20 kHz Video",
+                    "${PYTHON_BIN} ./scripts/build-dm-dynamics-report.py",
+                ]
+                if any(isinstance(m, dict) and m.get("slug") == "dm_dynamics_report" for m in study_metas)
+                else []
+            ),
             "",
             "# 4. Stage static HTML website locally under _work/_web_site/public/",
             *(
@@ -170,7 +179,8 @@ def build_stack_guide_html(hierarchy: dict[str, object]) -> str:
         "<ul>\n"
         "<li><strong>Assign an existing domain</strong>: Add <code>\"domain\"</code> "
         "(one of <code>wavefront-control</code>, <code>calibration-sysid</code>, "
-        "<code>coronagraphy-lowfs</code>, <code>bench-runtime</code>) and optional "
+        "<code>coronagraphy-lowfs</code>, <code>bench-runtime</code>, "
+        "<code>hardware-dynamics</code>) and optional "
         "<code>\"subtopic\"</code> inside <code>study_meta.json</code>.</li>\n"
         "<li><strong>Add a new domain</strong>: Append a new domain object to "
         "<code>scripts/report_site/taxonomy.json</code> and rebuild via "

@@ -136,6 +136,27 @@ FRIENDLY_FIG_LABELS: dict[str, str] = {
     "calib_2wfs1dm_method_comparison_2x2.png": (
         "Beyond W(z): Exact-Window Frequency-Domain AO-Dynamics vs AR(4) W(z) & OLS (2x2)"
     ),
+    "dm_poke_actual_vs_sim_20khz.mp4": (
+        "Side-by-Side 20 kHz ALPAO 64x64 DM Poke: Actual SCExAO Measurement (LepICSaBL-E) vs cacaosim Plate PDE (Video)"
+    ),
+    "dm_poke_actual_vs_sim_contact_sheet.png": (
+        "Synchronized Actual SCExAO Measurement vs cacaosim Plate PDE Contact Sheet (t = +0.5 to +11.5 ms)"
+    ),
+    "dm_shape_vs_deriv_20khz.mp4": (
+        "ALPAO 64x64 DM Instantaneous Surface Shape w(t) vs. 1 ms Time Derivative (20 kHz Video)"
+    ),
+    "dm_shape_vs_deriv_contact_sheet.png": (
+        "ALPAO 64x64 DM Surface Shape w(t) (1x, 50x, w - w_DC) vs. 1 ms Derivative Contact Sheet (4x6)"
+    ),
+    "dm_poke_sim_20khz.mp4": (
+        "Simulated 64x64 ALPAO DM (dyn_mode=plate) 20 kHz Single-Actuator Poke — 1 ms Diff (Video)"
+    ),
+    "dm_poke_sim_contact_sheet.png": (
+        "ALPAO 64x64 DM 20 kHz Single-Actuator Poke Contact Sheet (t = +0.6 to +17.5 ms)"
+    ),
+    "dm_plate_physics_diagnostics_2x2.png": (
+        "ALPAO 64x64 Coupled Plate PDE Diagnostics: Wavefront Space-Time, Decay, Dispersion & Latency (2x2)"
+    ),
     "compute_timeline_4x1.png": "Compute & Power Timeline (4x1)",
     "compute_process_breakdown_2x2.png": "Per-Process CPU & Latency Breakdown (2x2)",
     "compute_shm_and_calib_2x2.png": "SHM Bandwidth & Calibration Breakdown (2x2)",
