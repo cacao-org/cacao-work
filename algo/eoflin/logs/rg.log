@@ -1,0 +1,28 @@
+sw.npz P=8 D=512 noise_frac=0.6 noise/ZOH=0.370 modal var>1e-6: 64/64
+  pooled over test: diagAR=0.3247  global EOF=0.3093  oracle per-regime EOF=0.3085   offdiag L2 frac(global)=0.010
+  per regime (resid/ZOH):  Ntrain   diagAR   global   own-regime   wrong-regime(best,worst)   global excess over own   offdiag(own)
+     regime 0:   68814   0.3071   0.2867   0.2789       (0.470,0.671)          +2.8%              0.053
+     regime 1:   57484   0.3051   0.2935   0.2791       (0.443,1.331)          +5.2%              0.055
+     regime 2:   33541   0.4741   0.4668   0.5473       (0.478,0.715)         -14.7%              0.119
+  done 7.7s
+sw.npz P=8 D=512 noise_frac=0.06 noise/ZOH=0.055 modal var>1e-6: 64/64
+  pooled over test: diagAR=0.0656  global EOF=0.0567  oracle per-regime EOF=0.0571   offdiag L2 frac(global)=0.007
+  per regime (resid/ZOH):  Ntrain   diagAR   global   own-regime   wrong-regime(best,worst)   global excess over own   offdiag(own)
+     regime 0:   68814   0.0609   0.0512   0.0502       (0.078,0.134)          +2.0%              0.017
+     regime 1:   57484   0.0603   0.0513   0.0499       (0.077,0.338)          +2.6%              0.018
+     regime 2:   33541   0.1236   0.1206   0.1387       (0.128,0.167)         -13.0%              0.040
+  done 7.9s
+sw90.npz P=8 D=512 noise_frac=0.6 noise/ZOH=0.369 modal var>1e-6: 64/64
+  pooled over test: diagAR=0.3222  global EOF=0.2878  oracle per-regime EOF=0.2510   offdiag L2 frac(global)=0.011
+  per regime (resid/ZOH):  Ntrain   diagAR   global   own-regime   wrong-regime(best,worst)   global excess over own   offdiag(own)
+     regime 0:   68814   0.3037   0.2605   0.2337       (0.679,0.830)         +11.5%              0.086
+     regime 1:   57484   0.3008   0.2735   0.2333       (0.623,1.979)         +17.3%              0.095
+     regime 2:   33541   0.4888   0.4668   0.3981       (0.567,1.220)         +17.2%              0.149
+  done 7.9s
+sw90.npz P=8 D=512 noise_frac=0.06 noise/ZOH=0.055 modal var>1e-6: 64/64
+  pooled over test: diagAR=0.0633  global EOF=0.0556  oracle per-regime EOF=0.0544   offdiag L2 frac(global)=0.007
+  per regime (resid/ZOH):  Ntrain   diagAR   global   own-regime   wrong-regime(best,worst)   global excess over own   offdiag(own)
+     regime 0:   68814   0.0580   0.0498   0.0474       (0.149,0.239)          +5.0%              0.027
+     regime 1:   57484   0.0572   0.0499   0.0472       (0.140,0.753)          +5.6%              0.029
+     regime 2:   33541   0.1339   0.1278   0.1436       (0.165,0.358)         -11.0%              0.072
+  done 7.7s

@@ -1,0 +1,14 @@
+sw.npz metric=norm P=8 D=512 Ntrain(sub 4)=39998 queries=150 noise_frac=0.6
+  theta=0 (global EOF on same rows): resid/ZOH=0.3156
+   query 0/150  3s
+   query 25/150  59s
+   query 50/150  183s
+   query 75/150  399s
+   query 100/150  999s
+   query 125/150  1209s
+  nearest-neighbour distance / median distance: median=0.730; 100th-NN / median: 0.790
+  theta=  1: n_eff=   39762/39998  same-regime weight=0.364 (chance 0.364)  resid/ZOH[kappa=0.0]=  0.3157  resid/ZOH[kappa=0.1]=  0.3157  
+  theta=  2: n_eff=   39062/39998  same-regime weight=0.364 (chance 0.364)  resid/ZOH[kappa=0.0]=  0.3160  resid/ZOH[kappa=0.1]=  0.3159  
+  theta=  4: n_eff=   36404/39998  same-regime weight=0.364 (chance 0.364)  resid/ZOH[kappa=0.0]=  0.3168  resid/ZOH[kappa=0.1]=  0.3163  
+  theta=  8: n_eff=   27656/39998  same-regime weight=0.365 (chance 0.364)  resid/ZOH[kappa=0.0]=  0.3201  resid/ZOH[kappa=0.1]=  0.3168  
+  done 1286s

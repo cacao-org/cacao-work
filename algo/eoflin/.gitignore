@@ -1,0 +1,4 @@
+# regenerable data and gric-cluster scratch output
+*.npz
+code/gric_*/
+__pycache__/

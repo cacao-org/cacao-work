@@ -1,0 +1,15 @@
+sw.npz P=8 D=512 noise_frac=0.6; test = chunks 100..239; chunk-descriptor std within regime ~ 0.90 m/s
+  method                                               resid/ZOH   by time since wind switch [s]: 0-1  1-2  2-4  4-8  8-100
+  sliding 16 s (current mkEOFPF memory)                  0.6738     0.779   0.793   0.707   0.683   0.578
+  sliding 32 s                                           0.3660     0.402   0.382   0.380   0.375   0.332
+  sliding 64 s                                           0.3339     0.357   0.344   0.344   0.344   0.306
+  all past, unweighted (pooled regimes)                  0.3215     0.336   0.330   0.332   0.332   0.296
+  all past, oracle regime weights kappa=0                0.3642     0.575   0.406   0.361   0.358   0.301
+  all past, oracle regime weights kappa=0.1              0.3108     0.367   0.319   0.314   0.317   0.284
+  all past, oracle regime weights kappa=0.3              0.3134     0.344   0.323   0.321   0.322   0.288
+  all past, wind-descriptor kernel h=1.5 kappa=0.1       0.3114     0.354   0.320   0.316   0.319   0.286
+  all past, wind-descriptor kernel h=3 kappa=0.1         0.3109     0.347   0.320   0.317   0.319   0.285
+  all past, wind-descriptor kernel h=3 kappa=0.3         0.3144     0.339   0.324   0.323   0.324   0.289
+  all past, GRIC library rlim=1.5 (K=13) kappa=0.1       0.3116     0.352   0.320   0.317   0.319   0.286
+  all past, GRIC library rlim=3.0 (K=5) kappa=0.1        0.3110     0.347   0.320   0.318   0.319   0.285
+  done 45s

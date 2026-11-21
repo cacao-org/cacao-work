@@ -1,0 +1,3 @@
+st.npz modes 0-63 raw                           N_ref=24998  NN dist/median dist: 0.466   LID (Levina-Bickel, k=20): median 49.1
+st.npz modes 0-63 per-mode normalized           N_ref=24998  NN dist/median dist: 0.737   LID (Levina-Bickel, k=20): median 58.1
+st.npz modes 32-63 raw (equal-variance block)   N_ref=24998  NN dist/median dist: 0.613   LID (Levina-Bickel, k=20): median 31.9

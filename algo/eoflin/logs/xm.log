@@ -1,0 +1,12 @@
+noise_frac=1.0: noise/ZOH=0.394
+   P= 1: diag AR resid/ZOH=0.9975   cross-mode EOF=0.8263   ratio=1.21
+   P= 2: diag AR resid/ZOH=0.9164   cross-mode EOF=0.7325   ratio=1.25
+   P= 4: diag AR resid/ZOH=0.6988   cross-mode EOF=0.5784   ratio=1.21
+   P= 8: diag AR resid/ZOH=0.3433   cross-mode EOF=0.3105   ratio=1.11
+   P=16: diag AR resid/ZOH=0.1883   cross-mode EOF=0.1495   ratio=1.26
+noise_frac=0.1: noise/ZOH=0.061
+   P= 1: diag AR resid/ZOH=0.9995   cross-mode EOF=0.7341   ratio=1.36
+   P= 2: diag AR resid/ZOH=0.5468   cross-mode EOF=0.4422   ratio=1.24
+   P= 4: diag AR resid/ZOH=0.1848   cross-mode EOF=0.1675   ratio=1.10
+   P= 8: diag AR resid/ZOH=0.0714   cross-mode EOF=0.0603   ratio=1.18
+   P=16: diag AR resid/ZOH=0.0592   cross-mode EOF=0.0320   ratio=1.85
