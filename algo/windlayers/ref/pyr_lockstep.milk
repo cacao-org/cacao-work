@@ -1,0 +1,69 @@
+#!/usr/bin/env milk-script
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# pyr_lockstep.milk - push a phase + amplitude cube through the cacaosim pyramid WFS, frame by
+# frame and in lockstep (experiment harness: every WFS frame matches one input frame exactly).
+#
+# Usage: pyr_lockstep.milk <phacube.fits> <ampcube.fits|none> <out.fits> [nframes] [key=value...]
+#   extra key=value words are passed to the pyrwfs unit as .key=value
+
+set -u
+PHA="$1"; AMP="$2"; OUT="$3"; NFR="${4:-0}"
+shift 4 2>/dev/null || shift $#
+EXTRA=()
+for kv in "$@"; do EXTRA+=(".${kv}"); done
+
+U=wl_pyr
+cleanup() {
+    milk-fps-runstop -q "${U}" >/dev/null 2>&1
+    milk-fps-rm -f -q --ignore-missing "${U}" wl_mkpup >/dev/null 2>&1
+    for s in wl_pha wl_amp wl_dm wl_pup wl_wfs; do
+        rm -f "${MILK_SHM_DIR}/${s}.im.shm"
+    done
+}
+cleanup
+@defer cleanup
+
+iofits.loadfits "${PHA}" "@L:pc" 2 || exit 1
+@get -v nx l.pc.xsize
+@get -v nz l.pc.zsize
+(( NFR > 0 && NFR < nz )) && nz="${NFR}"
+HAVE_AMP=0
+if [[ "${AMP}" != "none" ]]; then
+    iofits.loadfits "${AMP}" "@L:ac" 2 || exit 1
+    HAVE_AMP=1
+fi
+
+milk-fpsexec-cacaosim-mkpupil --no-procinfo -n wl_mkpup exec wl_pup "${nx}" \
+    .cobs=0.30 .nspider=4 .spider_w=0.012 .spider_deg=45 >/dev/null || exit 1
+@calc "S:wl_pha = pc[*,*,0]"
+@calc "S:wl_amp = zeros(${nx}, ${nx}) + 1"
+@calc "S:wl_dm = zeros(${nx}, ${nx})"
+(( HAVE_AMP )) && @calc "wl_amp = ac[*,*,0]"
+
+milk-fpsexec-cacaosim-pyrwfs -n "${U}" fpsinit wl_wfs wl_dm \
+    .in_wf=wl_pha .in_amp=wl_amp .in_pup=wl_pup .nwf="${nx}" .ncam=64 \
+    .lambda_um=0.75 .bw_frac=0.20 .mod_rad=3.0 .mod_npts=16 .wf_unit=1 .ref_lambda=0.5 \
+    .use_beam_flux=OFF .flux_ph=1e7 .photon_noise=OFF .ron_e=0 .bias_adu=0 .dark_e=0 \
+    .sat_adu=1e12 .out_dtype=1 "${EXTRA[@]}" >/dev/null || exit 1
+milk-fpsexec-cacaosim-pyrwfs -n "${U}" -loops runstart >/dev/null || exit 1
+
+# first trigger creates the output stream
+@calc "wl_dm = wl_dm * 0"
+@waitfor s.wl_wfs -t 20 || { echo "no WFS frame"; exit 1; }
+@get -v ncam s.wl_wfs.xsize
+@calc "wcube = zeros(${ncam}, ${ncam}, ${nz})"
+@get -v c0 s.wl_wfs.cnt0
+echo "[lockstep] ${nz} frames, wf ${nx}x${nx} -> cam ${ncam}x${ncam}, amp=${HAVE_AMP}"
+
+for (( k = 0; k < nz; k++ )); do
+    (( HAVE_AMP )) && @calc "wl_amp = ac[*,*,${k}]"
+    @calc "wl_pha = pc[*,*,${k}]"
+    @calc "wl_dm = wl_dm * 0"
+    @waitfor s.wl_wfs --cnt $(( c0 + k + 1 )) -t 10 || { echo "timeout at ${k}"; exit 1; }
+    @calc "wcube[*,*,${k}] = wl_wfs"
+done
+@get -v c1 s.wl_wfs.cnt0
+echo "[lockstep] done: WFS frames produced = $(( c1 - c0 )) (expected ${nz})"
+iofits.saveFITS wcube "!${OUT}" || exit 1

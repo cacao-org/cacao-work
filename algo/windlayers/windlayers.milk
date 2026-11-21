@@ -1,0 +1,337 @@
+#!/usr/bin/env -S milk-script -q
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+#
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# windlayers.milk - build, run and read the wind-layer compute unit (cacao-fpsexec-windlayers)
+
+set -uo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UNIT="${WINDLAYERS_NAME:-windlayers}"
+PFX="${WINDLAYERS_PREFIX:-wl}"
+BINDIR="${WINDLAYERS_BIN:-${SCRIPT_DIR}/../../_work/bin}"
+EXE="${BINDIR}/cacao-fpsexec-windlayers"
+
+DESC_SHORT="estimate wind layers (speed, direction, distance) from WFS telemetry"
+
+usage() {
+    cat <<EOF
+${SCRIPT_NAME} - ${DESC_SHORT}
+
+Usage:
+  ${SCRIPT_NAME} build [--force]
+  ${SCRIPT_NAME} cube <wfs> [<pha>] [--outdir DIR] [key=value ...]
+  ${SCRIPT_NAME} start <wfs-stream> [<pha-stream>] [key=value ...]
+  ${SCRIPT_NAME} report
+  ${SCRIPT_NAME} stop [--rm]
+  ${SCRIPT_NAME} selftest [--keep]
+
+Commands:
+  build      Compile the unit with milk-cc (done automatically when the source is newer)
+  cube       Analyse telemetry: <wfs> and <pha> are FITS cubes or 3-D shared-memory images
+  start      Run the unit live on a WFS stream (one analysis every .tupdate seconds)
+  report     Print the layer table of the last analysis
+  stop       Stop the live unit (--rm: also remove its FPS and output streams)
+  selftest   Synthetic two-layer check; exit status 0 when speeds and distances are recovered
+
+<wfs>   pyramid WFS frames (4 pupil images); with wfsmode=1 a pupil intensity map
+<pha>   wavefront OPD map (DM surface, pseudo-open-loop reconstruction). Without it the pyramid
+        slopes are used: layers are found in both spaces, distances are only indicative.
+key=value sets a unit parameter, e.g. frate=1000 tbin=4 diam=8.2 modrad=3 phaunit=1e-6
+(list: ${EXE##*/} -h). frate, the WFS frame rate [Hz], is required.
+
+Environment:
+  WINDLAYERS_NAME    FPS name of the unit (default: windlayers)
+  WINDLAYERS_PREFIX  prefix of the output streams (default: wl)
+  WINDLAYERS_BIN     directory of the compiled unit (default: <repo>/_work/bin)
+EOF
+}
+
+case "${1:-}" in
+    -h1|--help-oneline) echo "${DESC_SHORT}"; exit 0 ;;
+    -h|--help|-hm|"")   usage; exit 0 ;;
+esac
+
+# Compile the unit when missing or older than its sources
+build_unit() {
+    local force="${1:-0}"
+    if (( ! force )) && [[ -x "${EXE}" && "${EXE}" -nt "${SCRIPT_DIR}/windlayers.c" &&
+                           "${EXE}" -nt "${SCRIPT_DIR}/windlayers_core.h" ]]; then
+        return 0
+    fi
+    mkdir -p "${BINDIR}" || return 1
+    echo "[windlayers] compiling ${EXE}"
+    local log
+    if ! log="$(milk-cc "${SCRIPT_DIR}/windlayers.c" -o "${EXE}" 2>&1)"; then
+        printf '%s\n' "${log}" >&2
+        return 1
+    fi
+}
+
+# Arguments "key=value" -> ".key=value"
+kv_args() {
+    KV=()
+    local a
+    for a in "$@"; do
+        if [[ "${a}" != *=* ]]; then
+            echo "[windlayers] ERROR: expected key=value, got '${a}'" >&2
+            return 2
+        fi
+        KV+=(".${a}")
+    done
+}
+
+# A FITS file is loaded into a shared image, anything else is taken as an image name
+LOADED=()
+resolve_cube() {
+    local arg="$1" tag="$2"
+    case "${arg}" in
+        *.fits|*.fits.fz|*.fits.gz)
+            RESOLVED="${PFX}_${tag}cube"
+            rm -f "${MILK_SHM_DIR:-/milk/shm}/${RESOLVED}.im.shm"
+            iofits.loadfits "${arg}" "@S:${RESOLVED}" 2 >/dev/null 2>&1 || {
+                echo "[windlayers] ERROR: cannot load ${arg}" >&2
+                return 1
+            }
+            LOADED+=("${RESOLVED}")
+            ;;
+        *)
+            RESOLVED="${arg}"
+            @exists "s.${RESOLVED}" || { echo "[windlayers] ERROR: no image ${arg}" >&2; return 1; }
+            ;;
+    esac
+}
+
+drop_loaded() {
+    local s
+    for s in "${LOADED[@]:-}"; do
+        [[ -n "${s}" ]] && rm -f "${MILK_SHM_DIR:-/milk/shm}/${s}.im.shm"
+    done
+    LOADED=()
+}
+
+# Layer table from the <prefix>_layers stream
+print_layers() {
+    @exists "s.${PFX}_layers" || { echo "[windlayers] no result yet (${PFX}_layers)"; return 1; }
+    local n zv l r
+    @get n="f.${UNIT}.res.nlayers" zv="f.${UNIT}.res.zvalid" 2>/dev/null || { n=8; zv=1; }
+    printf '%2s %8s %8s %8s %7s %7s %7s %7s %10s %8s %6s\n' \
+        l "vx[m/s]" "vy[m/s]" speed "dir" snr frac_k frac_i "z[m]" zerr coh
+    for (( l = 0; l < 8; l++ )); do
+        @calc -a r "${PFX}_layers[*, ${l}]"
+        [[ "${r[15]%%.*}" == "1" ]] || continue
+        printf '%2d %8.2f %8.2f %8.2f %7.1f %7.1f %7.3f %7.3f %10.0f %8.0f %6.2f\n' \
+            "${l}" "${r[0]}" "${r[1]}" "${r[2]}" "${r[3]}" "${r[4]}" "${r[8]}" "${r[9]}" \
+            "${r[10]}" "${r[11]}" "${r[12]}"
+    done
+    (( zv )) || echo "(distances from the slopes model: indicative only, give an OPD stream)"
+}
+
+cmd_cube() {
+    local outdir="" pos=() rest=()
+    while (( $# )); do
+        case "$1" in
+            --outdir) outdir="$2"; shift 2 ;;
+            *=*)      rest+=("$1"); shift ;;
+            *)        pos+=("$1"); shift ;;
+        esac
+    done
+    (( ${#pos[@]} >= 1 )) || { usage; return 2; }
+    kv_args "${rest[@]:-frate=0}" || return 2
+    build_unit || return 1
+    local wfs pha=""
+    resolve_cube "${pos[0]}" wfs || return 1
+    wfs="${RESOLVED}"
+    if (( ${#pos[@]} >= 2 )); then
+        resolve_cube "${pos[1]}" pha || { drop_loaded; return 1; }
+        pha="${RESOLVED}"
+    fi
+    local args=(".wfs=${wfs}" ".pha=${pha}" ".outname=${PFX}" "${KV[@]}")
+    if [[ -n "${outdir}" ]]; then
+        mkdir -p "${outdir}" || return 1
+        args+=(".report=windlayers_report.txt")
+    fi
+    milk-fps-rm -f -q --ignore-missing "${UNIT}" >/dev/null 2>&1
+    # run in the output directory: FPS strings hold 63 characters, so file names stay relative
+    local st=0 rundir="${outdir:-.}" d had=()
+    for d in "fps.${UNIT}.confdir" "fps.${UNIT}.datadir"; do
+        [[ -e "${rundir}/${d}" ]] && had+=("${d}")
+    done
+    (
+        cd "${rundir}" || exit 1
+        "${EXE}" -n "${UNIT}" exec "${args[@]}" 2>&1
+    ) | grep -E '^\[windlayers\]|^#|^ +[0-9]+ ' || st=1
+    drop_loaded
+    for d in "fps.${UNIT}.confdir" "fps.${UNIT}.datadir"; do
+        [[ " ${had[*]:-} " == *" ${d} "* ]] || rm -rf "${rundir:?}/${d}"
+    done
+    if (( st == 0 )) && [[ -n "${outdir}" ]]; then
+        local m here="${PWD}"
+        cd "${outdir}" || return 1
+        for m in vmapk vmapi vmapx layers; do
+            iofits.saveFITS "${PFX}_${m}" "!windlayers_${m}.fits" >/dev/null 2>&1 ||
+                echo "[windlayers] WARNING: could not save windlayers_${m}.fits" >&2
+        done
+        cd "${here}" || return 1
+    fi
+    return "${st}"
+}
+
+cmd_start() {
+    local pos=() rest=()
+    while (( $# )); do
+        case "$1" in
+            *=*) rest+=("$1"); shift ;;
+            *)   pos+=("$1"); shift ;;
+        esac
+    done
+    (( ${#pos[@]} >= 1 )) || { usage; return 2; }
+    kv_args "${rest[@]:-frate=0}" || return 2
+    build_unit || return 1
+    @exists "s.${pos[0]}" || { echo "[windlayers] ERROR: no stream ${pos[0]}" >&2; return 1; }
+    milk-fps-runstop -q "${UNIT}" >/dev/null 2>&1
+    milk-fps-rm -f -q --ignore-missing "${UNIT}" >/dev/null 2>&1
+    "${EXE}" -n "${UNIT}" fpsinit ".wfs=${pos[0]}" ".pha=${pos[1]:-}" ".outname=${PFX}" \
+        "${KV[@]}" >/dev/null || return 1
+    "${EXE}" -n "${UNIT}" -loops runstart >/dev/null || {
+        echo "[windlayers] ERROR: unit did not start (milk-fps-log ${UNIT})" >&2
+        return 1
+    }
+    echo "[windlayers] unit ${UNIT} running on ${pos[0]}${pos[1]:+ + ${pos[1]}};" \
+         "results: ${SCRIPT_NAME} report"
+}
+
+cmd_stop() {
+    milk-fps-runstop -q "${UNIT}" >/dev/null 2>&1
+    if [[ "${1:-}" == "--rm" ]]; then
+        milk-fps-rm -f -q --ignore-missing "${UNIT}" >/dev/null 2>&1
+        local m
+        for m in vmapk vmapi vmapx layers imap kmap; do
+            rm -f "${MILK_SHM_DIR:-/milk/shm}/${PFX}_${m}.im.shm"
+        done
+    fi
+}
+
+# Synthetic check. Two frozen screens on a fine periodic grid move by whole fine pixels per
+# frame. The OPD is their sum; the intensity is 1 - z_a lap(a) - z_b lap(b), the geometric
+# propagation of each screen over its own distance. Both are binned to the WFS pixel.
+cmd_selftest() {
+    local keep=0
+    [[ "${1:-}" == "--keep" ]] && keep=1
+    build_unit || return 1
+    local nfr=2400 nf=512 n=32 dxf=0.03125 frate=200
+    local za=8000 zb=15000
+    local sfx=3 sfy=0 tfx=-1 tfy=2          # fine pixels per frame
+    local t="${PFX}st"
+    local s
+    for s in icube pcube qcube rcube; do
+        rm -f "${MILK_SHM_DIR:-/milk/shm}/${t}_${s}.im.shm"
+    done
+    echo "[selftest] building ${nfr} synthetic frames"
+    local prog
+    prog="$(cat <<EOF
+z0 = zeros(${nf}, ${nf})
+kx = ix(z0, 0, 0)
+ky = iy(z0, 0, 0)
+kx = where(kx > ${nf} / 2, kx - ${nf}, kx)
+ky = where(ky > ${nf} / 2, ky - ${nf}, ky)
+flt = exp(-(kx * kx + ky * ky) / (2 * 14 * 14))
+sa = real(ifft(fft(randn(z0, 11)) * flt))
+sb = real(ifft(fft(randn(z0, 23)) * flt))
+sa = sa * (1e-7 / istd(sa))
+sb = sb * (1e-7 / istd(sb))
+d2 = ${dxf} * ${dxf}
+la = (roll(sa, 1, 0) + roll(sa, -1, 0) + roll(sa, 0, 1) + roll(sa, 0, -1) - 4 * sa) / d2
+lb = (roll(sb, 1, 0) + roll(sb, -1, 0) + roll(sb, 0, 1) + roll(sb, 0, -1) - 4 * sb) / d2
+zn = zeros(${n}, ${n})
+rr = ir(zn, ${n} / 2 - 0.5, ${n} / 2 - 0.5)
+pup = (rr <= 15.0) * (rr >= 4.5)
+S:${t}_icube = zeros(${n}, ${n}, ${nfr})
+S:${t}_pcube = zeros(${n} * 2, ${n} * 2, ${nfr})
+S:${t}_qcube = zeros(${n} * 2, ${n} * 2, ${nfr})
+S:${t}_rcube = zeros(80, 80, ${nfr})
+for k = 0:${nfr} - 1 {
+    ra = roll(sa, ${sfx} * k, ${sfy} * k)
+    rb = roll(sb, ${tfx} * k, ${tfy} * k)
+    qa = roll(la, ${sfx} * k, ${sfy} * k)
+    qb = roll(lb, ${tfx} * k, ${tfy} * k)
+    im = pup * (1 - ${za} * qa[0:255::8b, 0:255::8b] - ${zb} * qb[0:255::8b, 0:255::8b])
+    ${t}_icube[*, *, k] = im
+    ${t}_pcube[*, *, k] = (ra[0:255::4b, 0:255::4b] + rb[0:255::4b, 0:255::4b]) * 1e6
+    ${t}_qcube[0:31, 0:31, k] = im * 0.25
+    ${t}_qcube[32:63, 0:31, k] = im * 0.25
+    ${t}_qcube[0:31, 32:63, k] = im * 0.25
+    ${t}_qcube[32:63, 32:63, k] = im * 0.25
+    ${t}_rcube[4:35, 4:35, k] = im * 0.25
+    ${t}_rcube[44:75, 4:35, k] = im * 0.25
+    ${t}_rcube[4:35, 44:75, k] = im * 0.25
+    ${t}_rcube[44:75, 44:75, k] = im * 0.25
+}
+EOF
+)"
+    @calc "${prog}" || { echo "[selftest] FAILED: could not build the synthetic cubes"; return 1; }
+    local vax vay vbx vby
+    @calc -v vax "${sfx} * ${dxf} * ${frate}"
+    @calc -v vay "${sfy} * ${dxf} * ${frate}"
+    @calc -v vbx "${tfx} * ${dxf} * ${frate}"
+    @calc -v vby "${tfy} * ${dxf} * ${frate}"
+    echo "[selftest] truth: A v=(${vax}, ${vay}) m/s z=${za} m;  B v=(${vbx}, ${vby}) m/s z=${zb} m"
+
+    # three inputs: a pupil intensity map; pyramid frames, pupil images in the 4 quadrants;
+    # pyramid frames with the 4 pupil images at given centres (OPD pitch then given too)
+    local fail=0 mode
+    for mode in map pyramid centres; do
+        local wfs="${t}_icube" extra=(wfsmode=1)
+        [[ "${mode}" == "pyramid" ]] && { wfs="${t}_qcube"; extra=(wfsmode=0 modrad=500); }
+        if [[ "${mode}" == "centres" ]]; then
+            wfs="${t}_rcube"
+            extra=(wfsmode=0 modrad=500 pupx=19.5,59.5,19.5,59.5 pupy=19.5,19.5,59.5,59.5
+                   phapitch=0.125)
+        fi
+        echo "[selftest] --- ${mode} input"
+        cmd_cube "${wfs}" "${t}_pcube" frate="${frate}" diam=7.5 diampix=30 phaunit=1e-6 \
+            phasign=1 vmax=30 "${extra[@]}" | grep -E '^ +[0-9]+ ' || fail=1
+        local l r found_a=0 found_b=0
+        for (( l = 0; l < 8; l++ )); do
+            @calc -a r "${PFX}_layers[*, ${l}]"
+            [[ "${r[15]%%.*}" == "1" ]] || continue
+            if @test "hypot(${r[0]} - (${vax}), ${r[1]} - (${vay})) < 0.5" &&
+               @test "abs(${r[10]} / ${za} - 1) < 0.1"; then
+                found_a=1
+            fi
+            if @test "hypot(${r[0]} - (${vbx}), ${r[1]} - (${vby})) < 0.5" &&
+               @test "abs(${r[10]} / ${zb} - 1) < 0.1"; then
+                found_b=1
+            fi
+        done
+        if (( found_a && found_b )); then
+            echo "[selftest] ${mode}: both layers recovered (speed within 0.5 m/s, z within 10%)"
+        else
+            echo "[selftest] ${mode}: FAILED (layer A found=${found_a}, layer B found=${found_b})"
+            fail=1
+        fi
+    done
+    if (( ! keep )); then
+        for s in icube pcube qcube rcube; do
+            rm -f "${MILK_SHM_DIR:-/milk/shm}/${t}_${s}.im.shm"
+        done
+        cmd_stop --rm
+    fi
+    (( fail )) && { echo "[selftest] FAILED"; return 1; }
+    echo "[selftest] PASSED"
+}
+
+CMD="$1"
+shift
+case "${CMD}" in
+    build)    if [[ "${1:-}" == "--force" ]]; then build_unit 1; else build_unit 0; fi ;;
+    cube)     cmd_cube "$@" ;;
+    start)    cmd_start "$@" ;;
+    report)   print_layers ;;
+    stop)     cmd_stop "$@" ;;
+    selftest) cmd_selftest "$@" ;;
+    *)        echo "${SCRIPT_NAME}: unknown command '${CMD}'" >&2; usage >&2; exit 2 ;;
+esac
+exit $?
