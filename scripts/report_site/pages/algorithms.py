@@ -364,7 +364,8 @@ def _render_pipeline_board(
 ) -> str:
     placed: set[str] = set()
     cols_html: list[str] = []
-    for step_lbl, col_title, codes in _PIPELINE_COLUMNS:
+    n_cols = len(_PIPELINE_COLUMNS)
+    for col_idx, (step_lbl, col_title, codes) in enumerate(_PIPELINE_COLUMNS):
         cards: list[str] = []
         for code in codes:
             e = by_code.get(code)
@@ -381,18 +382,18 @@ def _render_pipeline_board(
             cards.append(
                 f'<div class="algo-pipe-card cat-{role}" '
                 f'data-pipe-code="{html.escape(code, quote=True)}">'
+                '<span class="pipe-rel-ribbon pipe-rel-focus">&#9733; Selected</span>'
+                '<span class="pipe-rel-ribbon pipe-rel-up">&larr; Required</span>'
+                '<span class="pipe-rel-ribbon pipe-rel-opt">&#9671; Optional</span>'
+                '<span class="pipe-rel-ribbon pipe-rel-down">&rarr; Enables</span>'
+                '<span class="pipe-rel-ribbon pipe-rel-fb">&#8644; Feedback</span>'
                 '<div class="algo-pipe-card-top">'
                 f'<a class="algo-code-badge algo-code-badge-sm cat-{role}" '
                 f'href="{entry_href}">{html.escape(code, quote=False)}</a>'
-                '<span>'
-                '<span class="pipe-rel-tag pipe-rel-focus">FOCUS</span>'
-                '<span class="pipe-rel-tag pipe-rel-up">REQ</span>'
-                '<span class="pipe-rel-tag pipe-rel-opt">OPT</span>'
-                '<span class="pipe-rel-tag pipe-rel-down">ENABLES</span>'
                 f'<button type="button" class="algo-pipe-pin" '
                 f'data-pipe-pin="{html.escape(code, quote=True)}" '
-                f'title="Pin dependency wires for {html.escape(code, quote=True)}">Pin</button>'
-                "</span></div>"
+                f'title="Lock dependency highlight for {html.escape(code, quote=True)}">Pin</button>'
+                "</div>"
                 f'<a class="algo-pipe-card-link" href="{entry_href}">'
                 f'<div class="algo-pipe-card-name">{html.escape(name, quote=False)}</div>'
                 "</a>"
@@ -401,12 +402,19 @@ def _render_pipeline_board(
                 f"<span>{n_in} in &middot; {n_out} out</span>"
                 "</div></div>"
             )
+        arrow_span = (
+            '<span class="algo-pipe-col-arrow" aria-hidden="true">&rarr;</span>'
+            if col_idx < n_cols - 1
+            else ""
+        )
         cols_html.append(
             '<div class="algo-pipe-col">'
             '<div class="algo-pipe-col-hdr">'
+            "<div>"
             f'<div class="algo-pipe-col-step">{html.escape(step_lbl, quote=False)}</div>'
             f'<div class="algo-pipe-col-title">{html.escape(col_title, quote=False)}</div>'
-            f'</div>{"".join(cards)}</div>'
+            f"</div>{arrow_span}</div>"
+            f'{"".join(cards)}</div>'
         )
 
     # Append any unplaced entries to the last column as safety net
@@ -430,7 +438,20 @@ def _render_pipeline_board(
         f"{html.escape(plbl, quote=False)}</button>"
         for pid, plbl, _ in _PIPELINE_PRESETS
     )
-    preset_payload = {pid: {"label": plbl, "codes": list(pcodes)} for pid, plbl, pcodes in _PIPELINE_PRESETS}
+    preset_payload = {
+        pid: {"label": plbl, "codes": list(pcodes)} for pid, plbl, pcodes in _PIPELINE_PRESETS
+    }
+
+    outline_legend = (
+        '<div class="algo-outline-legend" id="algo-outline-legend">'
+        "<strong>Outline Code (on hover / Pin):</strong>"
+        '<span class="outline-key-chip outline-key-focus">&#9733; Selected</span>'
+        '<span class="outline-key-chip outline-key-req">&larr; Required Calib / Input</span>'
+        '<span class="outline-key-chip outline-key-opt">&#9671; Optional Enhancement</span>'
+        '<span class="outline-key-chip outline-key-down">&rarr; Enables Downstream</span>'
+        '<span class="outline-key-chip outline-key-fb">&#8644; Runtime Feedback</span>'
+        "</div>\n"
+    )
 
     return (
         '<div class="algo-pipe-toolbar">'
@@ -440,19 +461,17 @@ def _render_pipeline_board(
         '<button type="button" class="btn-sm" id="algo-pipe-clear">Clear</button>'
         "</div>"
         '<div class="toolbar-group">'
-        '<span class="filter-inline-label">Wire Scope:</span>'
+        '<span class="filter-inline-label">Scope:</span>'
         '<button type="button" class="chip-btn active" data-pipe-depth="direct">Direct</button>'
         '<button type="button" class="chip-btn" data-pipe-depth="full">Full Chain</button>'
         "</div></div>\n"
-        '<div class="algo-pipe-status" id="algo-pipe-status">'
-        "<span>Hover any card to inspect its required calibrations "
-        "(<strong>amber</strong>), optional enhancements (<strong>teal</strong>), and "
-        "downstream algorithms (<strong>blue</strong>). Click any card to open its page, "
-        "or click <strong>Pin</strong> to lock wires.</span></div>\n"
+        + outline_legend
+        + '<div class="algo-pipe-status" id="algo-pipe-status">'
+        "<span>Hover any card to outline its <strong>Required</strong> calibrations (thick amber), "
+        "<strong>Optional</strong> inputs (dashed teal), and <strong>Enabled</strong> algorithms "
+        "(thick blue). Click any card to open its page, or click <strong>Pin</strong> to lock "
+        "outlines while clicking prerequisites.</span></div>\n"
         '<div class="algo-pipe-board" id="algo-pipeline-board">\n'
-        '<svg class="algo-pipe-svg algo-pipe-svg-base" id="algo-pipe-svg-base" '
-        'aria-hidden="true"></svg>\n'
-        '<svg class="algo-pipe-svg" id="algo-pipe-svg" aria-hidden="true"></svg>\n'
         + "\n".join(cols_html)
         + "\n</div>\n"
         f'<script type="application/json" id="algo-pipe-presets">'
@@ -475,19 +494,19 @@ def _render_detail_flow_strip(
     en_opt_codes = [str(c) for c in (entry.get("enables_optional") or []) if c in by_code]
     fb_out_codes = [str(c) for c in (entry.get("feeds_runtime") or []) if c in by_code]
 
-    def _mini_card(c: str, rel_kind: str, rel_lbl: str, side: str) -> str:
+    def _mini_card(c: str, outline_cls: str, ribbon_cls: str, ribbon_lbl: str) -> str:
         t = by_code[c]
         tr = str(t["role"])
         ts = str(t["slug"])
         tn = str(t["name"])
         href = f"../{html.escape(ts, quote=True)}/index.html"
         return (
-            f'<div class="algo-pipe-card cat-{tr}" '
-            f'data-flow-side="{side}" data-flow-kind="{rel_kind}">'
+            f'<div class="algo-pipe-card cat-{tr} {outline_cls}">'
+            f'<span class="pipe-rel-ribbon {ribbon_cls}">{ribbon_lbl}</span>'
             '<div class="algo-pipe-card-top">'
             f'<a class="algo-code-badge algo-code-badge-sm cat-{tr}" href="{href}">'
             f"{html.escape(c, quote=False)}</a>"
-            f'<span class="dep-cell dep-cell-{rel_kind}">{html.escape(rel_lbl, quote=False)}</span>'
+            f'<span class="muted">{html.escape(ALGO_ROLES[tr]["short"], quote=False)}</span>'
             "</div>"
             f'<a class="algo-pipe-card-link" href="{href}">'
             f'<div class="algo-pipe-card-name">{html.escape(tn, quote=False)}</div>'
@@ -495,24 +514,24 @@ def _render_detail_flow_strip(
         )
 
     up_cards = (
-        [_mini_card(c, "req", "REQ", "up") for c in req_codes]
-        + [_mini_card(c, "opt", "OPT", "up") for c in opt_codes]
-        + [_mini_card(c, "fb", "FB", "up") for c in fb_codes]
+        [_mini_card(c, "pipe-up", "pipe-rel-up", "&larr; Required") for c in req_codes]
+        + [_mini_card(c, "pipe-opt", "pipe-rel-opt", "&#9671; Optional") for c in opt_codes]
+        + [_mini_card(c, "pipe-fb", "pipe-rel-fb", "&#8644; Feedback") for c in fb_codes]
     )
     down_cards = (
-        [_mini_card(c, "req", "ENABLES", "down") for c in en_codes]
-        + [_mini_card(c, "opt", "OPT", "down") for c in en_opt_codes]
-        + [_mini_card(c, "fb", "FB", "down") for c in fb_out_codes]
+        [_mini_card(c, "pipe-down", "pipe-rel-down", "&rarr; Enables") for c in en_codes]
+        + [_mini_card(c, "pipe-opt", "pipe-rel-opt", "&#9671; Optional") for c in en_opt_codes]
+        + [_mini_card(c, "pipe-fb", "pipe-rel-fb", "&#8644; Feedback") for c in fb_out_codes]
     )
 
     center_card = (
-        f'<div class="algo-pipe-card algo-flow-center cat-{role}" data-flow-side="center">'
+        f'<div class="algo-pipe-card algo-flow-center cat-{role} pipe-focus">'
+        '<span class="pipe-rel-ribbon pipe-rel-focus">&#9733; Current Entry</span>'
         '<div class="algo-pipe-card-top">'
         f'<span class="algo-code-badge cat-{role}">{html.escape(code, quote=False)}</span>'
         f'<span class="algo-legend-pill cat-{role}">{html.escape(rmeta["short"], quote=False)}</span>'
         "</div>"
         f'<div class="algo-pipe-card-name">{html.escape(name, quote=False)}</div>'
-        f'<div class="algo-pipe-card-meta"><span>Current Entry</span></div>'
         "</div>"
     )
 
@@ -529,13 +548,14 @@ def _render_detail_flow_strip(
 
     return (
         '<div class="algo-flow-strip" id="algo-detail-flow">\n'
-        '<svg class="algo-pipe-svg" id="algo-detail-flow-svg" aria-hidden="true"></svg>\n'
         '<div class="algo-flow-col">'
         '<div class="algo-flow-col-hdr">Upstream Calibrations &amp; Inputs</div>'
         f"{up_html}</div>\n"
+        '<div class="algo-flow-chevron" aria-hidden="true">&rarr;</div>\n'
         '<div class="algo-flow-col">'
         '<div class="algo-flow-col-hdr">Selected Algorithm</div>'
         f"{center_card}</div>\n"
+        '<div class="algo-flow-chevron" aria-hidden="true">&rarr;</div>\n'
         '<div class="algo-flow-col">'
         '<div class="algo-flow-col-hdr">Feeds &amp; Enables Downstream</div>'
         f"{down_html}</div>\n"
@@ -603,6 +623,7 @@ def build_algorithms_index_html(
             "name": str(e["name"]),
             "req": list(e.get("requires") or []),
             "opt": list(e.get("optional_requires") or []),
+            "fb_in": list(e.get("feedback_from") or []),
             "en": list(e.get("enables") or []),
             "en_opt": list(e.get("enables_optional") or []),
             "fb_out": list(e.get("feeds_runtime") or []),
@@ -649,8 +670,8 @@ def build_algorithms_index_html(
         "<h2>Interactive Calibration &amp; Operation Pipeline Map</h2>\n"
         '<p class="muted">Organized left-to-right from bench &amp; base calibration through '
         "3D dynamic shaping, core RT &amp; online calibration, prediction, and diagnostics. "
-        "Hover any card (or select a stack preset) to trace exact dependency wires; click any "
-        "card to open its dedicated page.</p>\n"
+        "Hover any card (or select a stack preset) to highlight its dependency outline code; "
+        "click any card to open its dedicated page.</p>\n"
         + _render_pipeline_board(entries, by_code)
         + "\n</section>"
     )
