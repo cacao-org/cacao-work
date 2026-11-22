@@ -317,120 +317,314 @@ def _render_matrix_panel(algo_catalog: dict[str, object]) -> str:
     )
 
 
-_PIPELINE_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("Step 1", "Bench & Base Calib", ("SIM/PLATE", "SIM/WROT", "MLAT", "RM", "SRM")),
-    (
-        "Step 2",
-        "3D RM & DM Shaping",
-        ("3DRM/P1", "PRESH/CAL", "PRESH", "3DRM/P2", "3DRM/FACT", "LAG/2PT"),
-    ),
-    ("Step 3", "RT Core & Online Calib", ("INT", "PSOL", "OG/POKE", "2WFS/LIVE", "WIND")),
-    ("Step 4", "ZPO, Offload & Prediction", ("ZPO", "OFFL", "PF/AR", "EOF")),
-    ("Step 5", "Diagnostics & Research", ("WHITE", "TLM", "2WFS/POST", "HESS/CORO")),
+_PIPELINE_STAGE_TOGGLES: tuple[tuple[str, str, str], ...] = (
+    ("stg1", "Stage 1 (AO3k)", "1 kHz ALPAO 64x64 + NIR PyWFS"),
+    ("stg2", "Stage 2 (SCExAO)", "2 kHz MEMS 50x50 + Vis PyWFS"),
+    ("stg3", "Stage 3 (LLOWFS)", "Coronagraphic Lyot low-order WFS"),
 )
 
 _PIPELINE_PRESETS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "full-p15",
         "Full Phases 1-5 Stack",
-        ("PRESH", "PSOL", "OG/POKE", "2WFS/LIVE", "ZPO", "WIND", "EOF", "WHITE"),
+        (
+            "SIM/FUSED",
+            "SIM/PLATE",
+            "SIM/TURB",
+            "WFS/MOD",
+            "MLAT",
+            "RM/FAST",
+            "RM/DIR",
+            "3DRM/MIMO",
+            "OG/POKE",
+            "2WFS/IV",
+            "WIND",
+            "INT/MGAIN",
+            "PSOL/MIMO",
+            "EOF/BASE",
+            "EOF/ZOH",
+            "EOF/WIND",
+            "PRESH/4K",
+            "ZPO/OG",
+            "OFFL/2TO1",
+            "WHITE/RT",
+            "WHITE/OOS",
+        ),
     ),
     (
-        "plate-3drm",
-        "3D RM & Plate Pre-Shaper",
-        ("3DRM/P1", "PRESH/CAL", "PRESH", "3DRM/P2", "3DRM/FACT", "LAG/2PT", "PSOL"),
+        "int-mopt",
+        "Auto-Tuned Leaky Integrator",
+        (
+            "SIM/FUSED",
+            "SIM/PLATE",
+            "SIM/TURB",
+            "WFS/MOD",
+            "MLAT",
+            "RM/FAST",
+            "3DRM/DIAG",
+            "INT/LEAK",
+            "PSOL/DIAG",
+            "MOPT",
+            "WHITE/RT",
+        ),
     ),
     (
-        "stg1-og",
-        "Stage-1 Online OG",
-        ("RM", "3DRM/FACT", "LAG/2PT", "PSOL", "OG/POKE"),
-    ),
-    (
-        "stg2-2wfs",
-        "Stage-2 2WFS1DM + ZPO",
-        ("RM", "PSOL", "2WFS/LIVE", "ZPO", "OFFL"),
+        "unmod-2wfs",
+        "Unmodulated 0 l/D + 2WFS/ZPO",
+        (
+            "SIM/FUSED",
+            "SIM/PLATE",
+            "SIM/TURB",
+            "WFS/UNMOD",
+            "MLAT",
+            "RM/FAST",
+            "RM/DIR",
+            "3DRM/MIMO",
+            "SRM",
+            "OG/POKE",
+            "2WFS/IV",
+            "INT/MGAIN",
+            "PSOL/MIMO",
+            "PRESH/4K",
+            "ZPO/OG",
+            "OFFL/2TO1",
+            "WHITE/RT",
+        ),
     ),
     (
         "wind-eof",
         "Wind-Switch Rescue EOF",
-        ("SIM/WROT", "PSOL", "WIND", "EOF", "WHITE"),
+        (
+            "SIM/FUSED",
+            "SIM/PLATE",
+            "SIM/WROT",
+            "WFS/MOD",
+            "MLAT",
+            "RM/FAST",
+            "WIND",
+            "INT/MGAIN",
+            "PSOL/2TAP",
+            "EOF/BASE",
+            "EOF/ZOH",
+            "EOF/WIND",
+            "WHITE/RT",
+            "WHITE/OOS",
+        ),
+    ),
+    (
+        "fx-eof",
+        "Unshaped Plate FX-EOF",
+        (
+            "SIM/FUSED",
+            "SIM/PLATE",
+            "SIM/TURB",
+            "WFS/MOD",
+            "MLAT",
+            "RM/FAST",
+            "3DRM/MIMO",
+            "INT/MGAIN",
+            "PSOL/MIMO",
+            "EOF/BASE",
+            "EOF/FX",
+            "WHITE/RT",
+        ),
+    ),
+    (
+        "mod-ar",
+        "Modular Bench + AR(P)",
+        (
+            "SIM/MOD",
+            "SIM/PLATE",
+            "SIM/TURB",
+            "WFS/MOD",
+            "MLAT",
+            "RM/HAD",
+            "RM/DIR",
+            "INT/MGAIN",
+            "PSOL/2TAP",
+            "PF/AR",
+            "ZPO/FIX",
+            "TLM/SYNC",
+            "TLM/OPT",
+            "TLM/PSFR",
+            "2WFS/POST",
+        ),
     ),
 )
 
 
-def _render_pipeline_board(
-    entries: list[dict[str, object]],
-    by_code: dict[str, dict[str, object]],
-) -> str:
-    placed: set[str] = set()
-    cols_html: list[str] = []
-    n_cols = len(_PIPELINE_COLUMNS)
-    for col_idx, (step_lbl, col_title, codes) in enumerate(_PIPELINE_COLUMNS):
-        cards: list[str] = []
-        for code in codes:
-            e = by_code.get(code)
-            if not e:
-                continue
-            placed.add(code)
-            role = str(e["role"])
-            slug = str(e["slug"])
-            name = str(e["name"])
-            rmeta = ALGO_ROLES[role]
-            n_in = len(e.get("requires") or []) + len(e.get("optional_requires") or [])
-            n_out = len(e.get("enables") or []) + len(e.get("enables_optional") or [])
-            entry_href = f"./{html.escape(slug, quote=True)}/index.html"
-            cards.append(
-                f'<div class="algo-pipe-card cat-{role}" '
-                f'data-pipe-code="{html.escape(code, quote=True)}">'
-                '<span class="pipe-rel-ribbon pipe-rel-focus">&#9733; Selected</span>'
-                '<span class="pipe-rel-ribbon pipe-rel-up">&larr; Required</span>'
-                '<span class="pipe-rel-ribbon pipe-rel-opt">&#9671; Optional</span>'
-                '<span class="pipe-rel-ribbon pipe-rel-down">&rarr; Enables</span>'
-                '<span class="pipe-rel-ribbon pipe-rel-fb">&#8644; Feedback</span>'
-                '<div class="algo-pipe-card-top">'
-                f'<a class="algo-code-badge algo-code-badge-sm cat-{role}" '
-                f'href="{entry_href}">{html.escape(code, quote=False)}</a>'
-                f'<button type="button" class="algo-pipe-pin" '
-                f'data-pipe-pin="{html.escape(code, quote=True)}" '
-                f'title="Lock dependency highlight for {html.escape(code, quote=True)}">Pin</button>'
-                "</div>"
-                f'<a class="algo-pipe-card-link" href="{entry_href}">'
-                f'<div class="algo-pipe-card-name">{html.escape(name, quote=False)}</div>'
-                "</a>"
-                '<div class="algo-pipe-card-meta">'
-                f'<span>{html.escape(rmeta["short"], quote=False)}</span>'
-                f"<span>{n_in} in &middot; {n_out} out</span>"
-                "</div></div>"
-            )
-        arrow_span = (
-            '<span class="algo-pipe-col-arrow" aria-hidden="true">&rarr;</span>'
-            if col_idx < n_cols - 1
-            else ""
-        )
-        cols_html.append(
-            '<div class="algo-pipe-col">'
-            '<div class="algo-pipe-col-hdr">'
-            "<div>"
-            f'<div class="algo-pipe-col-step">{html.escape(step_lbl, quote=False)}</div>'
-            f'<div class="algo-pipe-col-title">{html.escape(col_title, quote=False)}</div>'
-            f"</div>{arrow_span}</div>"
-            f'{"".join(cards)}</div>'
-        )
+def _render_choice_card(choice: dict[str, object]) -> str:
+    code = str(choice["code"])
+    role = str(choice["role"])
+    name = str(choice["name"])
+    doc_href = str(choice["doc_href"])
+    is_radio = bool(choice.get("radio_group"))
+    dot_cls = "algo-pipe-state-dot algo-pipe-radio-dot" if is_radio else "algo-pipe-state-dot"
+    return (
+        f'<div class="algo-pipe-card cat-{role}" '
+        f'data-pipe-code="{html.escape(code, quote=True)}" '
+        'tabindex="0" role="button" aria-pressed="false">'
+        '<span class="pipe-rel-ribbon pipe-rel-focus">&#9733; Hovered</span>'
+        '<span class="pipe-rel-ribbon pipe-rel-up">&larr; Required</span>'
+        '<span class="pipe-rel-ribbon pipe-rel-opt">&#9671; Optional</span>'
+        '<span class="pipe-rel-ribbon pipe-rel-down">&rarr; Enables</span>'
+        '<span class="pipe-rel-ribbon pipe-rel-fb">&#8644; Feedback</span>'
+        '<span class="pipe-rel-ribbon pipe-rel-excl">&#10005; Exclusive</span>'
+        '<div class="algo-pipe-card-top">'
+        f'<a class="algo-code-badge algo-code-badge-sm cat-{role}" '
+        f'href="{html.escape(doc_href, quote=True)}" '
+        f'title="Open {html.escape(code, quote=True)} documentation">'
+        f"{html.escape(code, quote=False)}</a>"
+        '<span class="algo-pipe-card-actions">'
+        f'<a class="algo-pipe-docs-link" href="{html.escape(doc_href, quote=True)}" '
+        f'title="Open {html.escape(code, quote=True)} documentation">&nearr;</a>'
+        f'<span class="{dot_cls}" aria-hidden="true"></span>'
+        "</span>"
+        "</div>"
+        f'<div class="algo-pipe-card-name">{html.escape(name, quote=False)}</div>'
+        "</div>"
+    )
 
-    # Append any unplaced entries to the last column as safety net
-    extras = [e for e in entries if str(e["code"]) not in placed]
-    if extras:
-        extra_cards = "".join(
-            f'<div class="algo-pipe-card cat-{e["role"]}" '
-            f'data-pipe-code="{html.escape(str(e["code"]), quote=True)}">'
-            f'<a class="algo-code-badge algo-code-badge-sm cat-{e["role"]}" '
-            f'href="./{html.escape(str(e["slug"]), quote=True)}/index.html">'
-            f'{html.escape(str(e["code"]), quote=False)}</a>'
-            f'<div class="algo-pipe-card-name">{html.escape(str(e["name"]), quote=False)}</div>'
-            "</div>"
-            for e in extras
-        )
-        cols_html.append(f'<div class="algo-pipe-col">{extra_cards}</div>')
+
+def _render_pipeline_board(algo_catalog: dict[str, object]) -> str:
+    pcat: dict[str, object] = algo_catalog["pipeline_choices"]  # type: ignore[assignment]
+    items: list[dict[str, object]] = pcat["items"]  # type: ignore[assignment]
+
+    by_zone: dict[str, list[dict[str, object]]] = {}
+    for it in items:
+        z = str(it.get("zone") or "diag")
+        by_zone.setdefault(z, []).append(it)
+
+    def _zone_html(zkey: str) -> str:
+        return "".join(_render_choice_card(it) for it in by_zone.get(zkey, []))
+
+    stage_btns = "".join(
+        f'<button type="button" class="algo-stage-btn active" '
+        f'data-pipe-stage="{html.escape(skey, quote=True)}" aria-pressed="true" '
+        f'title="{html.escape(sdesc, quote=True)}">'
+        '<span class="algo-stage-check" aria-hidden="true"></span>'
+        f'<span>{html.escape(slbl, quote=False)}</span></button>'
+        for skey, slbl, sdesc in _PIPELINE_STAGE_TOGGLES
+    )
+
+    sim_strip_html = (
+        '<div class="algo-sim-strip" id="algo-sim-strip">\n'
+        '  <div class="algo-sim-section algo-sim-stages">\n'
+        '    <div class="algo-sim-section-hdr">Active AO Stages</div>\n'
+        f'    <div class="algo-stage-toggles">{stage_btns}</div>\n'
+        "  </div>\n"
+        '  <div class="algo-sim-section algo-sim-models">\n'
+        '    <div class="algo-sim-section-hdr">'
+        "Simulation &amp; Bench Setup (mutually exclusive pairs)</div>\n"
+        '    <div class="algo-sim-groups">\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Bench Engine</div>'
+        f'<div class="algo-choice-row-2">{_zone_html("sim_bench")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Stage-1 DM Physics</div>'
+        f'<div class="algo-choice-row-2">{_zone_html("sim_dm")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Atmosphere</div>'
+        f'<div class="algo-choice-row-2">{_zone_html("sim_atm")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">PyWFS Modulation</div>'
+        f'<div class="algo-choice-row-2">{_zone_html("sim_wfs")}</div></div>\n'
+        "    </div>\n"
+        "  </div>\n"
+        "</div>\n"
+    )
+
+    mid_board_html = (
+        '<div class="algo-pipe-board" id="algo-pipeline-board">\n'
+        '  <div class="algo-pipe-group algo-group-calib" id="algo-group-calibration">\n'
+        '    <div class="algo-pipe-group-hdr">'
+        "<span>Calibration</span>"
+        '<span class="algo-pipe-group-sub">Offline pre-loop &amp; Online in-loop choices</span>'
+        "</div>\n"
+        '    <div class="algo-calib-split">\n'
+        '      <div class="algo-pipe-sub algo-sub-offline" id="algo-sub-offline">\n'
+        '        <div class="algo-pipe-sub-hdr">Offline Calibration</div>\n'
+        '        <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Timing, Stage-3 RM &amp; Reference</div>'
+        f'<div class="algo-pipe-grid-2">{_zone_html("calib_offline_base")}</div></div>\n'
+        '        <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Static RM Acquisition (choose 1)</div>'
+        f'<div class="algo-pipe-grid-2">{_zone_html("calib_offline_rm")}</div></div>\n'
+        '        <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">3D Dynamic Plant RM (optional, choose 1)</div>'
+        f'<div class="algo-pipe-grid-2">{_zone_html("calib_offline_3drm")}</div></div>\n'
+        "      </div>\n"
+        '      <div class="algo-pipe-sub algo-sub-online" id="algo-sub-online">\n'
+        '        <div class="algo-pipe-sub-hdr">Online Calibration (In-Loop)</div>\n'
+        '        <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Active DM-Poke OG</div>'
+        f'<div class="algo-pipe-grid-1">{_zone_html("calib_online_og")}</div></div>\n'
+        '        <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Stage-2 Passive 2WFS1DM (choose 1)</div>'
+        f'<div class="algo-pipe-grid-1">{_zone_html("calib_online_2wfs")}</div></div>\n'
+        '        <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Adaptive Gain/Leak &amp; Wind</div>'
+        f'<div class="algo-pipe-grid-1">{_zone_html("calib_online_adapt")}</div></div>\n'
+        "      </div>\n"
+        "    </div>\n"
+        "  </div>\n"
+        '  <div class="algo-pipe-group-arrow" aria-hidden="true">&rarr;</div>\n'
+        '  <div class="algo-pipe-group algo-group-control" id="algo-group-control">\n'
+        '    <div class="algo-pipe-group-hdr">'
+        "<span>Control</span>"
+        '<span class="algo-pipe-group-sub">'
+        "Integrator, PSOL, predictive filters &amp; DM/ZPO</span>"
+        "</div>\n"
+        '    <div class="algo-pipe-sub algo-sub-control">\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Leaky Integrator Gain Law (choose 1)</div>'
+        f'<div class="algo-pipe-grid-2">{_zone_html("ctrl_int")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">PSOL Observer Model (choose 1)</div>'
+        f'<div class="algo-pipe-grid-3">{_zone_html("ctrl_psol")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">Predictive Controller (optional, choose 1)</div>'
+        f'<div class="algo-pipe-grid-2">{_zone_html("ctrl_pred")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">'
+        "EOF Options (requires EOF/BASE; EOF/WIND &#8856; EOF/FX)</div>"
+        f'<div class="algo-pipe-grid-3">{_zone_html("ctrl_eof_ext")}</div></div>\n'
+        '      <div class="algo-choice-group">'
+        '<div class="algo-choice-lbl">'
+        "DM Shaping, Zero-Point Offset (choose 1) &amp; Offload</div>"
+        f'<div class="algo-pipe-grid-2">{_zone_html("ctrl_aux")}</div></div>\n'
+        "    </div>\n"
+        "  </div>\n"
+        "</div>\n"
+    )
+
+    diag_strip_html = (
+        '<div class="algo-diag-strip" id="algo-diag-strip">\n'
+        '  <div class="algo-pipe-group-hdr">'
+        "<span>Diagnostics &amp; Telemetry</span>"
+        '<span class="algo-pipe-group-sub">'
+        "Online monitors, telemetry analysis, PSFR &amp; post-loop audits</span>"
+        "</div>\n"
+        f'  <div class="algo-diag-cards">{_zone_html("diag")}</div>\n'
+        "</div>\n"
+    )
+
+    pipe_graph_payload = {
+        str(it["code"]): {
+            "name": str(it["name"]),
+            "role": str(it["role"]),
+            "radio_group": str(it.get("radio_group") or ""),
+            "stage_req": dict(it.get("stage_req") or {"mode": "none", "stages": []}),
+            "req_clauses": list(it.get("req_clauses") or []),
+            "opt": list(it.get("opt") or []),
+            "fb_in": list(it.get("fb_in") or []),
+            "en": list(it.get("en") or []),
+            "en_opt": list(it.get("en_opt") or []),
+            "fb_out": list(it.get("fb_out") or []),
+            "excl": list(it.get("excl") or []),
+        }
+        for it in items
+    }
 
     preset_btns = "".join(
         f'<button type="button" class="chip-btn" '
@@ -444,36 +638,47 @@ def _render_pipeline_board(
 
     outline_legend = (
         '<div class="algo-outline-legend" id="algo-outline-legend">'
-        "<strong>Outline Code (on hover / Pin):</strong>"
-        '<span class="outline-key-chip outline-key-focus">&#9733; Selected</span>'
-        '<span class="outline-key-chip outline-key-req">&larr; Required Calib / Input</span>'
-        '<span class="outline-key-chip outline-key-opt">&#9671; Optional Enhancement</span>'
-        '<span class="outline-key-chip outline-key-down">&rarr; Enables Downstream</span>'
-        '<span class="outline-key-chip outline-key-fb">&#8644; Runtime Feedback</span>'
+        "<strong>Choice State:</strong>"
+        '<span class="outline-key-chip outline-key-sel">&#10003; Selected</span>'
+        '<span class="outline-key-chip outline-key-avail">&#9675; Selectable</span>'
+        '<span class="outline-key-chip outline-key-lock">&#8856; Locked</span>'
+        "<strong>Hover Preview:</strong>"
+        '<span class="outline-key-chip outline-key-focus">&#9733; Hovered</span>'
+        '<span class="outline-key-chip outline-key-req">&larr; Required</span>'
+        '<span class="outline-key-chip outline-key-opt">&#9671; Optional</span>'
+        '<span class="outline-key-chip outline-key-down">&rarr; Enables</span>'
+        '<span class="outline-key-chip outline-key-fb">&#8644; Feedback</span>'
+        '<span class="outline-key-chip outline-key-excl">&#10005; Exclusive</span>'
         "</div>\n"
     )
 
     return (
         '<div class="algo-pipe-toolbar">'
         '<div class="toolbar-group">'
-        '<span class="filter-inline-label">Highlight Stack:</span>'
+        '<span class="filter-inline-label">Load Preset:</span>'
         f"{preset_btns}"
-        '<button type="button" class="btn-sm" id="algo-pipe-clear">Clear</button>'
+        '<button type="button" class="btn-sm" id="algo-pipe-reset">Reset Baseline</button>'
+        '<button type="button" class="btn-sm" id="algo-pipe-clear">Clear Choices</button>'
         "</div>"
         '<div class="toolbar-group">'
-        '<span class="filter-inline-label">Scope:</span>'
+        '<span class="filter-inline-label">Hover Scope:</span>'
         '<button type="button" class="chip-btn active" data-pipe-depth="direct">Direct</button>'
         '<button type="button" class="chip-btn" data-pipe-depth="full">Full Chain</button>'
         "</div></div>\n"
         + outline_legend
         + '<div class="algo-pipe-status" id="algo-pipe-status">'
-        "<span>Hover any card to outline its <strong>Required</strong> calibrations (thick amber), "
-        "<strong>Optional</strong> inputs (dashed teal), and <strong>Enabled</strong> algorithms "
-        "(thick blue). Click any card to open its page, or click <strong>Pin</strong> to lock "
-        "outlines while clicking prerequisites.</span></div>\n"
-        '<div class="algo-pipe-board" id="algo-pipeline-board">\n'
-        + "\n".join(cols_html)
-        + "\n</div>\n"
+        "<span>Configure active stages and simulation choices at the top, then click algorithmic "
+        "options below. Locked choices are greyed out until prerequisites are met; mutually "
+        "exclusive choices automatically switch each other off.</span>"
+        "</div>\n"
+        '<div class="algo-pipe-workspace" id="algo-pipe-workspace">\n'
+        + sim_strip_html
+        + mid_board_html
+        + diag_strip_html
+        + "</div>\n"
+        + '<div class="algo-pipe-profile" id="algo-pipe-profile"></div>\n'
+        f'<script type="application/json" id="algo-pipe-graph-data">'
+        f"{safe_json_embed(pipe_graph_payload)}</script>\n"
         f'<script type="application/json" id="algo-pipe-presets">'
         f"{safe_json_embed(preset_payload)}</script>"
     )
@@ -586,7 +791,7 @@ def build_algorithms_index_html(
         '<div class="kpi-grid">'
         + kpi_card("Algorithms", str(counts["total"]), f'{counts["variants"]} CODE/OPT variants')
         + kpi_card("Offline Calibration", str(counts.get("calibration", 0)), "Pre-loop matrices & kernels")
-        + kpi_card("Online In-Loop", str(counts.get("online_calib", 0)), "Live OG, 2WFS1DM & wind")
+        + kpi_card("Online In-Loop", str(counts.get("online_calib", 0)), "Live OG, MOPT & wind")
         + kpi_card("RT Loop Operation", str(counts.get("loop_operation", 0)), "Control & predictive filters")
         + "</div>\n"
         "</section>"
@@ -614,19 +819,23 @@ def build_algorithms_index_html(
 
     trace_presets = "".join(
         f'<button type="button" class="chip-btn" data-algo-trace="{c}">{c}</button>'
-        for c in ("PSOL", "OG/POKE", "2WFS/LIVE", "EOF")
+        for c in ("PSOL", "OG/POKE", "2WFS/LIVE", "MOPT", "EOF")
         if c in by_code
     )
 
     dep_graph_payload = {
         str(e["code"]): {
             "name": str(e["name"]),
+            "role": str(e["role"]),
+            "stages": list(e.get("stages") or []),
+            "stage_req": dict(e.get("stage_req") or {"mode": "none", "stages": []}),
             "req": list(e.get("requires") or []),
             "opt": list(e.get("optional_requires") or []),
             "fb_in": list(e.get("feedback_from") or []),
             "en": list(e.get("enables") or []),
             "en_opt": list(e.get("enables_optional") or []),
             "fb_out": list(e.get("feeds_runtime") or []),
+            "excl": list(e.get("excludes_codes") or []),
         }
         for e in entries
     }
@@ -667,12 +876,14 @@ def build_algorithms_index_html(
 
     graph_section = (
         '<section class="explorer-panel" id="dependency-graph">\n'
-        "<h2>Interactive Calibration &amp; Operation Pipeline Map</h2>\n"
-        '<p class="muted">Organized left-to-right from bench &amp; base calibration through '
-        "3D dynamic shaping, core RT &amp; online calibration, prediction, and diagnostics. "
-        "Hover any card (or select a stack preset) to highlight its dependency outline code; "
-        "click any card to open its dedicated page.</p>\n"
-        + _render_pipeline_board(entries, by_code)
+        "<h2>Interactive AO Loop Algorithmic Options Map</h2>\n"
+        '<p class="muted">Each box is an algorithmic choice for running an AO loop (not tied '
+        "1-to-1 to compute units). Configure active stages and simulation setup at the top, "
+        "choose from <strong>Calibration</strong> (Offline &amp; Online) and "
+        "<strong>Control</strong> left-to-right, and pick <strong>Diagnostics &amp; "
+        "Telemetry</strong> below. Unselectable choices are greyed out; mutually exclusive "
+        "choices switch each other off.</p>\n"
+        + _render_pipeline_board(algo_catalog)
         + "\n</section>"
     )
 

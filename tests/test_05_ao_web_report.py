@@ -1308,17 +1308,23 @@ def test_options_reference_config_and_run_options_tracking(
     assert 'id="algo-pipeline-board"' in algos_html
     assert 'id="algo-outline-legend"' in algos_html
     assert 'id="algo-pipe-svg"' not in algos_html
-    assert 'data-pipe-code="EOF"' in algos_html
+    assert 'data-pipe-code="EOF/BASE"' in algos_html
+    assert 'data-pipe-code="EOF/WIND"' in algos_html
     assert 'href="./eof/index.html"' in algos_html
     assert 'href="./eof/index.html#opt-eof-wind"' in algos_html
     assert 'href="./psol/index.html#opt-psol-mimo"' in algos_html
     assert 'href="./og-poke/index.html"' in algos_html
     assert 'href="./2wfs-live/index.html"' in algos_html
+    assert 'href="./mopt/index.html"' in algos_html
+    assert 'href="./mopt/index.html#opt-mopt-faint"' in algos_html
+    assert 'data-pipe-code="MOPT"' in algos_html
     assert "4-LGS" not in algos_html
     assert "LTAO" not in algos_html
     assert "algorithms/index.html" in paths
     assert "algorithms/eof/index.html" in paths
     assert "algorithms/eof/index.html#opt-eof-wind" in paths
+    assert "algorithms/mopt/index.html" in paths
+    assert "algorithms/mopt/index.html#opt-mopt-live" in paths
 
     eof_page = pub / "algorithms" / "eof" / "index.html"
     assert eof_page.is_file()
@@ -1333,7 +1339,211 @@ def test_options_reference_config_and_run_options_tracking(
     assert (pub / "algorithms" / "3drm-fact" / "index.html").is_file()
     assert (pub / "algorithms" / "og-poke" / "index.html").is_file()
     assert (pub / "algorithms" / "2wfs-live" / "index.html").is_file()
+    mopt_page = pub / "algorithms" / "mopt" / "index.html"
+    assert mopt_page.is_file()
+    mopt_html = mopt_page.read_text(encoding="utf-8")
+    assert 'id="opt-mopt-live"' in mopt_html
+    assert 'id="opt-mopt-faint"' in mopt_html
+    assert 'href="../int/index.html"' in mopt_html
+    assert 'href="../psol/index.html"' in mopt_html
+    assert "AOloopControl/modalopt.c" in mopt_html
     assert not (pub / "algorithms" / "ltao").exists()
+
+    # Pipeline Map: algorithmic choices (Sim top -> Calib Offline/Online -> Control -> Diag)
+    assert 'id="algo-sim-strip"' in algos_html
+    assert 'id="algo-group-calibration"' in algos_html
+    assert 'id="algo-sub-offline"' in algos_html
+    assert 'id="algo-sub-online"' in algos_html
+    assert 'id="algo-group-control"' in algos_html
+    assert 'id="algo-diag-strip"' in algos_html
+    pos_sim = algos_html.index('id="algo-sim-strip"')
+    pos_cal = algos_html.index('id="algo-group-calibration"')
+    pos_ctrl = algos_html.index('id="algo-group-control"')
+    pos_diag = algos_html.index('id="algo-diag-strip"')
+    assert pos_sim < pos_cal < pos_ctrl < pos_diag
+
+    sim_strip_html = algos_html[pos_sim:pos_cal]
+    offline_html = algos_html.split('id="algo-sub-offline"', 1)[1].split('id="algo-sub-online"', 1)[
+        0
+    ]
+    online_html = algos_html.split('id="algo-sub-online"', 1)[1].split(
+        'id="algo-group-control"', 1
+    )[0]
+    control_html = algos_html[pos_ctrl:pos_diag]
+    diag_html = algos_html[pos_diag:].split('id="algo-pipe-graph-data"', 1)[0]
+
+    assert 'data-pipe-stage="stg1"' in sim_strip_html
+    assert 'data-pipe-stage="stg2"' in sim_strip_html
+    assert 'data-pipe-stage="stg3"' in sim_strip_html
+    assert 'data-pipe-code="SIM/FUSED"' in sim_strip_html
+    assert 'data-pipe-code="SIM/MOD"' in sim_strip_html
+    assert 'data-pipe-code="SIM/PLATE"' in sim_strip_html
+    assert 'data-pipe-code="SIM/IDEAL"' in sim_strip_html
+    assert 'data-pipe-code="SIM/WROT"' in sim_strip_html
+    assert 'data-pipe-code="WFS/MOD"' in sim_strip_html
+    assert 'data-pipe-code="WFS/UNMOD"' in sim_strip_html
+    assert 'id="algo-pipe-profile"' in algos_html
+    assert 'data-pipe-code="RM/FAST"' in offline_html
+    assert 'data-pipe-code="RM/HAD"' in offline_html
+    assert 'data-pipe-code="3DRM/DIAG"' in offline_html
+    assert 'data-pipe-code="3DRM/MIMO"' in offline_html
+    assert 'data-pipe-code="OG/POKE"' in online_html
+    assert 'data-pipe-code="2WFS/IV"' in online_html
+    assert 'data-pipe-code="MOPT"' in online_html
+    assert 'data-pipe-code="INT/LEAK"' in control_html
+    assert 'data-pipe-code="INT/MGAIN"' in control_html
+    assert 'data-pipe-code="PSOL/2TAP"' in control_html
+    assert 'data-pipe-code="PSOL/MIMO"' in control_html
+    assert 'data-pipe-code="PF/AR"' in control_html
+    assert 'data-pipe-code="EOF/BASE"' in control_html
+    assert 'data-pipe-code="EOF/WIND"' in control_html
+    assert 'data-pipe-code="EOF/FX"' in control_html
+    assert 'data-pipe-code="WHITE/RT"' in diag_html
+    assert 'data-pipe-code="TLM/SYNC"' in diag_html
+    assert "data-pipe-pin" not in algos_html
+
+    pipe_json_txt = algos_html.split('id="algo-pipe-graph-data">', 1)[1].split("</script>", 1)[0]
+    pipe_graph = json.loads(pipe_json_txt)
+    assert "EOF/BASE" in pipe_graph["PF/AR"]["excl"]
+    assert "PF/AR" in pipe_graph["EOF/BASE"]["excl"]
+    assert "EOF/FX" in pipe_graph["EOF/WIND"]["excl"]
+    assert "EOF/WIND" in pipe_graph["EOF/FX"]["excl"]
+    assert "PSOL/MIMO" in pipe_graph["PSOL/2TAP"]["excl"]
+    assert "RM/HAD" in pipe_graph["RM/FAST"]["excl"]
+    assert pipe_graph["2WFS/IV"]["stage_req"] == {"mode": "all", "stages": ["stg1", "stg2"]}
+    assert pipe_graph["ZPO/OG"]["stage_req"] == {"mode": "all", "stages": ["stg2", "stg3"]}
+
+    # Verify exact physical constraints across canonical present & future AO simulations
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from report_site.extractors.algorithms_catalog import validate_pipeline_selection
+
+    valid_sims = [
+        # 1. Pure integrator without PSOL or MLAT (fused fast calib, single stage)
+        (
+            {"stg1"},
+            {"SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD", "RM/FAST", "INT/LEAK", "TLM/SYNC"},
+        ),
+        # 2. ao3k_scexao_lowfs_open (2-stage integrator + telemetry)
+        (
+            {"stg1", "stg2"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "SRM", "INT/MGAIN", "PSOL/2TAP",
+                "TLM/SYNC", "TLM/OPT", "TLM/PSFR",
+            },
+        ),
+        # 3. ao3k_scexao_lowfs_closed + AR predictive + post-loop 2WFS1DM
+        (
+            {"stg1", "stg2", "stg3"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "RM/DIR", "INT/MGAIN", "PSOL/2TAP",
+                "PF/AR", "ZPO/FIX", "TLM/SYNC", "TLM/OPT", "TLM/PSFR", "2WFS/POST",
+            },
+        ),
+        # 4. Phases 1-5 Wind-Switch Rescue + unmodulated PyWFS full stack
+        (
+            {"stg1", "stg2", "stg3"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/WROT", "WFS/UNMOD",
+                "MLAT", "RM/FAST", "RM/DIR", "3DRM/MIMO", "SRM",
+                "OG/POKE", "2WFS/IV", "WIND",
+                "INT/MGAIN", "PSOL/MIMO", "EOF/BASE", "EOF/ZOH", "EOF/WIND",
+                "PRESH/4K", "ZPO/OG", "OFFL/2TO1",
+                "WHITE/RT", "WHITE/OOS", "TLM/SYNC", "TLM/OPT", "TLM/PSFR", "2WFS/POST",
+            },
+        ),
+        # 5. Standalone Stage-2 SCExAO with OG/POKE + MOPT + HESS/CORO (no Stage 1)
+        (
+            {"stg2"},
+            {
+                "SIM/FUSED", "SIM/IDEAL", "SIM/TURB", "WFS/UNMOD",
+                "MLAT", "RM/FAST", "3DRM/DIAG", "OG/POKE", "MOPT",
+                "INT/LEAK", "PSOL/DIAG", "WHITE/RT", "TLM/SYNC", "HESS/CORO",
+            },
+        ),
+        # 6. Modular bench real-time Hadamard RM + pure integrator + whiteness (no PSOL)
+        (
+            {"stg1", "stg2"},
+            {
+                "SIM/MOD", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/HAD", "INT/MGAIN", "2WFS/IV", "OFFL/2TO1", "WHITE/RT",
+            },
+        ),
+        # 7. Standalone Stage-3 LLOWFS with MOPT
+        (
+            {"stg3"},
+            {
+                "SIM/FUSED", "SIM/IDEAL", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/DIR", "INT/LEAK", "PSOL/2TAP", "MOPT", "WHITE/RT",
+            },
+        ),
+        # 8. Unshaped plate DM Filtered-X EOF (no PRESH/4K, no EOF/WIND)
+        (
+            {"stg1", "stg2"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "RM/FAST", "3DRM/MIMO", "INT/MGAIN", "PSOL/MIMO", "EOF/BASE", "EOF/FX",
+                "WHITE/RT", "WHITE/OOS",
+            },
+        ),
+    ]
+    for st_set, sel_set in valid_sims:
+        errs = validate_pipeline_selection(st_set, sel_set)
+        assert not errs, f"Valid simulation failed constraints: {errs}"
+
+    invalid_sims = [
+        # RM/FAST impossible under SIM/MOD
+        ({"stg1"}, {"SIM/MOD", "SIM/PLATE", "SIM/TURB", "WFS/MOD", "RM/FAST"}),
+        # PRESH/4K impossible under SIM/IDEAL
+        (
+            {"stg1"},
+            {"SIM/FUSED", "SIM/IDEAL", "SIM/TURB", "WFS/MOD", "RM/FAST", "3DRM/MIMO", "PRESH/4K"},
+        ),
+        # PSOL/DIAG impossible without INT/*
+        (
+            {"stg1"},
+            {"SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD", "RM/FAST", "3DRM/DIAG", "PSOL/DIAG"},
+        ),
+        # EOF/WIND and EOF/FX mutually exclusive
+        (
+            {"stg1"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "RM/FAST", "3DRM/MIMO", "WIND", "INT/MGAIN", "PSOL/MIMO",
+                "EOF/BASE", "EOF/WIND", "EOF/FX",
+            },
+        ),
+        # ZPO/OG impossible without 2WFS/*
+        (
+            {"stg2", "stg3"},
+            {
+                "SIM/FUSED", "SIM/IDEAL", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "RM/DIR", "INT/MGAIN", "ZPO/OG",
+            },
+        ),
+        # Stage-3 RM/DIR alone cannot unlock Stage-1/2 EOF/BASE
+        (
+            {"stg1", "stg3"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/DIR", "INT/LEAK", "PSOL/2TAP", "EOF/BASE",
+            },
+        ),
+    ]
+    for st_set, sel_set in invalid_sims:
+        assert validate_pipeline_selection(st_set, sel_set), (
+            f"Invalid simulation unexpectedly passed: {st_set}, {sel_set}"
+        )
+
+    exp_css = (pub / "assets" / "css" / "explorers.css").read_text(encoding="utf-8")
+    assert ".algo-pipe-workspace .algo-pipe-card .pipe-rel-ribbon" in exp_css
+    assert "position: absolute;" in exp_css
+    focus_blk = exp_css.split(".algo-pipe-card.pipe-focus {", 1)[1].split("}", 1)[0]
+    hover_blk = exp_css.split(".algo-pipe-card:hover {", 1)[1].split("}", 1)[0]
+    assert "outline: 3px solid var(--accent);" in focus_blk
+    assert "border:" not in focus_blk
+    assert "transform:" not in hover_blk
 
     # Verify zero inline <style> tags and zero broken relative links across all pages
     for html_file in pub.rglob("*.html"):

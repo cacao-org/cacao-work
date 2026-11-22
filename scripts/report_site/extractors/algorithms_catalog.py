@@ -36,7 +36,7 @@ ALGO_ROLES: dict[str, dict[str, str]] = {
         "short": "Online Calib",
         "description": (
             "Adaptive estimators running during closed-loop science to track "
-            "time-varying optical gain, wind layers, and ZPO scaling"
+            "time-varying optical gain, modal gains/leaks, wind layers, and ZPO scaling"
         ),
         "mermaid_class": "algo_online_calib",
         "mermaid_def": "fill:#ccfbf1,stroke:#0f766e,stroke-width:2px,color:#115e59",
@@ -104,6 +104,7 @@ MATRIX_COLUMN_CODES: tuple[str, ...] = (
     "PSOL",
     "OG/POKE",
     "2WFS/LIVE",
+    "MOPT",
     "WIND",
 )
 
@@ -597,7 +598,7 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
             },
         ],
         "requires": ["RM", "PSOL"],
-        "optional_requires": [],
+        "optional_requires": ["SIM/WROT"],
         "feedback_from": [],
         "excludes": [],
         "cli_flags": ["--windlayers1", "--pf-dmmodes1"],
@@ -610,6 +611,96 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "tests": ["test_15_unified_eof_windlayers.py", "test_mltools_e2e.py"],
         "metrics": ["Tracks rotated Mauna Kea layers (6.46, 9.47, 22.03 m/s) to < 0.05 m/s & < 0.5 deg"],
         "related_reports": [],
+    },
+    {
+        "code": "MOPT",
+        "name": "Online Per-Mode Leaky-Integrator Gain & Leak Autotuner",
+        "role": "online_calib",
+        "status": "verified",
+        "stages": ["stg1", "stg2", "stg3"],
+        "summary": (
+            "Joint per-mode (gain, leak) autotuner via Parseval Multi-Res PSD, "
+            "faint-star adaptive memory, and ringing guard."
+        ),
+        "details": [
+            "Subscribes asynchronously to `aol<N>_modevalOL_buff` (and optional "
+            "`aol<N>_modevalWFS_buff`, `aol<N>_og_smooth`/`aol<N>_mWFSfact`, "
+            "`aol<N>_mlimitcntfrac`, and `dynpsol` `H_diag`/`H_mimo` FITS `.kernel`) in "
+            "standalone C (`cacao-fpsexec-modalopt`). Builds a Parseval-exact unclamped "
+            "2-band Multi-Resolution PSD (decimated sub-Hz ring with exact sinc^2 boxcar "
+            "inversion + explicit DC line + Hann Welch high-frequency PSD) and minimizes "
+            "J_m(g, a) = sum P_OL * (|ETF|^2 + lam_dm * |CTF|^2) via shared BLAS SGEMM "
+            "subject to Argument-Principle Nyquist stability and max|ETF| <= ms_max.",
+            "Decouples fast buffer-flip cadence (~0.25-0.5 s) from faint-star statistical "
+            "memory using cumulative 1/k warmup into per-mode SNR-adaptive EWMA memory "
+            "(tau_fast=3 s to tau_faint=15 s), dual regime-change flush (low-order power "
+            "and HF noise floor), variance-aware James-Stein radial Empirical-Bayes pooling, "
+            "and a statistically gated lag-d/lag-1 WFS ringing guard that backs off gain "
+            "and freezes PSD updates on ringing slices. Publishes shadow `aol<N>_mopt_*` "
+            "streams and opt-in live `aol<N>_mgainfact` / `aol<N>_mmultfact` paired with "
+            "`[0, 2.0]` / `[0, 1.0]` safety clamps in `modalfilter.c`.",
+        ],
+        "units": ["cacao-fpsexec-modalopt", "modalfilter (mgain/mmult safety clamp)"],
+        "variants": [
+            {
+                "code": "MOPT/SHAD",
+                "summary": (
+                    "Shadow monitoring mode (default `.apply_gain=OFF`, `.apply_mult=OFF`) "
+                    "publishing `aol<N>_mopt_{gain,mult,snr,taumem,ring}` without touching loop."
+                ),
+                "flags": [],
+            },
+            {
+                "code": "MOPT/LIVE",
+                "summary": (
+                    "Live joint `(gain, leak)` publisher writing `aol<N>_mgainfact` & "
+                    "`aol<N>_mmultfact` (`.apply_gain=ON`, `.apply_mult=ON`, auto loopgain/mult)."
+                ),
+                "flags": [],
+            },
+            {
+                "code": "MOPT/FAINT",
+                "summary": (
+                    "Faint-star SNR-adaptive memory (`tau_fast..tau_faint`, `1/k` warmup), "
+                    "James-Stein radial EB pooling (`.eb_enable`), and dual change-detector flush."
+                ),
+                "flags": [],
+            },
+            {
+                "code": "MOPT/KERN",
+                "summary": (
+                    "Exact discrete `dynpsol` `H_diag`/`H_mimo` FITS `.kernel` plant model "
+                    "with Argument-Principle stability & lag-d WFS ringing guard (`.ring_enable`)."
+                ),
+                "flags": [],
+            },
+        ],
+        "requires": ["MLAT", "RM", "PSOL"],
+        "optional_requires": ["3DRM/FACT", "LAG/2PT", "OG/POKE", "2WFS/LIVE"],
+        "feedback_from": [],
+        "excludes": [],
+        "cli_flags": [],
+        "env_vars": [
+            "CACAO_LOOPGAIN",
+            "CACAO_LOOPMULT",
+            "CACAO_TBUFF_SIZE",
+            "CACAO_DYNPSOL_KERNEL",
+            "CACAO_PSOL_WFSFACT",
+            "CACAO_LATENCYSOFTWFR",
+        ],
+        "fps_refs": [],
+        "sources": [
+            ("cacao", "AOloopControl/modalopt.c"),
+            ("cacao", "AOloopControl/modalfilter.c"),
+        ],
+        "tests": ["test_16_modalopt.py"],
+        "metrics": [
+            "-29.8% WFE vs static integrator in live SHM test (0.69 ms solve); "
+            "real cacaosim replay: Stg1 a_lo=0.996, Stg2 a_mid=0.852 (1.5 ms solve)",
+            "Faint-star adaptive memory stretches tau_C = 12 s vs tau_A = 2 s; "
+            "dual change detector flushes on flux drop; 2.2x OG jump bounded by lag-d guard",
+        ],
+        "related_reports": ["predictive_control_report"],
     },
     # ------------------------------------------------------------------
     # Real-Time Loop Operation
@@ -677,7 +768,7 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         ],
         "requires": ["MLAT", "RM"],
         "optional_requires": ["PRESH"],
-        "feedback_from": [],
+        "feedback_from": ["MOPT"],
         "excludes": [],
         "cli_flags": [
             "--gain1",
@@ -849,7 +940,15 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "requires": ["MLAT", "RM", "PSOL"],
         "optional_requires": ["OG/POKE", "2WFS/LIVE"],
         "feedback_from": [],
-        "excludes": [],
+        "excludes": [
+            {
+                "code": "EOF",
+                "reason": (
+                    "Mutually exclusive predictive controller (--pf-mode ar vs --pf-mode eof): "
+                    "selecting PF/AR turns EOF off."
+                ),
+            }
+        ],
         "cli_flags": [
             "--predictive",
             "--pf-mode",
@@ -945,13 +1044,20 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "feedback_from": [],
         "excludes": [
             {
+                "code": "PF/AR",
+                "reason": (
+                    "Mutually exclusive predictive controller (--pf-mode eof vs --pf-mode ar): "
+                    "selecting EOF turns PF/AR off."
+                ),
+            },
+            {
                 "code": "EOF",
                 "reason": (
                     "Do not combine sub-option EOF/FX (Filtered-X coordinates) directly with "
                     "EOF/WIND (pure-delay physics Gram): when PRESH + PSOL/MIMO already linearize "
                     "the plate, use EOF/WIND without --pf-fx1."
                 ),
-            }
+            },
         ],
         "cli_flags": [
             "--predictive",
@@ -1284,6 +1390,32 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
 ]
 
 
+_STAGE_REQ_OVERRIDES: dict[str, dict[str, object]] = {
+    "2WFS/LIVE": {"mode": "all", "stages": ["stg1", "stg2"]},
+    "OFFL": {"mode": "all", "stages": ["stg1", "stg2"]},
+    "2WFS/POST": {"mode": "all", "stages": ["stg1", "stg2"]},
+    "ZPO": {"mode": "all", "stages": ["stg2", "stg3"]},
+    "HESS/CORO": {"mode": "all", "stages": ["stg2"]},
+}
+
+
+def _compute_stage_req(entry: dict[str, object]) -> dict[str, object]:
+    """Return explicit active-stage requirement {'mode': none|any|all, 'stages': [...]}."""
+    code = str(entry["code"])
+    if code in _STAGE_REQ_OVERRIDES:
+        ov = _STAGE_REQ_OVERRIDES[code]
+        return {"mode": str(ov["mode"]), "stages": list(ov["stages"])}  # type: ignore[arg-type]
+    if str(entry.get("role")) == "simulation":
+        return {"mode": "none", "stages": []}
+    base_stages = [
+        str(s) for s in (entry.get("stages") or []) if str(s) in ("stg1", "stg2", "stg3")
+    ]
+    if not base_stages:
+        return {"mode": "none", "stages": []}
+    mode = "all" if len(base_stages) == 1 else "any"
+    return {"mode": mode, "stages": base_stages}
+
+
 def build_algorithms_catalog() -> dict[str, object]:
     """Assemble and validate the AO algorithm catalog with reverse dependency maps."""
     entries: list[dict[str, object]] = []
@@ -1303,9 +1435,11 @@ def build_algorithms_catalog() -> dict[str, object]:
             vcopy["anchor"] = make_variant_anchor(str(vcopy["code"]))
             variants_out.append(vcopy)
         entry["variants"] = variants_out
+        entry["stage_req"] = _compute_stage_req(entry)
         entry["enables"] = []
         entry["enables_optional"] = []
         entry["feeds_runtime"] = []
+        entry["excludes_codes"] = []
         entries.append(entry)
         by_code[code] = entry
         by_slug[slug] = entry
@@ -1324,6 +1458,19 @@ def build_algorithms_catalog() -> dict[str, object]:
             if fb_code not in by_code:
                 raise ValueError(f"Unknown feedback code {fb_code!r} in {src_code}")
             by_code[fb_code]["feeds_runtime"].append(src_code)  # type: ignore[union-attr]
+        for ex in entry.get("excludes") or []:
+            if not isinstance(ex, dict):
+                continue
+            ex_code = str(ex.get("code") or "")
+            if not ex_code or ex_code == src_code:
+                continue
+            if ex_code not in by_code:
+                raise ValueError(f"Unknown excluded code {ex_code!r} in {src_code}")
+            if ex_code not in entry["excludes_codes"]:  # type: ignore[operator]
+                entry["excludes_codes"].append(ex_code)  # type: ignore[union-attr]
+            rev_list = by_code[ex_code]["excludes_codes"]
+            if src_code not in rev_list:  # type: ignore[operator]
+                rev_list.append(src_code)  # type: ignore[union-attr]
 
     role_counts: dict[str, int] = {k: 0 for k in ALGO_ROLE_ORDER}
     total_variants = 0
@@ -1339,12 +1486,698 @@ def build_algorithms_catalog() -> dict[str, object]:
         "role_order": ALGO_ROLE_ORDER,
         "roles": ALGO_ROLES,
         "matrix_columns": MATRIX_COLUMN_CODES,
+        "pipeline_choices": build_pipeline_choices_catalog(),
         "counts": {
             "total": len(entries),
             "variants": total_variants,
             **role_counts,
         },
     }
+
+
+# ----------------------------------------------------------------------
+# Algorithmic-Choice Graph for the Interactive Pipeline Configurator
+# (Choices represent AO algorithmic options, not 1-to-1 FPS binaries.)
+# ----------------------------------------------------------------------
+_RM_12 = ("RM/FAST", "RM/HAD")
+_RM_ANY = ("RM/FAST", "RM/HAD", "RM/DIR")
+_DYN_ANY = ("3DRM/DIAG", "3DRM/MIMO")
+_LAG_ANY = ("MLAT", "3DRM/DIAG", "3DRM/MIMO")
+_INT_ANY = ("INT/LEAK", "INT/MGAIN")
+_PSOL_ANY = ("PSOL/2TAP", "PSOL/DIAG", "PSOL/MIMO")
+_TWOWFS_ANY = ("2WFS/IV", "2WFS/W")
+
+PIPELINE_CHOICES_RAW: list[dict[str, object]] = [
+    # --- Simulation & Bench (Radio Choice Pairs) ---
+    {
+        "code": "SIM/FUSED",
+        "name": "Fused GPU DAG (csim_htsim)",
+        "role": "simulation",
+        "zone": "sim_bench",
+        "radio_group": "bench_mode",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["SIM/MOD"],
+        "doc_slug": "sim-plate",
+        "doc_anchor": "opt-sim-fused",
+    },
+    {
+        "code": "SIM/MOD",
+        "name": "Modular Per-Element FPS Bench",
+        "role": "simulation",
+        "zone": "sim_bench",
+        "radio_group": "bench_mode",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["SIM/FUSED"],
+        "doc_slug": "sim-plate",
+        "doc_anchor": "opt-sim-mod",
+    },
+    {
+        "code": "SIM/PLATE",
+        "name": "64x64 Coupled Plate PDE DM",
+        "role": "simulation",
+        "zone": "sim_dm",
+        "radio_group": "dm_phys",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["SIM/IDEAL"],
+        "doc_slug": "sim-plate",
+        "doc_anchor": "opt-sim-plate",
+    },
+    {
+        "code": "SIM/IDEAL",
+        "name": "Ideal / Uncoupled DM",
+        "role": "simulation",
+        "zone": "sim_dm",
+        "radio_group": "dm_phys",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["SIM/PLATE"],
+        "doc_slug": "sim-plate",
+        "doc_anchor": "",
+    },
+    {
+        "code": "SIM/TURB",
+        "name": "Steady Mauna Kea Turbulence",
+        "role": "simulation",
+        "zone": "sim_atm",
+        "radio_group": "atm_mode",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["SIM/WROT"],
+        "doc_slug": "sim-wrot",
+        "doc_anchor": "opt-sim-turb",
+    },
+    {
+        "code": "SIM/WROT",
+        "name": "Live Wind-Rotation Switch",
+        "role": "simulation",
+        "zone": "sim_atm",
+        "radio_group": "atm_mode",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["SIM/TURB"],
+        "doc_slug": "sim-wrot",
+        "doc_anchor": "opt-sim-wrot",
+    },
+    {
+        "code": "WFS/MOD",
+        "name": "Modulated PyWFS (3 l/D)",
+        "role": "simulation",
+        "zone": "sim_wfs",
+        "radio_group": "wfs_mod",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["WFS/UNMOD"],
+        "doc_slug": "sim-plate",
+        "doc_anchor": "",
+    },
+    {
+        "code": "WFS/UNMOD",
+        "name": "Unmodulated PyWFS (0 l/D)",
+        "role": "simulation",
+        "zone": "sim_wfs",
+        "radio_group": "wfs_mod",
+        "stage_req": {"mode": "none", "stages": []},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["WFS/MOD"],
+        "doc_slug": "sim-plate",
+        "doc_anchor": "",
+    },
+    # --- Calibration: Offline ---
+    {
+        "code": "MLAT",
+        "name": "Loop Latency Calibration",
+        "role": "calibration",
+        "zone": "calib_offline_base",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "mlat",
+        "doc_anchor": "",
+    },
+    {
+        "code": "SRM",
+        "name": "Self-RM Optical-Gain Reference",
+        "role": "calibration",
+        "zone": "calib_offline_base",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12)],
+        "opt": ["WFS/UNMOD"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "srm",
+        "doc_anchor": "",
+    },
+    {
+        "code": "RM/FAST",
+        "name": "Lockstep Step-and-Shoot RM",
+        "role": "calibration",
+        "zone": "calib_offline_rm",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["SIM/FUSED"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["RM/HAD"],
+        "doc_slug": "rm",
+        "doc_anchor": "opt-rm-fast",
+    },
+    {
+        "code": "RM/HAD",
+        "name": "RT Paced Hadamard RM",
+        "role": "calibration",
+        "zone": "calib_offline_rm",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["MLAT"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["RM/FAST"],
+        "doc_slug": "rm",
+        "doc_anchor": "opt-rm-had",
+    },
+    {
+        "code": "RM/DIR",
+        "name": "Direct Zernike RM (Stage 3)",
+        "role": "calibration",
+        "zone": "calib_offline_base",
+        "stage_req": {"mode": "all", "stages": ["stg3"]},
+        "req_clauses": [["SIM/FUSED", "MLAT"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "rm",
+        "doc_anchor": "opt-rm-dir",
+    },
+    {
+        "code": "3DRM/DIAG",
+        "name": "3D Dynamic RM — Diagonal FIR",
+        "role": "calibration",
+        "zone": "calib_offline_3drm",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12)],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["3DRM/MIMO"],
+        "doc_slug": "3drm-fact",
+        "doc_anchor": "opt-3drm-diag",
+    },
+    {
+        "code": "3DRM/MIMO",
+        "name": "3D Dynamic RM — Cross-Mode MIMO",
+        "role": "calibration",
+        "zone": "calib_offline_3drm",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12)],
+        "opt": ["SIM/PLATE"],
+        "fb_in": [],
+        "excl": ["3DRM/DIAG"],
+        "doc_slug": "3drm-fact",
+        "doc_anchor": "opt-3drm-mimo",
+    },
+    # --- Calibration: Online (In-Loop) ---
+    {
+        "code": "OG/POKE",
+        "name": "Active DM-Poke IV Optical Gain",
+        "role": "online_calib",
+        "zone": "calib_online_og",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), list(_INT_ANY), list(_LAG_ANY)],
+        "opt": [*_DYN_ANY, "SRM", "WFS/UNMOD"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "og-poke",
+        "doc_anchor": "opt-og-poke",
+    },
+    {
+        "code": "2WFS/IV",
+        "name": "Stage-2 Passive 2WFS1DM (2SLS)",
+        "role": "online_calib",
+        "zone": "calib_online_2wfs",
+        "stage_req": {"mode": "all", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), list(_INT_ANY)],
+        "opt": [*_DYN_ANY, "SRM", "WFS/UNMOD"],
+        "fb_in": [],
+        "excl": ["2WFS/W"],
+        "doc_slug": "2wfs-live",
+        "doc_anchor": "opt-2wfs-iv",
+    },
+    {
+        "code": "2WFS/W",
+        "name": "Stage-2 Passive 2WFS1DM (AR Whiten)",
+        "role": "online_calib",
+        "zone": "calib_online_2wfs",
+        "stage_req": {"mode": "all", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), list(_INT_ANY)],
+        "opt": [*_DYN_ANY, "SRM", "WFS/UNMOD"],
+        "fb_in": [],
+        "excl": ["2WFS/IV"],
+        "doc_slug": "2wfs-live",
+        "doc_anchor": "opt-2wfs-w",
+    },
+    {
+        "code": "MOPT",
+        "name": "Per-Mode Gain & Leak Autotuner",
+        "role": "online_calib",
+        "zone": "calib_online_adapt",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [list(_INT_ANY), list(_PSOL_ANY)],
+        "opt": [*_DYN_ANY, "OG/POKE", *_TWOWFS_ANY],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "mopt",
+        "doc_anchor": "",
+    },
+    {
+        "code": "WIND",
+        "name": "Live Wind Velocity & Altitude",
+        "role": "online_calib",
+        "zone": "calib_online_adapt",
+        "stage_req": {"mode": "all", "stages": ["stg1"]},
+        "req_clauses": [],
+        "opt": [*_PSOL_ANY, "SIM/WROT"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "wind",
+        "doc_anchor": "",
+    },
+    # --- Control ---
+    {
+        "code": "INT/LEAK",
+        "name": "Uniform Leaky Integrator",
+        "role": "loop_operation",
+        "zone": "ctrl_int",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [list(_RM_ANY)],
+        "opt": [],
+        "fb_in": ["MOPT", "OG/POKE", *_TWOWFS_ANY],
+        "excl": ["INT/MGAIN"],
+        "doc_slug": "int",
+        "doc_anchor": "opt-int-leak",
+    },
+    {
+        "code": "INT/MGAIN",
+        "name": "Power-Law Modal Gain Integrator",
+        "role": "loop_operation",
+        "zone": "ctrl_int",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [list(_RM_ANY)],
+        "opt": [],
+        "fb_in": ["MOPT", "OG/POKE", *_TWOWFS_ANY],
+        "excl": ["INT/LEAK"],
+        "doc_slug": "int",
+        "doc_anchor": "opt-int-mgain",
+    },
+    {
+        "code": "PSOL/2TAP",
+        "name": "2-Tap Fractional Lag PSOL",
+        "role": "loop_operation",
+        "zone": "ctrl_psol",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [list(_INT_ANY), ["MLAT"]],
+        "opt": [],
+        "fb_in": ["OG/POKE", *_TWOWFS_ANY],
+        "excl": ["PSOL/DIAG", "PSOL/MIMO"],
+        "doc_slug": "psol",
+        "doc_anchor": "opt-psol-2tap",
+    },
+    {
+        "code": "PSOL/DIAG",
+        "name": "Diagonal Causal FIR PSOL",
+        "role": "loop_operation",
+        "zone": "ctrl_psol",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_INT_ANY), list(_DYN_ANY)],
+        "opt": [],
+        "fb_in": ["OG/POKE", *_TWOWFS_ANY],
+        "excl": ["PSOL/2TAP", "PSOL/MIMO"],
+        "doc_slug": "psol",
+        "doc_anchor": "opt-psol-diag",
+    },
+    {
+        "code": "PSOL/MIMO",
+        "name": "3D Cross-Mode MIMO PSOL",
+        "role": "loop_operation",
+        "zone": "ctrl_psol",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_INT_ANY), ["3DRM/MIMO"]],
+        "opt": ["PRESH/4K"],
+        "fb_in": ["OG/POKE", *_TWOWFS_ANY],
+        "excl": ["PSOL/2TAP", "PSOL/DIAG"],
+        "doc_slug": "psol",
+        "doc_anchor": "opt-psol-mimo",
+    },
+    {
+        "code": "PF/AR",
+        "name": "Diagonal AR(P) Prediction",
+        "role": "loop_operation",
+        "zone": "ctrl_pred",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), list(_PSOL_ANY)],
+        "opt": ["OG/POKE", *_TWOWFS_ANY],
+        "fb_in": [],
+        "excl": ["EOF/BASE"],
+        "doc_slug": "pf-ar",
+        "doc_anchor": "opt-pf-ar",
+    },
+    {
+        "code": "EOF/BASE",
+        "name": "Cross-Mode Block-EOF",
+        "role": "loop_operation",
+        "zone": "ctrl_pred",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), list(_PSOL_ANY)],
+        "opt": ["OG/POKE", *_TWOWFS_ANY],
+        "fb_in": [],
+        "excl": ["PF/AR"],
+        "doc_slug": "eof",
+        "doc_anchor": "opt-eof-base",
+    },
+    {
+        "code": "EOF/ZOH",
+        "name": "ZOH-Centered Ridge",
+        "role": "loop_operation",
+        "zone": "ctrl_eof_ext",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "eof",
+        "doc_anchor": "opt-eof-zoh",
+    },
+    {
+        "code": "EOF/MEM",
+        "name": "Extended Chunk-Gram Memory",
+        "role": "loop_operation",
+        "zone": "ctrl_eof_ext",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "eof",
+        "doc_anchor": "opt-eof-mem",
+    },
+    {
+        "code": "EOF/REG",
+        "name": "Regime-Weighted Gram Library",
+        "role": "loop_operation",
+        "zone": "ctrl_eof_ext",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "eof",
+        "doc_anchor": "opt-eof-reg",
+    },
+    {
+        "code": "EOF/WIND",
+        "name": "Wind Physics-Gram Prior",
+        "role": "loop_operation",
+        "zone": "ctrl_eof_ext",
+        "stage_req": {"mode": "all", "stages": ["stg1"]},
+        "req_clauses": [["EOF/BASE"], ["WIND"]],
+        "opt": ["SIM/WROT"],
+        "fb_in": [],
+        "excl": ["EOF/FX"],
+        "doc_slug": "eof",
+        "doc_anchor": "opt-eof-wind",
+    },
+    {
+        "code": "EOF/FX",
+        "name": "Filtered-X DM Plant Coords",
+        "role": "loop_operation",
+        "zone": "ctrl_eof_ext",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"], list(_DYN_ANY)],
+        "opt": ["SIM/PLATE"],
+        "fb_in": [],
+        "excl": ["EOF/WIND"],
+        "doc_slug": "eof",
+        "doc_anchor": "opt-eof-fx",
+    },
+    {
+        "code": "PRESH/4K",
+        "name": "4 kHz DM Plate Pre-Shaper",
+        "role": "loop_operation",
+        "zone": "ctrl_aux",
+        "stage_req": {"mode": "all", "stages": ["stg1"]},
+        "req_clauses": [["SIM/PLATE"], ["3DRM/MIMO"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "presh",
+        "doc_anchor": "opt-presh-4k",
+    },
+    {
+        "code": "ZPO/FIX",
+        "name": "Static WFS Zero-Point Offset",
+        "role": "loop_operation",
+        "zone": "ctrl_aux",
+        "stage_req": {"mode": "all", "stages": ["stg2", "stg3"]},
+        "req_clauses": [list(_RM_12), ["RM/DIR"], list(_INT_ANY)],
+        "opt": [],
+        "fb_in": [],
+        "excl": ["ZPO/OG"],
+        "doc_slug": "zpo",
+        "doc_anchor": "opt-zpo-fix",
+    },
+    {
+        "code": "ZPO/OG",
+        "name": "Live OG-Scaled WFS ZPO",
+        "role": "loop_operation",
+        "zone": "ctrl_aux",
+        "stage_req": {"mode": "all", "stages": ["stg2", "stg3"]},
+        "req_clauses": [list(_RM_12), ["RM/DIR"], list(_INT_ANY), list(_TWOWFS_ANY)],
+        "opt": ["WFS/UNMOD"],
+        "fb_in": [],
+        "excl": ["ZPO/FIX"],
+        "doc_slug": "zpo",
+        "doc_anchor": "opt-zpo-og",
+    },
+    {
+        "code": "OFFL/2TO1",
+        "name": "Blind DM2->DM1 Stroke Offload",
+        "role": "loop_operation",
+        "zone": "ctrl_aux",
+        "stage_req": {"mode": "all", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_TWOWFS_ANY)],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "offl",
+        "doc_anchor": "opt-offl-2to1",
+    },
+    # --- Diagnostics & Telemetry ---
+    {
+        "code": "WHITE/RT",
+        "name": "RT Whiteness & ZPO Monitor",
+        "role": "analysis",
+        "zone": "diag",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [list(_INT_ANY), list(_LAG_ANY)],
+        "opt": ["PF/AR", "EOF/BASE", "ZPO/FIX", "ZPO/OG"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "white",
+        "doc_anchor": "opt-white-rt",
+    },
+    {
+        "code": "WHITE/OOS",
+        "name": "OOS EOF Overfit Guard",
+        "role": "analysis",
+        "zone": "diag",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"]],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "white",
+        "doc_anchor": "opt-white-oos",
+    },
+    {
+        "code": "TLM/SYNC",
+        "name": "Telemetry Sync & PCA/CCA",
+        "role": "analysis",
+        "zone": "diag",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [list(_INT_ANY)],
+        "opt": list(_PSOL_ANY),
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "tlm",
+        "doc_anchor": "opt-tlm-sync",
+    },
+    {
+        "code": "TLM/OPT",
+        "name": "Offline PSD/ETF Gain Opt",
+        "role": "analysis",
+        "zone": "diag",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
+        "req_clauses": [["TLM/SYNC"], ["MLAT", *_PSOL_ANY]],
+        "opt": ["SRM"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "tlm",
+        "doc_anchor": "opt-tlm-opt",
+    },
+    {
+        "code": "TLM/PSFR",
+        "name": "Polychromatic PSF Recon",
+        "role": "analysis",
+        "zone": "diag",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), ["TLM/SYNC"]],
+        "opt": ["SRM"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "tlm",
+        "doc_anchor": "opt-tlm-psfr",
+    },
+    {
+        "code": "2WFS/POST",
+        "name": "Post-Loop 2WFS1DM Audit",
+        "role": "analysis",
+        "zone": "diag",
+        "stage_req": {"mode": "all", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_RM_12), ["TLM/SYNC"]],
+        "opt": [*_DYN_ANY, "SRM", "WFS/UNMOD"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "2wfs-post",
+        "doc_anchor": "opt-2wfs-post",
+    },
+    {
+        "code": "HESS/CORO",
+        "name": "Coro WFS-to-PSF Hessian (Plan)",
+        "role": "planned",
+        "zone": "diag",
+        "stage_req": {"mode": "all", "stages": ["stg2"]},
+        "req_clauses": [list(_RM_12), ["TLM/SYNC"]],
+        "opt": ["ZPO/FIX", "ZPO/OG", *_PSOL_ANY],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "hess-coro",
+        "doc_anchor": "",
+    },
+]
+
+
+def validate_pipeline_selection(
+    stages: set[str] | list[str] | tuple[str, ...],
+    selected: set[str] | list[str] | tuple[str, ...],
+    pcat: dict[str, object] | None = None,
+) -> list[str]:
+    """Return a list of constraint-violation errors (empty list = exact valid simulation)."""
+    cat = pcat if pcat is not None else build_pipeline_choices_catalog()
+    by_code: dict[str, dict[str, object]] = cat["by_code"]  # type: ignore[assignment]
+    st_set = set(stages)
+    sel_set = set(selected)
+    errors: list[str] = []
+
+    radio_seen: dict[str, list[str]] = {}
+    for code in sorted(sel_set):
+        if code not in by_code:
+            errors.append(f"Unknown choice code: {code}")
+            continue
+        node = by_code[code]
+        rg = str(node.get("radio_group") or "")
+        if rg:
+            radio_seen.setdefault(rg, []).append(code)
+        sr = node.get("stage_req") or {}
+        if isinstance(sr, dict):
+            mode = str(sr.get("mode") or "none")
+            req_st = list(sr.get("stages") or [])
+            if mode == "all" and not all(s in st_set for s in req_st):
+                errors.append(f"{code} requires all stages {req_st} (active: {sorted(st_set)})")
+            elif mode == "any" and req_st and not any(s in st_set for s in req_st):
+                errors.append(f"{code} requires any stage in {req_st} (active: {sorted(st_set)})")
+        for clause in node.get("req_clauses") or []:
+            if clause and not any(r in sel_set for r in clause):
+                errors.append(f"{code} requires one of {clause}")
+        for ex in node.get("excl") or []:
+            if ex in sel_set and code < ex:
+                errors.append(f"Mutually exclusive choices both active: {code} and {ex}")
+
+    all_radios = {
+        str(n.get("radio_group"))
+        for n in by_code.values()
+        if str(n.get("radio_group") or "")
+    }
+    for rg in sorted(all_radios):
+        chosen = radio_seen.get(rg, [])
+        if len(chosen) != 1:
+            errors.append(f"Simulation radio group {rg!r} must have 1 choice, got {chosen}")
+    return errors
+
+
+def build_pipeline_choices_catalog() -> dict[str, object]:
+    """Assemble and validate the algorithmic-choice graph for the Pipeline Map."""
+    items: list[dict[str, object]] = []
+    by_code: dict[str, dict[str, object]] = {}
+
+    for raw in PIPELINE_CHOICES_RAW:
+        it = dict(raw)
+        code = str(it["code"])
+        it["req_clauses"] = [list(cl) for cl in (it.get("req_clauses") or [])]
+        it["opt"] = list(it.get("opt") or [])
+        it["fb_in"] = list(it.get("fb_in") or [])
+        it["excl"] = list(it.get("excl") or [])
+        it["radio_group"] = str(it.get("radio_group") or "")
+        it["en"] = []
+        it["en_opt"] = []
+        it["fb_out"] = []
+        slug = str(it["doc_slug"])
+        anc = str(it.get("doc_anchor") or "")
+        it["doc_href"] = f"./{slug}/index.html" + (f"#{anc}" if anc else "")
+        items.append(it)
+        by_code[code] = it
+
+    for it in items:
+        src = str(it["code"])
+        for clause in it["req_clauses"]:  # type: ignore[union-attr]
+            for rc in clause:
+                if rc not in by_code:
+                    raise ValueError(f"Unknown pipeline choice req {rc!r} in {src}")
+                if src not in by_code[rc]["en"]:  # type: ignore[operator]
+                    by_code[rc]["en"].append(src)  # type: ignore[union-attr]
+        for oc in it["opt"]:  # type: ignore[union-attr]
+            if oc not in by_code:
+                raise ValueError(f"Unknown pipeline choice opt {oc!r} in {src}")
+            if src not in by_code[oc]["en_opt"]:  # type: ignore[operator]
+                by_code[oc]["en_opt"].append(src)  # type: ignore[union-attr]
+        for fc in it["fb_in"]:  # type: ignore[union-attr]
+            if fc not in by_code:
+                raise ValueError(f"Unknown pipeline choice fb_in {fc!r} in {src}")
+            if src not in by_code[fc]["fb_out"]:  # type: ignore[operator]
+                by_code[fc]["fb_out"].append(src)  # type: ignore[union-attr]
+        for xc in list(it["excl"]):  # type: ignore[arg-type]
+            if xc not in by_code:
+                raise ValueError(f"Unknown pipeline choice excl {xc!r} in {src}")
+            if src not in by_code[xc]["excl"]:  # type: ignore[operator]
+                by_code[xc]["excl"].append(src)  # type: ignore[union-attr]
+
+    return {"items": items, "by_code": by_code}
 
 
 def resolve_option_anchor(
