@@ -109,6 +109,7 @@ def render_nav_inner(
     home_cls = " active" if active_nav == "home" else ""
     top_cls = " active" if active_nav == "topics" else ""
     sim_cls = " active" if active_nav == "simulations" else ""
+    alg_cls = " active" if active_nav == "algorithms" else ""
     ref_cls = " active" if active_nav == "reference" else ""
     stk_cls = " active" if active_nav == "stack" else ""
 
@@ -131,6 +132,7 @@ def render_nav_inner(
         'Simulations <span class="nav-caret">&#9662;</span></button>\n'
         f'      <div class="nav-drop-menu">{"".join(sim_items)}</div>\n'
         "    </div>\n"
+        f'    <a class="nav-link{alg_cls}" href="{base}/algorithms/index.html">Algorithms</a>\n'
         f'    <a class="nav-link{ref_cls}" href="{base}/reference/index.html">Reference</a>\n'
         '    <div class="nav-dropdown">\n'
         f'      <button type="button" class="nav-drop-btn{stk_cls}" aria-expanded="false">'
@@ -298,6 +300,7 @@ def render_page_shell(
     page_kind: str = "",
     breadcrumbs: list[tuple[str, str | None]] = (),
     show_sidebar: bool = True,
+    sidebar_override_html: str = "",
     subnav_html: str = "",
     toc_items: list[tuple[str, str]] | tuple[tuple[str, str], ...] = (),
     page_scripts: tuple[str, ...] = (),
@@ -311,8 +314,10 @@ def render_page_shell(
     header_inner = render_nav_inner(
         base, hierarchy, active_nav=active_nav, has_sidebar=show_sidebar
     )
-    sidebar_html = (
-        render_sidebar_html(
+    if show_sidebar and sidebar_override_html:
+        sidebar_html = sidebar_override_html
+    elif show_sidebar:
+        sidebar_html = render_sidebar_html(
             base,
             hierarchy,
             active_domain=active_domain,
@@ -322,9 +327,8 @@ def render_page_shell(
             toc_items=toc_items,
             page_kind=page_kind,
         )
-        if show_sidebar
-        else ""
-    )
+    else:
+        sidebar_html = ""
 
     bc_html = ""
     if breadcrumbs:

@@ -578,3 +578,377 @@ canvas.eof-pf-kernel-canvas {
   width: 1rem;
   height: 1rem;
 }
+
+/* Algorithms Catalog, 2D Dependency Matrix & Entry Pages */
+.algo-legend-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 0.85rem;
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 0.81rem;
+}
+
+.algo-legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.14rem 0.52rem;
+  border-radius: 999px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+
+.algo-legend-pill.cat-calibration {
+  background: var(--cat-calibration-soft);
+  color: var(--cat-calibration-text);
+  border-color: var(--cat-calibration-border);
+}
+.algo-legend-pill.cat-online_calib {
+  background: var(--cat-online_calib-soft);
+  color: var(--cat-online_calib-text);
+  border-color: var(--cat-online_calib-border);
+}
+.algo-legend-pill.cat-loop_operation {
+  background: var(--cat-loop_operation-soft);
+  color: var(--cat-loop_operation-text);
+  border-color: var(--cat-loop_operation-border);
+}
+.algo-legend-pill.cat-analysis {
+  background: var(--cat-analysis-soft);
+  color: var(--cat-analysis-text);
+  border-color: var(--cat-analysis-border);
+}
+.algo-legend-pill.cat-simulation {
+  background: var(--cat-simulation-soft);
+  color: var(--cat-simulation-text);
+  border-color: var(--cat-simulation-border);
+}
+.algo-legend-pill.cat-planned {
+  background: var(--cat-planned-soft);
+  color: var(--cat-planned-text);
+  border-color: var(--cat-planned-border);
+  border-style: dashed;
+}
+
+.algo-code-badge,
+a.algo-code-badge {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0.16rem 0.5rem;
+  border-radius: 6px;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+a.algo-code-badge:hover { filter: brightness(0.94); }
+
+.algo-code-badge.cat-calibration {
+  background: var(--cat-calibration-soft);
+  color: var(--cat-calibration-text);
+  border-color: var(--cat-calibration-border);
+}
+.algo-code-badge.cat-online_calib {
+  background: var(--cat-online_calib-soft);
+  color: var(--cat-online_calib-text);
+  border-color: var(--cat-online_calib-border);
+}
+.algo-code-badge.cat-loop_operation {
+  background: var(--cat-loop_operation-soft);
+  color: var(--cat-loop_operation-text);
+  border-color: var(--cat-loop_operation-border);
+}
+.algo-code-badge.cat-analysis {
+  background: var(--cat-analysis-soft);
+  color: var(--cat-analysis-text);
+  border-color: var(--cat-analysis-border);
+}
+.algo-code-badge.cat-simulation {
+  background: var(--cat-simulation-soft);
+  color: var(--cat-simulation-text);
+  border-color: var(--cat-simulation-border);
+}
+.algo-code-badge.cat-planned {
+  background: var(--cat-planned-soft);
+  color: var(--cat-planned-text);
+  border-color: var(--cat-planned-border);
+  border-style: dashed;
+}
+
+.algo-code-badge-opt { border-style: dashed; opacity: 0.9; }
+.algo-code-badge-sm { font-size: 0.72rem; padding: 0.1rem 0.38rem; }
+
+.algo-entry-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.algo-entry-link:hover .algo-entry-title { color: var(--accent); text-decoration: underline; }
+.algo-entry-title { font-weight: 700; color: var(--text); }
+.algo-entry-desc { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.14rem; }
+
+.algo-var-pill {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.73rem;
+  font-weight: 600;
+  padding: 0.1rem 0.42rem;
+  border-radius: 5px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  margin: 0.08rem 0.18rem 0.08rem 0;
+  white-space: nowrap;
+}
+.algo-var-pill:hover { border-color: var(--accent); color: var(--accent); }
+
+.algo-trace-btn {
+  padding: 0.14rem 0.42rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 0.71rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.algo-trace-btn:hover,
+.algo-trace-btn.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.algo-trace-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.85rem;
+  margin: 0.55rem 0;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 0.83rem;
+}
+
+tr.cat-group-row.cat-online_calib,
+tbody tr.cat-group-row.cat-online_calib:hover {
+  background: var(--cat-online_calib-soft);
+  color: var(--cat-online_calib-text);
+  border-top: 2px solid var(--cat-online_calib-border);
+}
+tr.cat-group-row.cat-online_calib td:first-child {
+  border-left: 4px solid var(--cat-online_calib);
+}
+tr.cat-group-row.cat-planned,
+tbody tr.cat-group-row.cat-planned:hover {
+  background: var(--cat-planned-soft);
+  color: var(--cat-planned-text);
+  border-top: 2px solid var(--cat-planned-border);
+}
+tr.cat-group-row.cat-planned td:first-child {
+  border-left: 4px dashed var(--cat-planned);
+}
+
+.algo-row.cat-online_calib td:first-child {
+  border-left: 4px solid transparent;
+  border-image: linear-gradient(
+    to bottom,
+    var(--cat-calibration) 50%,
+    var(--cat-loop_operation) 50%
+  ) 1;
+}
+.algo-row.cat-planned td:first-child { border-left: 4px dashed var(--cat-planned); }
+.algo-row.algo-dimmed { opacity: 0.25; }
+.algo-row.algo-selected {
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.algo-row.algo-req { background: var(--cat-calibration-soft); }
+.algo-row.algo-enables { background: var(--cat-loop_operation-soft); }
+
+.algo-trace-tag {
+  display: none;
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 0.05rem 0.32rem;
+  border-radius: 4px;
+  margin-left: 0.28rem;
+}
+.algo-row.algo-selected .algo-trace-tag-sel {
+  display: inline-block;
+  background: var(--accent);
+  color: #ffffff;
+}
+.algo-row.algo-req .algo-trace-tag-req {
+  display: inline-block;
+  background: var(--cat-calibration);
+  color: #ffffff;
+}
+.algo-row.algo-enables .algo-trace-tag-en {
+  display: inline-block;
+  background: var(--cat-loop_operation);
+  color: #ffffff;
+}
+
+/* 2D Dependency Matrix */
+.dep-matrix-wrap {
+  max-height: 76vh;
+  overflow: auto;
+}
+.dep-matrix-table th,
+.dep-matrix-table td {
+  padding: 0.42rem 0.48rem;
+  text-align: center;
+}
+.dep-matrix-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.dep-matrix-table th.dep-sticky-col,
+.dep-matrix-table td.dep-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  text-align: left;
+  min-width: 210px;
+  border-right: 2px solid var(--border);
+}
+.dep-matrix-table thead th.dep-sticky-col {
+  z-index: 4;
+  background: var(--surface-alt);
+}
+.dep-col-hdr {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.14rem 0.36rem;
+  border-radius: 5px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.dep-cell {
+  display: inline-block;
+  min-width: 34px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.12rem 0.3rem;
+  border-radius: 4px;
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.dep-cell-req {
+  background: var(--cat-calibration-soft);
+  color: var(--cat-calibration-text);
+  border-color: var(--cat-calibration-border);
+}
+.dep-cell-opt {
+  background: var(--cat-online_calib-soft);
+  color: var(--cat-online_calib-text);
+  border-color: var(--cat-online_calib-border);
+  border-style: dashed;
+}
+.dep-cell-fb {
+  background: var(--cat-loop_operation-soft);
+  color: var(--cat-loop_operation-text);
+  border-color: var(--cat-loop_operation-border);
+}
+.dep-cell-excl {
+  background: var(--cat-excl-soft);
+  color: var(--cat-excl-text);
+  border-color: var(--cat-excl-border);
+}
+
+/* Algorithm Detail Page */
+.algo-hero {
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
+  padding: 1.25rem 1.45rem;
+  background: var(--surface-alt);
+  margin-bottom: 1.25rem;
+}
+.algo-hero.cat-calibration { border-left-color: var(--cat-calibration); }
+.algo-hero.cat-online_calib { border-left-color: var(--cat-online_calib); }
+.algo-hero.cat-loop_operation { border-left-color: var(--cat-loop_operation); }
+.algo-hero.cat-analysis { border-left-color: var(--cat-analysis); }
+.algo-hero.cat-simulation { border-left-color: var(--cat-simulation); }
+.algo-hero.cat-planned { border-left-color: var(--cat-planned); border-left-style: dashed; }
+
+.algo-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+.algo-dep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.85rem;
+  margin: 0.85rem 0 1.2rem;
+}
+.algo-dep-card {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.85rem 1rem;
+  background: var(--surface-alt);
+}
+.algo-dep-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+.algo-dep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+.algo-dep-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 0.83rem;
+}
+.algo-dep-item a.algo-dep-name {
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 600;
+}
+.algo-dep-item a.algo-dep-name:hover { color: var(--accent); text-decoration: underline; }
+.algo-excl-box {
+  border: 1px solid var(--cat-excl-border);
+  background: var(--cat-excl-soft);
+  color: var(--cat-excl-text);
+  border-radius: 8px;
+  padding: 0.65rem 0.9rem;
+  margin: 0.7rem 0;
+  font-size: 0.85rem;
+}
+.algo-sidebar-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+.algo-sidebar-dot.cat-calibration { background: var(--cat-calibration); }
+.algo-sidebar-dot.cat-online_calib { background: var(--cat-online_calib); }
+.algo-sidebar-dot.cat-loop_operation { background: var(--cat-loop_operation); }
+.algo-sidebar-dot.cat-analysis { background: var(--cat-analysis); }
+.algo-sidebar-dot.cat-simulation { background: var(--cat-simulation); }
+.algo-sidebar-dot.cat-planned { background: var(--cat-planned); }

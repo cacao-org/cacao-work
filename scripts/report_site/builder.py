@@ -14,6 +14,7 @@ from .assets import stage_site_assets, write_search_index_js
 from .constants import ASSET_EXTS
 from .cross_links import refresh_cross_links
 from .extractors import (
+    build_algorithms_catalog,
     build_bench_opt_lookup,
     build_compute_unit_catalog,
     build_options_catalog,
@@ -31,6 +32,8 @@ from .extractors import (
 )
 from .markdown import RenderContext, convert_markdown_to_html, split_simulation_markdown
 from .pages import (
+    build_algorithm_detail_html,
+    build_algorithms_index_html,
     build_extra_figures_section,
     build_front_page_html,
     build_options_reference_html,
@@ -100,7 +103,13 @@ def write_root_indices_and_firebase(
 
     stage_site_assets(public_dir)
     options_catalog = build_options_catalog(public_dir)
-    write_search_index_js(public_dir, hierarchy, options_catalog=options_catalog)
+    algo_catalog = build_algorithms_catalog()
+    write_search_index_js(
+        public_dir,
+        hierarchy,
+        options_catalog=options_catalog,
+        algo_catalog=algo_catalog,
+    )
 
     front_html = build_front_page_html(hierarchy)
     (public_dir / "reports.html").write_text(front_html, encoding="utf-8")
@@ -111,6 +120,25 @@ def write_root_indices_and_firebase(
     (sims_dir / "index.html").write_text(
         build_simulations_catalog_html(hierarchy), encoding="utf-8"
     )
+
+    algos_dir = public_dir / "algorithms"
+    algos_dir.mkdir(parents=True, exist_ok=True)
+    algo_entries: list[dict[str, object]] = algo_catalog["entries"]  # type: ignore[assignment]
+    valid_algo_slugs = {str(e["slug"]) for e in algo_entries}
+    for old_sub in list(algos_dir.iterdir()):
+        if old_sub.is_dir() and old_sub.name not in valid_algo_slugs:
+            shutil.rmtree(old_sub)
+    (algos_dir / "index.html").write_text(
+        build_algorithms_index_html(hierarchy, algo_catalog, options_catalog),
+        encoding="utf-8",
+    )
+    for algo_entry in algo_entries:
+        adir = algos_dir / str(algo_entry["slug"])
+        adir.mkdir(parents=True, exist_ok=True)
+        (adir / "index.html").write_text(
+            build_algorithm_detail_html(algo_entry, hierarchy, algo_catalog, options_catalog),
+            encoding="utf-8",
+        )
 
     ref_dir = public_dir / "reference"
     ref_dir.mkdir(parents=True, exist_ok=True)

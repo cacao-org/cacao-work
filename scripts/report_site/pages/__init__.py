@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from .algorithms import build_algorithm_detail_html, build_algorithms_index_html
 from .fragments import build_extra_figures_section, build_telemetry_files_section
 from .front_page import build_front_page_html
 from .options_reference import build_options_reference_html
@@ -19,6 +20,8 @@ from .tech_report import build_tech_report_html
 from .topic_hub import build_topic_hub_html
 
 __all__ = [
+    "build_algorithm_detail_html",
+    "build_algorithms_index_html",
     "build_extra_figures_section",
     "build_front_page_html",
     "build_options_reference_html",

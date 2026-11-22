@@ -158,6 +158,29 @@ Options:
   --sysid-whiten-order <p> Causal AR(p) whitening order W(z) (default: ${SYSID_WHITEN_ORDER})
   --skip-microbench   Skip cacaosim-benchmark run when generating COMPUTE_REPORT.md
   --compare-modes <f> Optional modular-vs-fused comparison JSON for compute report
+  --dm1-preshaper <f> Stage-1 4 kHz DM pre-shaper MIMO FIR kernel FITS
+  --dynpsol1 <fits>   Stage-1 Dynamic PSOL kernel FITS (H_mimo / H_diag)
+  --dynpsol2 <fits>   Stage-2 Dynamic PSOL kernel FITS (H_diag / H_mimo)
+  --online-og1        Enable Stage-1 closed-loop DM-poke online OG (modalog)
+  --og1-ampl <float>  Stage-1 online-OG probe RMS amplitude [um] (default: ${OG1_AMPL})
+  --og1-nbmode <int>  Stage-1 online-OG maximum probed mode count (default: ${OG1_NBMODE})
+  --og1-stride <int>  Stage-1 online-OG modal probe stride (default: ${OG1_STRIDE})
+  --og1-hold <int>    Stage-1 online-OG probe sample-and-hold frames (default: ${OG1_HOLD})
+  --og1-no-apply      Run Stage-1 modalog in shadow mode without updating mWFSfact
+  --live-2wfs1dm-sec <s> Run live Stage-2 2WFS1DM calibration burst [s] before science
+  --windlayers1       Enable live Stage-1 mlt-windlayers profiler & EOF physics prior
+  --pf-zoh-ridge <v>  Stage-1 mkEOFPF ZOH-centered ridge regularization (ON|OFF)
+  --pf-zoh-ridge2 <v> Stage-2 mkEOFPF ZOH-centered ridge regularization (ON|OFF)
+  --pf-gram-halflife <n> Extended-memory chunk-Gram exponential half-life [frames]
+  --pf-regime-kmax <n> Regime-weighted Gram library max anchor count K (0=off)
+  --pf-fx1 <fits>     Stage-1 Pass-2 Filtered-X EOF DM kernel FITS
+  --pf-fx2 <fits>     Stage-2 Pass-2 Filtered-X EOF DM kernel FITS
+  --pf-dmmodes1 <f>   Stage-1 DM modal basis cube FITS for windlayers physics Gram
+  --pf-n-prior <f>    Stage-1 windlayers physics-Gram prior sample weight N_prior
+  --pf-wl-switch-decay <f> Empirical Gram decay factor on wind-switch trigger
+  --wind-switch-sec <s> Physical time [s] to apply live phase-continuous wind rotation
+  --wind-switch-deg <d> Wind velocity rotation angle [deg] at --wind-switch-sec
+  --modalwhite        Run closed-loop whiteness monitor (modalwhite) on Stages 1 & 2
   -h, --help          Show this help message
 EOF
 }

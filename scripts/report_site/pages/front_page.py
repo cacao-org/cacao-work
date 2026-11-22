@@ -39,6 +39,7 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         + "</div>\n"
         '<div class="hero-actions">'
         '<a class="btn" href="./simulations/index.html">Browse All Simulations &rarr;</a>'
+        '<a class="btn btn-secondary" href="./algorithms/index.html">Algorithms &amp; Matrix</a>'
         '<a class="btn btn-secondary" href="./reference/index.html">Options Reference</a>'
         '<a class="btn btn-secondary" href="./stack/index.html">Stack &amp; Reproduction Guide</a>'
         "</div>\n"
@@ -198,6 +199,12 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         f"<p>Filter, compare, and inspect all {len(run_metas)} closed-loop runs with "
         "parameter diffs, optical Strehl/contrast charts, and runtime explorers.</p></div>"
         '<span class="subpage-cta">Open Simulation Catalog &rarr;</span></a>'
+        '<a class="subpage-card" href="./algorithms/index.html">'
+        '<div><h3>Algorithms &amp; Dependency Matrix</h3>'
+        "<p>Color-coded catalog and 2D matrix distinguishing Offline Calibration, Online "
+        "Calibration, and RT Operation using short <code>CODE/OPT</code> tags, with a "
+        "dedicated webpage per entry.</p></div>"
+        '<span class="subpage-cta">Open Algorithms Matrix &rarr;</span></a>'
         '<a class="subpage-card" href="./reference/index.html">'
         '<div><h3>Simulator Options Reference</h3>'
         "<p>Searchable tables for every <code>.bench</code> optical element key, "

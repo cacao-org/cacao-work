@@ -1135,7 +1135,7 @@ def test_runner_cli_and_cacaoloop_env_drift_guards(repo_root: Path) -> None:
     loop_lines = (
         repo_root / "benches" / "ao3k_scexao" / "cacaoloop-ao3k-scexao.milk"
     ).read_text(encoding="utf-8").splitlines()
-    env_block = "\n".join(loop_lines[94:162])
+    env_block = "\n".join(loop_lines[94:180])
     script_envs = set(re.findall(r"\$\{(CACAO_[A-Z0-9_]+):-", env_block))
     catalog_envs = {item["name"] for item in CACAOLOOP_ENV_VARS}
     assert len(script_envs) >= 40
@@ -1298,6 +1298,35 @@ def test_options_reference_config_and_run_options_tracking(
     sims_html = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
     assert "Clock Skew" in sims_html
     assert "125 us" in sims_html
+
+    # Verify /algorithms/ catalog, 2D matrix, per-entry webpages, and exclusion of 4-LGS/LTAO
+    algos_idx = pub / "algorithms" / "index.html"
+    assert algos_idx.is_file()
+    algos_html = algos_idx.read_text(encoding="utf-8")
+    assert 'id="algo-catalog-table"' in algos_html
+    assert 'id="algo-matrix-table"' in algos_html
+    assert 'href="./eof/index.html"' in algos_html
+    assert 'href="./eof/index.html#opt-eof-wind"' in algos_html
+    assert 'href="./psol/index.html#opt-psol-mimo"' in algos_html
+    assert 'href="./og-poke/index.html"' in algos_html
+    assert 'href="./2wfs-live/index.html"' in algos_html
+    assert "4-LGS" not in algos_html
+    assert "LTAO" not in algos_html
+    assert "algorithms/index.html" in paths
+    assert "algorithms/eof/index.html" in paths
+    assert "algorithms/eof/index.html#opt-eof-wind" in paths
+
+    eof_page = pub / "algorithms" / "eof" / "index.html"
+    assert eof_page.is_file()
+    eof_html = eof_page.read_text(encoding="utf-8")
+    assert 'id="opt-eof-wind"' in eof_html
+    assert 'href="../wind/index.html"' in eof_html
+    assert 'href="../../reference/index.html#opt-cli-run-ao3k-scexao-sh-pf-zoh-ridge"' in eof_html
+    assert 'href="../index.html"' in eof_html
+    assert (pub / "algorithms" / "3drm-fact" / "index.html").is_file()
+    assert (pub / "algorithms" / "og-poke" / "index.html").is_file()
+    assert (pub / "algorithms" / "2wfs-live" / "index.html").is_file()
+    assert not (pub / "algorithms" / "ltao").exists()
 
     # Verify zero inline <style> tags and zero broken relative links across all pages
     for html_file in pub.rglob("*.html"):

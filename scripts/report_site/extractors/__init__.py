@@ -5,6 +5,13 @@
 
 from __future__ import annotations
 
+from .algorithms_catalog import (
+    ALGO_ROLE_ORDER,
+    ALGO_ROLES,
+    build_algorithms_catalog,
+    make_algo_slug,
+    make_variant_anchor,
+)
 from .bench import find_bench_path, parse_bench_file
 from .common import (
     REL_SIBLING_RE,
@@ -42,10 +49,13 @@ from .runtime import (
 )
 
 __all__ = [
+    "ALGO_ROLES",
+    "ALGO_ROLE_ORDER",
     "CACAOLOOP_ENV_VARS",
     "REL_SIBLING_RE",
     "RUNNER_CLI_OPTIONS",
     "TRACKED_PARAMS",
+    "build_algorithms_catalog",
     "build_bench_opt_lookup",
     "build_compute_unit_catalog",
     "build_options_catalog",

@@ -51,6 +51,7 @@ def write_search_index_js(
     hierarchy: dict[str, object],
     *,
     options_catalog: dict[str, object] | None = None,
+    algo_catalog: dict[str, object] | None = None,
 ) -> None:
     """Generate <public_dir>/assets/js/search-index.js for file:// and HTTP search."""
     entries: list[dict[str, str]] = [
@@ -67,6 +68,16 @@ def write_search_index_js(
             "kind": "Catalog",
             "domain": "All Domains",
             "summary": "Filterable and comparable simulation matrix across all runs",
+        },
+        {
+            "title": "AO Algorithms, Calibration & Options Dependency Matrix",
+            "path": "algorithms/index.html",
+            "kind": "Algorithms",
+            "domain": "Algorithms & Dependencies",
+            "summary": (
+                "Color-coded catalog and 2D calibration-to-operation dependency matrix "
+                "using short CODE/OPT tags with dedicated per-algorithm pages"
+            ),
         },
         {
             "title": "Simulator Options & Parameter Reference",
@@ -225,6 +236,43 @@ def write_search_index_js(
                         "summary": str(co.get("description") or ""),
                     }
                 )
+
+    if isinstance(algo_catalog, dict):
+        roles_map = (
+            algo_catalog.get("roles") if isinstance(algo_catalog.get("roles"), dict) else {}
+        )
+        for ae in algo_catalog.get("entries") or []:
+            if not isinstance(ae, dict):
+                continue
+            acode = str(ae.get("code") or "")
+            aslug = str(ae.get("slug") or "")
+            aname = str(ae.get("name") or acode)
+            arole = str(ae.get("role") or "")
+            rlbl = str((roles_map.get(arole) or {}).get("short") or arole)
+            entries.append(
+                {
+                    "title": f"{acode} — {aname}",
+                    "path": f"algorithms/{aslug}/index.html",
+                    "kind": f"Algo · {rlbl}",
+                    "domain": "Algorithms & Dependencies",
+                    "summary": str(ae.get("summary") or ""),
+                }
+            )
+            for v in ae.get("variants") or []:
+                if not isinstance(v, dict):
+                    continue
+                vcode = str(v.get("code") or "")
+                vanc = str(v.get("anchor") or "")
+                if vcode and vcode != acode:
+                    entries.append(
+                        {
+                            "title": f"{vcode} ({aname})",
+                            "path": f"algorithms/{aslug}/index.html#{vanc}",
+                            "kind": f"Option · {rlbl}",
+                            "domain": "Algorithms & Dependencies",
+                            "summary": str(v.get("summary") or ""),
+                        }
+                    )
 
     js_dir = public_dir / "assets" / "js"
     js_dir.mkdir(parents=True, exist_ok=True)
