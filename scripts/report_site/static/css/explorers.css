@@ -952,3 +952,300 @@ tr.cat-group-row.cat-planned td:first-child {
 .algo-sidebar-dot.cat-analysis { background: var(--cat-analysis); }
 .algo-sidebar-dot.cat-simulation { background: var(--cat-simulation); }
 .algo-sidebar-dot.cat-planned { background: var(--cat-planned); }
+
+/* Interactive 5-Column Pipeline Architecture Board */
+.algo-pipe-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.6rem;
+}
+
+.algo-pipe-status {
+  padding: 0.48rem 0.78rem;
+  margin-bottom: 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.83rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.3rem;
+}
+
+.algo-pipe-status strong { color: var(--text); }
+
+.algo-pipe-board {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(175px, 1fr));
+  gap: 1.05rem;
+  padding: 0.4rem 0.25rem 0.6rem;
+  overflow-x: auto;
+}
+
+.algo-pipe-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+  overflow: visible;
+}
+
+.algo-pipe-svg-base {
+  z-index: 1;
+}
+
+.algo-pipe-col {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 175px;
+}
+
+.algo-pipe-col-hdr {
+  padding: 0.42rem 0.6rem;
+  border-radius: 7px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-bottom: 2px solid var(--accent);
+}
+
+.algo-pipe-col-step {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.algo-pipe-col-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.algo-pipe-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  padding: 0.52rem 0.62rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transition: opacity 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+
+.algo-pipe-card.cat-calibration {
+  border-left-color: var(--cat-calibration);
+  background: linear-gradient(90deg, var(--cat-calibration-soft) 0%, var(--surface) 22%);
+}
+.algo-pipe-card.cat-online_calib {
+  border-left-color: var(--cat-online_calib);
+  background: linear-gradient(90deg, var(--cat-online_calib-soft) 0%, var(--surface) 22%);
+}
+.algo-pipe-card.cat-loop_operation {
+  border-left-color: var(--cat-loop_operation);
+  background: linear-gradient(90deg, var(--cat-loop_operation-soft) 0%, var(--surface) 22%);
+}
+.algo-pipe-card.cat-analysis {
+  border-left-color: var(--cat-analysis);
+  background: linear-gradient(90deg, var(--cat-analysis-soft) 0%, var(--surface) 22%);
+}
+.algo-pipe-card.cat-simulation {
+  border-left-color: var(--cat-simulation);
+  background: linear-gradient(90deg, var(--cat-simulation-soft) 0%, var(--surface) 22%);
+}
+.algo-pipe-card.cat-planned {
+  border-left-color: var(--cat-planned);
+  border-left-style: dashed;
+  background: linear-gradient(90deg, var(--cat-planned-soft) 0%, var(--surface) 22%);
+}
+
+.algo-pipe-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+}
+
+.algo-pipe-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.algo-pipe-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.algo-pipe-card-link:hover .algo-pipe-card-name {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.algo-pipe-card-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.algo-pipe-card-meta {
+  font-size: 0.71rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.algo-pipe-pin {
+  padding: 0.06rem 0.32rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.algo-pipe-pin:hover,
+.algo-pipe-pin.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.algo-pipe-card.pipe-dim { opacity: 0.22; }
+.algo-pipe-card.pipe-focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+  opacity: 1;
+}
+.algo-pipe-card.pipe-up {
+  border-color: var(--cat-calibration);
+  box-shadow: 0 0 0 2px var(--cat-calibration);
+  opacity: 1;
+}
+.algo-pipe-card.pipe-opt {
+  border-color: var(--cat-online_calib);
+  box-shadow: 0 0 0 2px var(--cat-online_calib);
+  opacity: 1;
+}
+.algo-pipe-card.pipe-down {
+  border-color: var(--cat-loop_operation);
+  box-shadow: 0 0 0 2px var(--cat-loop_operation);
+  opacity: 1;
+}
+
+.pipe-rel-tag {
+  display: none;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0.04rem 0.28rem;
+  border-radius: 4px;
+  color: #ffffff;
+}
+.algo-pipe-card.pipe-focus .pipe-rel-focus { display: inline-block; background: var(--accent); }
+.algo-pipe-card.pipe-up .pipe-rel-up { display: inline-block; background: var(--cat-calibration); }
+.algo-pipe-card.pipe-opt .pipe-rel-opt { display: inline-block; background: var(--cat-online_calib); }
+.algo-pipe-card.pipe-down .pipe-rel-down { display: inline-block; background: var(--cat-loop_operation); }
+
+.pipe-wire-base {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.4;
+  opacity: 0.55;
+}
+.pipe-wire-req {
+  fill: none;
+  stroke: var(--cat-calibration);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.pipe-wire-opt {
+  fill: none;
+  stroke: var(--cat-online_calib);
+  stroke-width: 2.1;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+}
+.pipe-wire-down {
+  fill: none;
+  stroke: var(--cat-loop_operation);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.pipe-wire-fb {
+  fill: none;
+  stroke: var(--cat-loop_operation);
+  stroke-width: 2.1;
+  stroke-dasharray: 4 3;
+  stroke-linecap: round;
+}
+
+/* 3-Column Flow Strip on Per-Algorithm Detail Pages */
+.algo-flow-strip {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(230px, 1.05fr) minmax(210px, 1fr);
+  gap: 2.4rem;
+  align-items: center;
+  padding: 0.9rem 0.75rem;
+  margin: 0.75rem 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.algo-flow-col {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.algo-flow-col-hdr {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
+}
+
+.algo-flow-center {
+  padding: 0.85rem 0.95rem;
+  border-width: 2px;
+  border-left-width: 5px;
+  box-shadow: var(--shadow-lg);
+}
+
+@media (max-width: 960px) {
+  .algo-pipe-board {
+    grid-template-columns: repeat(5, minmax(195px, 1fr));
+  }
+  .algo-flow-strip {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+}

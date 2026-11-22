@@ -317,40 +317,230 @@ def _render_matrix_panel(algo_catalog: dict[str, object]) -> str:
     )
 
 
-def _render_mermaid_graph(
+_PIPELINE_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("Step 1", "Bench & Base Calib", ("SIM/PLATE", "SIM/WROT", "MLAT", "RM", "SRM")),
+    (
+        "Step 2",
+        "3D RM & DM Shaping",
+        ("3DRM/P1", "PRESH/CAL", "PRESH", "3DRM/P2", "3DRM/FACT", "LAG/2PT"),
+    ),
+    ("Step 3", "RT Core & Online Calib", ("INT", "PSOL", "OG/POKE", "2WFS/LIVE", "WIND")),
+    ("Step 4", "ZPO, Offload & Prediction", ("ZPO", "OFFL", "PF/AR", "EOF")),
+    ("Step 5", "Diagnostics & Research", ("WHITE", "TLM", "2WFS/POST", "HESS/CORO")),
+)
+
+_PIPELINE_PRESETS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "full-p15",
+        "Full Phases 1-5 Stack",
+        ("PRESH", "PSOL", "OG/POKE", "2WFS/LIVE", "ZPO", "WIND", "EOF", "WHITE"),
+    ),
+    (
+        "plate-3drm",
+        "3D RM & Plate Pre-Shaper",
+        ("3DRM/P1", "PRESH/CAL", "PRESH", "3DRM/P2", "3DRM/FACT", "LAG/2PT", "PSOL"),
+    ),
+    (
+        "stg1-og",
+        "Stage-1 Online OG",
+        ("RM", "3DRM/FACT", "LAG/2PT", "PSOL", "OG/POKE"),
+    ),
+    (
+        "stg2-2wfs",
+        "Stage-2 2WFS1DM + ZPO",
+        ("RM", "PSOL", "2WFS/LIVE", "ZPO", "OFFL"),
+    ),
+    (
+        "wind-eof",
+        "Wind-Switch Rescue EOF",
+        ("SIM/WROT", "PSOL", "WIND", "EOF", "WHITE"),
+    ),
+)
+
+
+def _render_pipeline_board(
     entries: list[dict[str, object]],
     by_code: dict[str, dict[str, object]],
-    href_prefix: str,
 ) -> str:
-    lines: list[str] = ["flowchart LR"]
-    for rkey in ALGO_ROLE_ORDER:
-        rmeta = ALGO_ROLES[rkey]
-        lines.append(f"    classDef {rmeta['mermaid_class']} {rmeta['mermaid_def']}")
+    placed: set[str] = set()
+    cols_html: list[str] = []
+    for step_lbl, col_title, codes in _PIPELINE_COLUMNS:
+        cards: list[str] = []
+        for code in codes:
+            e = by_code.get(code)
+            if not e:
+                continue
+            placed.add(code)
+            role = str(e["role"])
+            slug = str(e["slug"])
+            name = str(e["name"])
+            rmeta = ALGO_ROLES[role]
+            n_in = len(e.get("requires") or []) + len(e.get("optional_requires") or [])
+            n_out = len(e.get("enables") or []) + len(e.get("enables_optional") or [])
+            entry_href = f"./{html.escape(slug, quote=True)}/index.html"
+            cards.append(
+                f'<div class="algo-pipe-card cat-{role}" '
+                f'data-pipe-code="{html.escape(code, quote=True)}">'
+                '<div class="algo-pipe-card-top">'
+                f'<a class="algo-code-badge algo-code-badge-sm cat-{role}" '
+                f'href="{entry_href}">{html.escape(code, quote=False)}</a>'
+                '<span>'
+                '<span class="pipe-rel-tag pipe-rel-focus">FOCUS</span>'
+                '<span class="pipe-rel-tag pipe-rel-up">REQ</span>'
+                '<span class="pipe-rel-tag pipe-rel-opt">OPT</span>'
+                '<span class="pipe-rel-tag pipe-rel-down">ENABLES</span>'
+                f'<button type="button" class="algo-pipe-pin" '
+                f'data-pipe-pin="{html.escape(code, quote=True)}" '
+                f'title="Pin dependency wires for {html.escape(code, quote=True)}">Pin</button>'
+                "</span></div>"
+                f'<a class="algo-pipe-card-link" href="{entry_href}">'
+                f'<div class="algo-pipe-card-name">{html.escape(name, quote=False)}</div>'
+                "</a>"
+                '<div class="algo-pipe-card-meta">'
+                f'<span>{html.escape(rmeta["short"], quote=False)}</span>'
+                f"<span>{n_in} in &middot; {n_out} out</span>"
+                "</div></div>"
+            )
+        cols_html.append(
+            '<div class="algo-pipe-col">'
+            '<div class="algo-pipe-col-hdr">'
+            f'<div class="algo-pipe-col-step">{html.escape(step_lbl, quote=False)}</div>'
+            f'<div class="algo-pipe-col-title">{html.escape(col_title, quote=False)}</div>'
+            f'</div>{"".join(cards)}</div>'
+        )
 
-    present = {str(e["code"]) for e in entries}
-    for e in entries:
-        code = str(e["code"])
-        nid = _mermaid_node_id(code)
-        role = str(e["role"])
-        cls = ALGO_ROLES[role]["mermaid_class"]
-        slug = str(e["slug"])
-        lines.append(f'    {nid}["{code}"]:::{cls}')
-        lines.append(f'    click {nid} "{href_prefix}{slug}/index.html" "{code}"')
+    # Append any unplaced entries to the last column as safety net
+    extras = [e for e in entries if str(e["code"]) not in placed]
+    if extras:
+        extra_cards = "".join(
+            f'<div class="algo-pipe-card cat-{e["role"]}" '
+            f'data-pipe-code="{html.escape(str(e["code"]), quote=True)}">'
+            f'<a class="algo-code-badge algo-code-badge-sm cat-{e["role"]}" '
+            f'href="./{html.escape(str(e["slug"]), quote=True)}/index.html">'
+            f'{html.escape(str(e["code"]), quote=False)}</a>'
+            f'<div class="algo-pipe-card-name">{html.escape(str(e["name"]), quote=False)}</div>'
+            "</div>"
+            for e in extras
+        )
+        cols_html.append(f'<div class="algo-pipe-col">{extra_cards}</div>')
 
-    for e in entries:
-        dst_code = str(e["code"])
-        dst_id = _mermaid_node_id(dst_code)
-        for req_code in e.get("requires") or []:
-            if req_code in present:
-                lines.append(f"    {_mermaid_node_id(str(req_code))} --> {dst_id}")
-        for opt_code in e.get("optional_requires") or []:
-            if opt_code in present:
-                lines.append(f"    {_mermaid_node_id(str(opt_code))} -.-> {dst_id}")
-        for fb_code in e.get("feedback_from") or []:
-            if fb_code in present:
-                lines.append(f'    {_mermaid_node_id(str(fb_code))} -. "FB" .-> {dst_id}')
+    preset_btns = "".join(
+        f'<button type="button" class="chip-btn" '
+        f'data-pipe-preset="{html.escape(pid, quote=True)}">'
+        f"{html.escape(plbl, quote=False)}</button>"
+        for pid, plbl, _ in _PIPELINE_PRESETS
+    )
+    preset_payload = {pid: {"label": plbl, "codes": list(pcodes)} for pid, plbl, pcodes in _PIPELINE_PRESETS}
 
-    return '<pre class="mermaid">\n' + html.escape("\n".join(lines), quote=False) + "\n</pre>"
+    return (
+        '<div class="algo-pipe-toolbar">'
+        '<div class="toolbar-group">'
+        '<span class="filter-inline-label">Highlight Stack:</span>'
+        f"{preset_btns}"
+        '<button type="button" class="btn-sm" id="algo-pipe-clear">Clear</button>'
+        "</div>"
+        '<div class="toolbar-group">'
+        '<span class="filter-inline-label">Wire Scope:</span>'
+        '<button type="button" class="chip-btn active" data-pipe-depth="direct">Direct</button>'
+        '<button type="button" class="chip-btn" data-pipe-depth="full">Full Chain</button>'
+        "</div></div>\n"
+        '<div class="algo-pipe-status" id="algo-pipe-status">'
+        "<span>Hover any card to inspect its required calibrations "
+        "(<strong>amber</strong>), optional enhancements (<strong>teal</strong>), and "
+        "downstream algorithms (<strong>blue</strong>). Click any card to open its page, "
+        "or click <strong>Pin</strong> to lock wires.</span></div>\n"
+        '<div class="algo-pipe-board" id="algo-pipeline-board">\n'
+        '<svg class="algo-pipe-svg algo-pipe-svg-base" id="algo-pipe-svg-base" '
+        'aria-hidden="true"></svg>\n'
+        '<svg class="algo-pipe-svg" id="algo-pipe-svg" aria-hidden="true"></svg>\n'
+        + "\n".join(cols_html)
+        + "\n</div>\n"
+        f'<script type="application/json" id="algo-pipe-presets">'
+        f"{safe_json_embed(preset_payload)}</script>"
+    )
+
+
+def _render_detail_flow_strip(
+    entry: dict[str, object],
+    by_code: dict[str, dict[str, object]],
+) -> str:
+    code = str(entry["code"])
+    role = str(entry["role"])
+    name = str(entry["name"])
+    rmeta = ALGO_ROLES[role]
+    req_codes = [str(c) for c in (entry.get("requires") or []) if c in by_code]
+    opt_codes = [str(c) for c in (entry.get("optional_requires") or []) if c in by_code]
+    fb_codes = [str(c) for c in (entry.get("feedback_from") or []) if c in by_code]
+    en_codes = [str(c) for c in (entry.get("enables") or []) if c in by_code]
+    en_opt_codes = [str(c) for c in (entry.get("enables_optional") or []) if c in by_code]
+    fb_out_codes = [str(c) for c in (entry.get("feeds_runtime") or []) if c in by_code]
+
+    def _mini_card(c: str, rel_kind: str, rel_lbl: str, side: str) -> str:
+        t = by_code[c]
+        tr = str(t["role"])
+        ts = str(t["slug"])
+        tn = str(t["name"])
+        href = f"../{html.escape(ts, quote=True)}/index.html"
+        return (
+            f'<div class="algo-pipe-card cat-{tr}" '
+            f'data-flow-side="{side}" data-flow-kind="{rel_kind}">'
+            '<div class="algo-pipe-card-top">'
+            f'<a class="algo-code-badge algo-code-badge-sm cat-{tr}" href="{href}">'
+            f"{html.escape(c, quote=False)}</a>"
+            f'<span class="dep-cell dep-cell-{rel_kind}">{html.escape(rel_lbl, quote=False)}</span>'
+            "</div>"
+            f'<a class="algo-pipe-card-link" href="{href}">'
+            f'<div class="algo-pipe-card-name">{html.escape(tn, quote=False)}</div>'
+            "</a></div>"
+        )
+
+    up_cards = (
+        [_mini_card(c, "req", "REQ", "up") for c in req_codes]
+        + [_mini_card(c, "opt", "OPT", "up") for c in opt_codes]
+        + [_mini_card(c, "fb", "FB", "up") for c in fb_codes]
+    )
+    down_cards = (
+        [_mini_card(c, "req", "ENABLES", "down") for c in en_codes]
+        + [_mini_card(c, "opt", "OPT", "down") for c in en_opt_codes]
+        + [_mini_card(c, "fb", "FB", "down") for c in fb_out_codes]
+    )
+
+    center_card = (
+        f'<div class="algo-pipe-card algo-flow-center cat-{role}" data-flow-side="center">'
+        '<div class="algo-pipe-card-top">'
+        f'<span class="algo-code-badge cat-{role}">{html.escape(code, quote=False)}</span>'
+        f'<span class="algo-legend-pill cat-{role}">{html.escape(rmeta["short"], quote=False)}</span>'
+        "</div>"
+        f'<div class="algo-pipe-card-name">{html.escape(name, quote=False)}</div>'
+        f'<div class="algo-pipe-card-meta"><span>Current Entry</span></div>'
+        "</div>"
+    )
+
+    up_html = (
+        "".join(up_cards)
+        if up_cards
+        else '<p class="muted">Self-contained (no mandatory upstream calibration).</p>'
+    )
+    down_html = (
+        "".join(down_cards)
+        if down_cards
+        else '<p class="muted">Terminal diagnostic or output stage.</p>'
+    )
+
+    return (
+        '<div class="algo-flow-strip" id="algo-detail-flow">\n'
+        '<svg class="algo-pipe-svg" id="algo-detail-flow-svg" aria-hidden="true"></svg>\n'
+        '<div class="algo-flow-col">'
+        '<div class="algo-flow-col-hdr">Upstream Calibrations &amp; Inputs</div>'
+        f"{up_html}</div>\n"
+        '<div class="algo-flow-col">'
+        '<div class="algo-flow-col-hdr">Selected Algorithm</div>'
+        f"{center_card}</div>\n"
+        '<div class="algo-flow-col">'
+        '<div class="algo-flow-col-hdr">Feeds &amp; Enables Downstream</div>'
+        f"{down_html}</div>\n"
+        "</div>"
+    )
 
 
 def build_algorithms_index_html(
@@ -456,14 +646,16 @@ def build_algorithms_index_html(
 
     graph_section = (
         '<section class="explorer-panel" id="dependency-graph">\n'
-        "<h2>Interactive Calibration &amp; Operation Dependency Graph</h2>\n"
-        "<p class=\"muted\">Solid arrows denote required calibrations/inputs; dashed arrows denote "
-        "optional enhancements or closed-loop feedback. Click any node to open its entry page.</p>\n"
-        + _render_mermaid_graph(entries, by_code, "./")
+        "<h2>Interactive Calibration &amp; Operation Pipeline Map</h2>\n"
+        '<p class="muted">Organized left-to-right from bench &amp; base calibration through '
+        "3D dynamic shaping, core RT &amp; online calibration, prediction, and diagnostics. "
+        "Hover any card (or select a stack preset) to trace exact dependency wires; click any "
+        "card to open its dedicated page.</p>\n"
+        + _render_pipeline_board(entries, by_code)
         + "\n</section>"
     )
 
-    body_html = "\n\n".join([hero_html, _render_role_legend(), explorer_html, graph_section])
+    body_html = "\n\n".join([hero_html, _render_role_legend(), graph_section, explorer_html])
     return render_page_shell(
         title="AO Algorithms & Dependencies · cacao-work",
         rel_root="..",
@@ -477,7 +669,7 @@ def build_algorithms_index_html(
         ],
         show_sidebar=False,
         page_scripts=("algorithms.js",),
-        has_mermaid=True,
+        has_mermaid=False,
         footer_right=f'{counts["total"]} AO algorithms · {counts["variants"]} CODE/OPT variants',
     )
 
@@ -659,49 +851,16 @@ def build_algorithm_detail_html(
         f'</tr></thead><tbody>{"".join(var_rows)}</tbody></table></div>'
     )
 
-    # Local neighborhood Mermaid graph (direct upstream + self + direct downstream)
-    nb_codes_ordered: list[str] = []
-    for c in [*req_codes, *opt_codes, *fb_codes, code, *en_codes, *en_opt_codes, *fb_out_codes]:
-        if c in by_code and c not in nb_codes_ordered:
-            nb_codes_ordered.append(c)
-    nb_entries = [by_code[c] for c in nb_codes_ordered]
-    has_local_graph = len(nb_entries) > 1
-    local_graph_html = (
-        _render_mermaid_graph(nb_entries, by_code, "../") if has_local_graph else ""
-    )
+    local_flow_html = _render_detail_flow_strip(entry, by_code)
 
     excl_html = "".join(
         '<div class="algo-excl-box"><strong>Interaction / Exclusion Note:</strong> '
         f'{html.escape(str(ex.get("reason") or ""), quote=False)}</div>'
         for ex in excludes
     )
-    dep_cards = (
-        '<div class="algo-dep-grid">'
-        + _render_dep_card(
-            "Required Calibrations & Inputs",
-            req_codes,
-            by_code,
-            empty_msg="Self-contained (no mandatory upstream calibration).",
-        )
-        + _render_dep_card(
-            "Optional Enhancements & Runtime Feedback",
-            [*opt_codes, *fb_codes],
-            by_code,
-            optional_set=set(opt_codes),
-            empty_msg="No optional inputs.",
-        )
-        + _render_dep_card(
-            "Feeds / Enables Downstream",
-            [*en_codes, *en_opt_codes, *fb_out_codes],
-            by_code,
-            optional_set=set(en_opt_codes),
-            empty_msg="Terminal diagnostic or output stage.",
-        )
-        + "</div>"
-    )
     deps_sec = (
         '<h2 id="dependencies">Dependencies &amp; Calibration Chain</h2>\n'
-        f"{local_graph_html}\n{excl_html}\n{dep_cards}"
+        f"{local_flow_html}\n{excl_html}"
     )
 
     # Resolved CLI / Env / FPS options table
@@ -848,6 +1007,7 @@ def build_algorithm_detail_html(
         show_sidebar=True,
         sidebar_override_html=sidebar_html,
         toc_items=toc_items,
-        has_mermaid=has_local_graph,
+        page_scripts=("algorithms.js",),
+        has_mermaid=False,
         footer_right=f'{code} ({rmeta["short"]}) · AO Algorithm Specification',
     )

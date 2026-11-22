@@ -1305,6 +1305,9 @@ def test_options_reference_config_and_run_options_tracking(
     algos_html = algos_idx.read_text(encoding="utf-8")
     assert 'id="algo-catalog-table"' in algos_html
     assert 'id="algo-matrix-table"' in algos_html
+    assert 'id="algo-pipeline-board"' in algos_html
+    assert 'id="algo-pipe-svg"' in algos_html
+    assert 'data-pipe-code="EOF"' in algos_html
     assert 'href="./eof/index.html"' in algos_html
     assert 'href="./eof/index.html#opt-eof-wind"' in algos_html
     assert 'href="./psol/index.html#opt-psol-mimo"' in algos_html
@@ -1320,6 +1323,9 @@ def test_options_reference_config_and_run_options_tracking(
     assert eof_page.is_file()
     eof_html = eof_page.read_text(encoding="utf-8")
     assert 'id="opt-eof-wind"' in eof_html
+    assert 'id="algo-detail-flow"' in eof_html
+    assert 'id="algo-detail-flow-svg"' in eof_html
+    assert "algorithms.js" in eof_html
     assert 'href="../wind/index.html"' in eof_html
     assert 'href="../../reference/index.html#opt-cli-run-ao3k-scexao-sh-pf-zoh-ridge"' in eof_html
     assert 'href="../index.html"' in eof_html
