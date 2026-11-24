@@ -1,0 +1,35 @@
+
+==============================================================================
+DATASET: selflearn_scao_unmod0_s035 (aol1, modes 0..19, h=8, delta=2)
+==============================================================================
+[   0.0s] loaded N=4000, M=92, drops=0, WFS rms(0..19)=0.00663, DM rms=0.07977, OL rms=0.08517
+
+--- 1. Native GRIC Recurrence (K half/full) & Local Intrinsic Dim (LID) ---
+  GRIC [e4_bands      , D= 4]  r=1.5: K=41/68  |  r=2.0: K=21/35  |  r=2.5: K=11/17  |  n/a
+  GRIC [wfs_lo4       , D= 4]  r=1.5: K=28/47  |  r=2.0: K=15/25  |  r=2.5: K=8/13  |  n/a
+  GRIC [tt2_e2        , D= 4]  r=1.5: K=27/46  |  r=2.0: K=16/27  |  r=2.5: K=8/13  |  n/a
+  GRIC [tt2_abs_e2    , D= 6]  r=1.5: K=55/93  |  r=2.0: K=28/45  |  r=2.5: K=15/28  |  n/a
+  GRIC [tt2_dm2_e2    , D= 6]  r=1.5: K=49/89  |  r=2.0: K=24/42  |  r=2.5: K=12/20  |  n/a
+  GRIC [regime_e2_vel , D= 3]  r=1.5: K=18/30  |  r=2.0: K=10/13  |  r=2.5: K=7/10  |  n/a
+
+--- 2. Target: WFS_future_W[t+d] (eval frames=1598) ---
+  Offline global linear (h=8 lags W+D, lam=0.0001): +99.44% var
+  Causal Level-0 global online factorized RLS (q=4):      +99.48% var
+    + Level-1 GRIC [e1_logE      ] r=0.8 K= 8: total=+99.43%  L1_over_L0= -9.34%  (ctrl -44.98%)
+    + Level-1 GRIC [e4_bands     ] r=2.0 K=16: total=+99.40%  L1_over_L0=-16.32%  (ctrl -49.63%)
+    + Level-1 GRIC [wfs_lo4      ] r=2.0 K=16: total=+99.47%  L1_over_L0= -2.47%  (ctrl -19.28%)
+    + Level-1 GRIC [tt2_e2       ] r=2.0 K=16: total=+99.39%  L1_over_L0=-17.42%  (ctrl -44.06%)
+    + Level-1 GRIC [tt2_abs_e2   ] r=2.5 K=16: total=+99.33%  L1_over_L0=-29.94%  (ctrl -60.17%)
+    + Level-1 GRIC [tt2_dm2_e2   ] r=2.5 K=16: total=+99.40%  L1_over_L0=-15.58%  (ctrl -44.47%)
+    + Level-1 GRIC [regime_e2_vel] r=1.5 K=16: total=+99.41%  L1_over_L0=-13.48%  (ctrl -40.59%)
+
+--- 2. Target: PSOL_incr_dOL[t+d] (eval frames=1598) ---
+  Offline global linear (h=8 lags W+D, lam=0.0001): +81.10% var
+  Causal Level-0 global online factorized RLS (q=4):      +97.21% var
+    + Level-1 GRIC [e1_logE      ] r=0.8 K= 8: total=+97.13%  L1_over_L0= -2.92%  (ctrl -11.62%)
+    + Level-1 GRIC [e4_bands     ] r=2.0 K=16: total=+97.15%  L1_over_L0= -2.24%  (ctrl -11.89%)
+    + Level-1 GRIC [wfs_lo4      ] r=2.0 K=16: total=+97.21%  L1_over_L0= +0.18%  (ctrl  -6.51%)
+    + Level-1 GRIC [tt2_e2       ] r=2.0 K=16: total=+97.15%  L1_over_L0= -2.17%  (ctrl -10.91%)
+    + Level-1 GRIC [tt2_abs_e2   ] r=2.5 K=16: total=+97.11%  L1_over_L0= -3.71%  (ctrl -11.56%)
+    + Level-1 GRIC [tt2_dm2_e2   ] r=2.5 K=16: total=+97.15%  L1_over_L0= -2.03%  (ctrl -11.08%)
+    + Level-1 GRIC [regime_e2_vel] r=1.5 K=16: total=+97.14%  L1_over_L0= -2.64%  (ctrl -11.58%)

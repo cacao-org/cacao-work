@@ -185,6 +185,7 @@ verify_install() {
         cacao-fpsexec-modalCTRLstats
         cacao-fpsexec-cacaopc-mkARPF
         cacao-fpsexec-cacaopc-applyARPF
+        cacao-fpsexec-cacaopc-selflearn
         cacao-fpsexec-cacaopt-mlat
         cacao-fpsexec-cacaoac-measlinresp
         cacao-fpsexec-cacaocc-compstrcm

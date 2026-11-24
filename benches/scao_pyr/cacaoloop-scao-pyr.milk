@@ -52,6 +52,8 @@ Usage:
   ${SCRIPT_NAME} close [gain]
   ${SCRIPT_NAME} pf-on [mixcoeff [pflatency]]
   ${SCRIPT_NAME} pf-off
+  ${SCRIPT_NAME} selflearn-on [mixcoeff [key_mode [rlim]]]
+  ${SCRIPT_NAME} selflearn-off
   ${SCRIPT_NAME} testol [mode [ampl [nbsample]]]
   ${SCRIPT_NAME} open
   ${SCRIPT_NAME} zero
@@ -92,6 +94,7 @@ ALL_UNITS=(
     "mctrlstats-${N}"
     "mkARPF-${N}"
     "applyARPF-${N}"
+    "selflearn-${N}"
 )
 
 ensure_stream_zeros() {
@@ -237,6 +240,7 @@ compstrCM-${N}        cacao-fpsexec-cacaocc-compstrcm
 mctrlstats-${N}       cacao-fpsexec-modalCTRLstats
 mkARPF-${N}           cacao-fpsexec-cacaopc-mkARPF
 applyARPF-${N}        cacao-fpsexec-cacaopc-applyARPF
+selflearn-${N}        cacao-fpsexec-cacaopc-selflearn
 EOF
 
     local pf_lat
@@ -325,6 +329,39 @@ applyARPF-${N}.rampsteps              = 32
 applyARPF-${N}.procinfo.loopcntMax    = -1
 applyARPF-${N}.procinfo.triggermode   = 3
 applyARPF-${N}.procinfo.triggersname  = ${PFX}modevalOL
+
+selflearn-${N}.AOloopindex            = ${N}
+selflearn-${N}.inwfs                  = ${PFX}modevalWFS
+selflearn-${N}.inol                   = ${PFX}modevalOL
+selflearn-${N}.indm                   = ${PFX}modevalDM
+selflearn-${N}.outdata                = ${PFX}modevalPF
+selflearn-${N}.outPFstat              = ${PFX}outPFstat
+selflearn-${N}.outtweak               = ${PFX}selflearn_tweak
+selflearn-${N}.out_mode               = 0
+selflearn-${N}.key_mode               = 0
+selflearn-${N}.NBmodeMax              = 64
+selflearn-${N}.kmax                   = 16
+selflearn-${N}.qshared                = 2
+selflearn-${N}.nwarmup                = 40
+selflearn-${N}.keywarmup              = 200
+selflearn-${N}.rampsteps              = 32
+selflearn-${N}.blend_soft             = ON
+selflearn-${N}.rlim                   = 2.0
+selflearn-${N}.latency                = ${pf_lat}
+selflearn-${N}.dc_leak                = 0.985
+selflearn-${N}.max_wfs_gain           = 0.40
+selflearn-${N}.max_ar_norm2           = 2.0
+selflearn-${N}.lam0                   = 20.0
+selflearn-${N}.lam1                   = 200.0
+selflearn-${N}.max_tweak              = 0.25
+selflearn-${N}.learnON                = ON
+selflearn-${N}.shadow                 = OFF
+selflearn-${N}.enable_l0              = ON
+selflearn-${N}.enable_l1              = ON
+selflearn-${N}.apply_gain             = 1.0
+selflearn-${N}.procinfo.loopcntMax    = -1
+selflearn-${N}.procinfo.triggermode   = 3
+selflearn-${N}.procinfo.triggersname  = ${PFX}modevalOL
 
 mvalC2dm-${N}.GPUindex                = ${GPUINDEX}
 mvalC2dm-${N}.insname                 = ${PFX}modevalDM
@@ -731,6 +768,31 @@ cmd_pf_off() {
     milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
 }
 
+cmd_selflearn_on() {
+    local mix="${1:-${PF_MIX}}" kmode="${2:-0}" rlim="${3:-2.0}"
+    local hlat=1.5 slat=0.6 pflat=""
+    @get hlat="f.mfilt-${N}.comp.latencyhardwfr" slat="f.mfilt-${N}.comp.latencysoftwfr"
+    pflat="$(awk -v h="${hlat}" -v s="${slat}" 'BEGIN { printf "%.3f", h + s }')"
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
+    milk-fps-set -q \
+        "mfilt-${N}.comp.OLmodes=ON" \
+        "mfilt-${N}.PF.NBblock=1" \
+        "mfilt-${N}.PF.mixcoeff=${mix}" \
+        "selflearn-${N}.key_mode=${kmode}" \
+        "selflearn-${N}.rlim=${rlim}" \
+        "selflearn-${N}.latency=${pflat}" \
+        "selflearn-${N}.shadow=OFF" \
+        "selflearn-${N}.learnON=ON"
+    milk-fps-runstart -q "selflearn-${N}"
+    milk-stream-wait -q -t 10 "${PFX}modevalPF" "${PFX}selflearn_tweak"
+    @set "f.mfilt-${N}.PF.enable=ON"
+}
+
+cmd_selflearn_off() {
+    @set "f.mfilt-${N}.PF.enable=OFF"
+    milk-fps-runstop -q "selflearn-${N}" >/dev/null 2>&1 || true
+}
+
 cmd_testol() {
     local tmode="${1:-2}" tampl="${2:-0.015}" tnbspl="${3:-240}" tgain="${4:-1.0}"
     milk-fps-set -q \
@@ -749,12 +811,12 @@ cmd_testol() {
 
 cmd_open() {
     @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF"
-    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" "selflearn-${N}" >/dev/null 2>&1 || true
 }
 
 cmd_zero() {
     @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
-    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" >/dev/null 2>&1 || true
+    milk-fps-runstop -q "mkARPF-${N}" "applyARPF-${N}" "selflearn-${N}" >/dev/null 2>&1 || true
     if @exists "s.${PFX}dmC"; then
         @calc "s.${PFX}dmC = s.${PFX}dmC * 0.0"
     fi
@@ -806,9 +868,11 @@ case "${subcmd}" in
     load-rm)   cmd_load_rm "$@" ;;
     takeref)   cmd_takeref "$@" ;;
     close)     cmd_close "$@" ;;
-    pf-on)     cmd_pf_on "$@" ;;
-    pf-off)    cmd_pf_off "$@" ;;
-    testol)    cmd_testol "$@" ;;
+    pf-on)         cmd_pf_on "$@" ;;
+    pf-off)        cmd_pf_off "$@" ;;
+    selflearn-on)  cmd_selflearn_on "$@" ;;
+    selflearn-off) cmd_selflearn_off "$@" ;;
+    testol)        cmd_testol "$@" ;;
     open)      cmd_open "$@" ;;
     zero)      cmd_zero "$@" ;;
     status)    cmd_status "$@" ;;

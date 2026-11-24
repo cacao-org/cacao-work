@@ -1,9 +1,17 @@
-# Self-learning AO controller (lookup-table correction): feasibility study (handoff)
+# Self-learning AO controller (GRIC state clustering + online hierarchical RLS)
 
-Start here. This directory holds a feasibility probe, done 2026-11-20, of a "self-learning"
-AO controller proposed by the user. **Status: feasibility opinion given, one quick measurement
-on simulator telemetry done, nothing designed or deployed.** Everything here is prototype
-Python reading existing telemetry; no shipped tool was changed.
+Start here. This directory tracks the self-learning AO controller from the initial 2026-11-20
+feasibility study (Phase 1) through nonlinear/non-stationary headroom verification (Phase 2) to
+the deployed native C MILK-FPS real-time controller `cacao-fpsexec-cacaopc-selflearn` linked
+directly against `libgric` and exercised in live GPU closed loop on `scao_pyr` (Phase 3).
+
+**Status:** Deployed and verified in C (`cacao` branch `feat/bash-engine`,
+`cacao-fpsexec-cacaopc-selflearn`), integrated into `benches/scao_pyr/cacaoloop-scao-pyr.milk`,
+and covered by automated lockstep + live GPU HIL tests (`tests/test_17_selflearn.py`).
+
+---
+
+## Phase 1 (2026-11-20): Feasibility Study on Stationary Linear Telemetry
 
 ## The proposal (user's words, condensed)
 
@@ -183,21 +191,156 @@ out-of-fold error. Numbers = % of baseline residual variance removed on the test
 - Natural first targets where the key is low-dimensional: tip/tilt + vibrations, LLOWFS,
   petal / LWE modes, photonic-lantern low-order sensing.
 
+## Phase 2: Nonlinear & Non-Stationary Headroom (`unmod_headroom_probe.py`)
+
+Following Phase 1's conclusion that gains require nonlinearity or non-stationarity plus a
+low-dimensional recurring key, we evaluated real `gric-cluster` recurrence and 2-level
+hierarchical online factorized RLS across three regimes (`logs/unmod_headroom_v2.log`,
+`logs/unmod_headroom_s035.log`):
+
+1. **Low-D GRIC keys recur and saturate.** On 4000-10000 frames, `e1_logE` (1D),
+   `regime_e2_vel` (3D), `wfs_lo4` (4D), and `tt2_e2` (4D: `[w_0, w_1, log E_lo, log E_hi]`)
+   saturate cleanly at `K = 8..27` clusters (`r_lim = 2.0..2.5`).
+2. **Stage-2 unmodulated PyWFS (`exp2_unmod_mh6_base`, `aol2`) is effectively linear.**
+   Stage 1 already reduces WFS residuals to `0.84 nm/mode`; Level-0 online RLS matches offline
+   linear (`+77.5%` PSOL variance reduction) and Level-1 GRIC adds ~`0%`.
+3. **Wind switch (`exp1_windsw_base`, +60 deg, `aol1`, PSOL increment target):**
+   - Static offline linear ridge collapses to `-9.64%` variance reduction after the wind switch.
+   - Level-0 global online forgetting RLS recovers `+28.93%`.
+   - Adding Level-1 GRIC clusters removes an extra **`+4.64%`** (`tt2_dm2_e2`, `total +32.23%`,
+     shifted-pairing control `-2.23%`) and **`+4.03%`** (`regime_e2_vel`, `total +31.80%`,
+     control `-4.94%`).
+4. **Single-stage unmodulated PyWFS (`scao_pyr`, `mod_rad=0.0`, `seeing=0.35"`, CL SR ~0.35):**
+   - Hard-nearest un-gated Level-1 GRIC (`unmod_headroom_probe.py`, `logs/unmod_headroom_s035.log`)
+     loses variance at cluster boundaries (`-2.17%` on `tt2_e2`, `+0.18%` on `wfs_lo4`).
+   - Adding **soft Gaussian LWPR blending across GRIC anchors + causal OOS Stein gating** in
+     `cacao-fpsexec-cacaopc-selflearn` turns this into **`+6.3%` extra OOS variance reduction
+     over Level-0** (`L0 = +97.1%`, `L1/L0 = +6.3%`, `Tot = +97.2%` on the exact same telemetry;
+     `tests/test_17_selflearn.py::test_17_3`).
+
+---
+
+## Phase 3: Native C MILK-FPS Controller (`cacao-fpsexec-cacaopc-selflearn`)
+
+### Architecture (`cacao/AOloopControl_PredictiveControl/`)
+
+- **Core engine:** `selflearn_core.h`, `selflearn_core.c`
+- **MILK-FPS executable:** `AOloopControl_PredictiveControl_selflearn.c`
+  (`EXPORT_FPSEXEC(cacao, "cacaopc-selflearn", ...)`, installed as
+  `cacao-fpsexec-cacaopc-selflearn`), auto-linking `libgric.so` (`HAVE_LIBGRIC=1`) via
+  `CMakeLists.txt` (with a built-in leader-clustering fallback if `libgric` is absent).
+- **Streaming GRIC state key (`key_mode`):**
+  `0 = TT2_E2` (`[w_0, w_1, log E_lo, log E_hi]`), `1 = E1_LOGE`, `2 = WFS_LO4`,
+  `3 = TT2_DM2_E2`, `4 = REGIME_E2_VEL`, `5 = EXTERNAL` (custom SHM key stream).
+- **Zero-DC closed-loop-safe regressor (per mode `m`):**
+  `phi_{t,m} = [dOL_m(t..t-3), w_m(t), dOL_0(t)..dOL_{q-1}(t)]` (standardized causally).
+  All `dOL` taps vanish identically at DC, pinning closed-loop DC gain strictly to
+  `dc_leak < 1.0` (standalone PF) or inheriting `inbasePF`'s leak (cascaded PF) so no bias
+  can integrate into DM rails.
+- **Numerically guaranteed SPD online regression:**
+  Both Level 0 (global) and Level 1 (per GRIC cluster `k`, trained strictly on the unbiased
+  unconstrained Level-0 residual `yt - w0 . phi_s`) maintain exponentially-weighted normal
+  equations `G = gamma * G + x x^T`, `b = gamma * b + x y`, solved via per-mode Cholesky of
+  `(G + lam * I) w = b`. `G` stays strictly PSD forever, eliminating Sherman-Morrison
+  covariance PD-loss and `-Ofast` NaN drift (`selflearn_core.c` also compiles with
+  `-fno-finite-math-only` plus bit-level IEEE finiteness guards).
+- **Combined stability-ball projection & causal OOS Stein gates:**
+  At prediction time, BOTH Level-0 alone and the combined `L0 + L1` weight vector are
+  projected onto the exact same stability ball (`ar_norm2 <= max_ar_norm2`, physical WFS gain
+  in `[-0.35, +max_wfs_gain]`). Level 1 can redistribute optical gain and AR phase across
+  clusters but can never circumvent global stability limits. Two online causal OOS Stein gates
+  `alpha_l0, alpha_l1 = clip(C_ey / (C_yy + eps), 0, 1)` smoothly shut Level 1 to `0.00`
+  whenever clustering does not improve causal OOS error.
+- **Operating modes & live `FPFLAG_WRITERUN` toggles:**
+  - `out_mode=0` (PF synchronous, zero extra latency): standalone PSOL or cascaded on top of
+    `applyARPF` via `.inbasePF` + `.inbaseStat`.
+  - `out_mode=1` (`auxDM`, additive damped tweak into `aol{N}_modevalauxDM`).
+  - Live toggles: `.learnON`, `.shadow` (learn & score OOS while emitting exact `0.0`),
+    `.enable_l0`, `.enable_l1`, `.apply_gain`, `.reset`, plus `.savedir` to dump GRIC
+    `anchors.bin` on stop.
+
+### Verification Suite (`tests/test_17_selflearn.py` — 3/3 passed)
+
+| Test | Setup | Key Verified Result |
+| :--- | :--- | :--- |
+| `17.1` Pos | 2-regime nonlinear (`M=16, 2400 fr`) | `gric=1, K=2, L1/L0=+9.8%, 28.9 us/fr` |
+| `17.1` Shd | `.shadow=ON` (`600 fr`) | Exact `0.0` tweak, `updates>=500, K>=2` |
+| `17.1` Null | Linear-Gaussian AR(2) (`2400 fr`) | `L0=+11.2%, L1/L0=-0.00%, a1=0.00` |
+| `17.3` Rpl | `scao_pyr` unmod (`M=32, 3000 fr`) | `K=7, L0=+97.1%, L1/L0=+6.3%, 26 us/fr` |
+| `17.2` Live | Closed-loop `scao_pyr` (`0.0, 0.35"`) | `dm_rms<2, outl=0`, SR >3x OL, >=0.95x INT |
+
+### Live GPU Closed-Loop Interleaved A/B (`scao_pyr`, 400 Hz)
+
+Single-window sequential runs on `scao_pyr` suffer `±0.05..0.08` SR swings from local seeing
+patches scrolling across the turbulence phase screen. `code/run_interleaved_ab.sh` cycles all
+controllers over `4 x 400` interleaved frames (`1600` measured frames/controller) in one
+continuous run (`logs/live_interleaved_unmod0_s035.log`,
+`logs/live_interleaved_mod3_s070.log`):
+
+**Unmodulated PyWFS (`mod_rad=0.0`, `seeing=0.35"`, `lat=1.257 fr`):**
+
+| Blk | Ctrl | `SR_ave` (mean±SE) | `SR_pk` | `wfs_rms` | `dm_rms` | Notes |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| A | `int` | `0.384 ± 0.050` | `0.385` | `0.000371` | `0.330` | leaky integrator |
+| A | `arpf` | `0.387 ± 0.062` | `0.379` | `0.000363` | `0.460` | `mkARPF+applyARPF` |
+| A | `arpf_l0` | **`0.437 ± 0.037`** | `0.434` | **`0.000340`** | `0.478` | `+0.050` vs ARPF |
+| A | `arpf_gric` | `0.421 ± 0.043` | **`0.448`** | `0.000359` | `0.553` | `K=15, a1=1, L1=+1.0%` |
+| B | `int2` | `0.311 ± 0.058` | `0.312` | `0.000380` | `0.396` | leaky integrator |
+| B | `sl_l0` | `0.394 ± 0.023` | `0.436` | `0.000365` | `0.648` | `+0.083` vs `int2` |
+| B | `sl_gric` | **`0.444 ± 0.060`** | `0.435` | **`0.000345`** | `0.533` | `+0.133`, `K=16` |
+
+**Modulated PyWFS (`mod_rad=3.0`, `seeing=0.70"`, `lat=1.398 fr` — nearly linear control):**
+
+| Blk | Ctrl | `SR_ave` (mean±SE) | `SR_pk` | `wfs_rms` | `dm_rms` | Notes |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| A | `int` | `0.166 ± 0.030` | `0.181` | `0.000240` | `0.455` | leaky integrator |
+| A | `arpf` | `0.219 ± 0.021` | `0.237` | `0.000232` | `0.510` | batch linear PF |
+| A | `arpf_l0` | **`0.229 ± 0.021`** | `0.241` | `0.000243` | `0.618` | `+0.062` vs `int` |
+| A | `arpf_gric` | `0.208 ± 0.009` | **`0.242`** | `0.000240` | `0.633` | `K=16, L1=+0.04%` |
+| B | `int2` | `0.111 ± 0.013` | `0.133` | `0.000254` | `0.542` | leaky integrator |
+| B | `sl_l0` | **`0.215 ± 0.033`** | `0.229` | `0.000238` | `0.577` | `1.94x` `int2` SR |
+| B | `sl_gric` | `0.198 ± 0.027` | `0.201` | **`0.000236`** | `0.525` | `1.79x`, `L1=+0.52%` |
+
+**Takeaway:** In stationary closed loop on `scao_pyr`, `cacaopc-selflearn` delivers large,
+repeatable Strehl gains (`+0.05..+0.13` SR unmodulated, `~1.8-2.0x` SR modulated) with zero
+outliers and sub-30 us/frame RT latency. Most of the stationary closed-loop Strehl gain comes
+from fast online Level-0 RLS + optical-gain adaptation, while Level-1 GRIC adds a bounded
+state-dependent refinement (`+0.98%..+6.3%` OOS on unmodulated PyWFS vs `+0.04%` on modulated
+PyWFS and `-0.00%` on linear-Gaussian null) that scales up further under strong regime shifts
+(such as wind/seeing switches or larger optical-gain excursions).
+
+---
+
 ## Files
 
 | Path | Content |
 | :--- | :--- |
-| `code/selflearn_probe.py` | Part A (recurrence) and Part B (linear vs lookup, controls) |
-| `code/purelookup.py` | Pure kNN lookup grid (q PCA dims x k) vs linear and persistence |
-| `code/lagcorr.py` | Lagged correlation of the whitened state (screen-recurrence check) |
-| `logs/*.log` | Raw outputs of the runs quoted above |
+| `code/selflearn_probe.py` | Phase 1: Part A (recurrence) and Part B (linear vs lookup, controls) |
+| `code/purelookup.py` | Phase 1: Pure kNN lookup grid (q PCA dims x k) vs linear and persistence |
+| `code/lagcorr.py` | Phase 1: Lagged correlation of whitened state (screen-recurrence check) |
+| `code/unmod_headroom_probe.py` | Phase 2: Native GRIC recurrence & hierarchical RLS probe |
+| `code/capture_scao_unmod.sh` | Phase 2: Capture isolated closed-loop `scao_pyr` telemetry |
+| `code/run_live_scao_ab.sh` | Phase 3: 9-stage live GPU A/B (INT, ARPF, SL, cascade, auxDM) |
+| `code/run_interleaved_ab.sh` | Phase 3: Multi-cycle interleaved live GPU A/B benchmark |
+| `logs/*.log` | Saved Phase 1, Phase 2, and Phase 3 benchmark outputs |
+| `tests/test_17_selflearn.py` | Lockstep RT, positive/null, replay, and live GPU HIL tests |
 
-`logs/probe_partB.log` is from the original run (2026-11-20, 4 BLAS threads, 213 s); the other
-three logs were regenerated from the committed scripts the same day and reproduce the original
-numbers exactly. The only later code edit is a line-length reflow of one print statement.
+### Quickstart & Reproduction
 
-Run (from the repo root; `/usr/bin/python3` has numpy + astropy; cap BLAS threads if the
-machine is busy, e.g. `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4`):
+```bash
+# 1. Verify binary installation & run full automated test suite (lockstep + live GPU HIL)
+./scripts/build-all.sh --check-only
+pytest -v -s tests/test_17_selflearn.py
+
+# 2. Run multi-cycle interleaved live GPU closed-loop A/B on unmodulated PyWFS
+./algo/selflearn/code/run_interleaved_ab.sh 0.0 0.35 4 400 _work/selflearn_scao_unmod0_s035/rm
+
+# 3. Engage selflearn interactively on a running scao_pyr bench
+./benches/scao_pyr/cacaoloop-scao-pyr.milk selflearn-on 0.90 0 2.0
+./benches/scao_pyr/cacaoloop-scao-pyr.milk selflearn-off
+```
+
+Phase 1 reproduction (from repo root):
 
 ```bash
 T=_work/calib_2wfs1dm_realsim/run1/win_lowfs_open/telemetry

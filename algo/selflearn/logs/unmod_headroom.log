@@ -1,0 +1,204 @@
+
+==============================================================================
+DATASET: exp2_unmod_mh6_base Stg2 (unmod PyWFS, mH=6) (aol2, modes 0..19, h=8, delta=3)
+==============================================================================
+[   0.1s] loaded N=10000, M=1061, drops=0, WFS rms(0..19)=0.00084, OL rms=0.00307
+
+--- 1. GRIC Recurrence & Intrinsic Dimensionality on Candidate Keys ---
+  GRIC [e4_bands      , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [wfs_lo4       , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_e2        , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_abs_e2    , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [lo4_e2        , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_vel_e2    , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [regime_e2_vel , D= 3]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+
+--- 2. Target: WFS_res_from_WD (train=5936, test=3497) ---
+  Global linear ridge (lam=0.01): removes 50.83% var (ZOH: -215.31%)
+  [Offline 2nd-stage on linear residual E = Y - P_lin]
+    key=e1_logE        | feat=P_lin: K= 8 affine(F) lam=100    -0.01% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.02% (ctrl  -0.01%)
+    key=e4_bands       | feat=P_lin: K= 4 affine(F) lam=100    +0.04% (ctrl  +0.05%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.00%)
+    key=wfs_lo4        | feat=P_lin: K= 8 affine(F) lam=100    -0.02% (ctrl  -0.03%) | feat=W_cur: K= 4 affine(F) lam=100    +0.00% (ctrl  -0.00%)
+    key=tt2_e2         | feat=P_lin: K= 8 affine(F) lam=100    +0.00% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    -0.00% (ctrl  -0.00%)
+    key=tt2_abs_e2     | feat=P_lin: K= 4 affine(F) lam=100    +0.00% (ctrl  +0.03%) | feat=W_cur: K= 8 affine(F) lam=100    +0.00% (ctrl  -0.01%)
+    key=lo4_e2         | feat=P_lin: K= 4 affine(F) lam=100    -0.01% (ctrl  -0.02%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  +0.00%)
+    key=regime_e2_vel  | feat=P_lin: K= 8 affine(F) lam=100    +0.01% (ctrl  -0.03%) | feat=W_cur: K= 4 affine(F) lam=100    +0.00% (ctrl  -0.01%)
+  [Causal Online Streaming RLS on linear residual E_all = Y - P_static_lin, eval>=1500]
+    [P_lin] K=1 global online RLS (forgetting):  +5.18% (ctrl  -0.87%, K=1)
+    [P_lin] GRIC key=e4_bands       r=2.0 (K=16):  +1.39% (ctrl  -1.67%)
+    [P_lin] GRIC key=wfs_lo4        r=2.0 (K=16):  +1.94% (ctrl  -2.49%)
+    [P_lin] GRIC key=tt2_e2         r=2.0 (K=16):  +1.45% (ctrl  -2.27%)
+    [P_lin] GRIC key=tt2_abs_e2     r=2.5 (K=16):  +1.10% (ctrl  -1.93%)
+    [P_lin] GRIC key=regime_e2_vel  r=1.5 (K=16):  +1.49% (ctrl  -2.05%)
+    [W_cur] K=1 global online RLS (forgetting):  +2.99% (ctrl  +0.09%, K=1)
+    [W_cur] GRIC key=e4_bands       r=2.0 (K=16):  -0.32% (ctrl  -1.83%)
+    [W_cur] GRIC key=wfs_lo4        r=2.0 (K=16):  +1.14% (ctrl  -1.94%)
+    [W_cur] GRIC key=tt2_e2         r=2.0 (K=16):  +0.09% (ctrl  -2.18%)
+    [W_cur] GRIC key=tt2_abs_e2     r=2.5 (K=16):  -0.23% (ctrl  -1.65%)
+    [W_cur] GRIC key=regime_e2_vel  r=1.5 (K=16):  -0.10% (ctrl  -2.04%)
+  [Causal Online Streaming RLS DIRECTLY on integrator WFS residual W[t+delta]]
+    [W_0,1] K=1 online linear RLS:                +50.75% (ctrl -77.60%, K=1)
+    [W_0,1] GRIC key=e4_bands       r=2.0 (K=16): +37.26% (ctrl -52.76%)
+    [W_0,1] GRIC key=wfs_lo4        r=2.0 (K=16): +44.01% (ctrl -62.38%)
+    [W_0,1] GRIC key=tt2_e2         r=2.0 (K=16): +43.34% (ctrl -60.52%)
+    [W_0,1] GRIC key=tt2_abs_e2     r=2.5 (K=16): +42.32% (ctrl -59.88%)
+
+--- 2. Target: PSOL_from_OL (train=5936, test=3497) ---
+  Global linear ridge (lam=0.0001): removes 92.56% var (ZOH: 64.38%)
+  [Offline 2nd-stage on linear residual E = Y - P_lin]
+    key=e1_logE        | feat=P_lin: K= 8 affine(F) lam=100    -0.00% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.02% (ctrl  -0.01%)
+    key=e4_bands       | feat=P_lin: K= 4 affine(F) lam=100    +0.05% (ctrl  +0.08%) | feat=W_cur: K= 4 affine(F) lam=100    +0.02% (ctrl  -0.00%)
+    key=wfs_lo4        | feat=P_lin: K= 8 affine(F) lam=100    -0.01% (ctrl  -0.01%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=tt2_e2         | feat=P_lin: K= 8 affine(F) lam=100    +0.01% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.00% (ctrl  -0.01%)
+    key=tt2_abs_e2     | feat=P_lin: K= 4 affine(F) lam=100    +0.01% (ctrl  +0.03%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=lo4_e2         | feat=P_lin: K= 4 affine(F) lam=100    -0.00% (ctrl  -0.01%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.00%)
+    key=regime_e2_vel  | feat=P_lin: K= 4 affine(F) lam=100    +0.00% (ctrl  -0.03%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+  [Causal Online Streaming RLS on linear residual E_all = Y - P_static_lin, eval>=1500]
+    [P_lin] K=1 global online RLS (forgetting):  +7.04% (ctrl  -3.19%, K=1)
+    [P_lin] GRIC key=e4_bands       r=2.0 (K=16):  +2.57% (ctrl  -3.85%)
+    [P_lin] GRIC key=wfs_lo4        r=2.0 (K=16):  +3.46% (ctrl  -3.21%)
+    [P_lin] GRIC key=tt2_e2         r=2.0 (K=16):  +2.40% (ctrl  -3.90%)
+    [P_lin] GRIC key=tt2_abs_e2     r=2.5 (K=16):  +2.94% (ctrl  -3.81%)
+    [P_lin] GRIC key=regime_e2_vel  r=1.5 (K=16):  +2.50% (ctrl  -4.75%)
+    [W_cur] K=1 global online RLS (forgetting):  +2.96% (ctrl  -0.18%, K=1)
+    [W_cur] GRIC key=e4_bands       r=2.0 (K=16):  -0.35% (ctrl  -2.16%)
+    [W_cur] GRIC key=wfs_lo4        r=2.0 (K=16):  +1.00% (ctrl  -2.24%)
+    [W_cur] GRIC key=tt2_e2         r=2.0 (K=16):  +0.11% (ctrl  -2.39%)
+    [W_cur] GRIC key=tt2_abs_e2     r=2.5 (K=16):  -0.23% (ctrl  -1.94%)
+    [W_cur] GRIC key=regime_e2_vel  r=1.5 (K=16):  -0.03% (ctrl  -2.25%)
+
+==============================================================================
+DATASET: exp3_unmod_mh8_base Stg2 (unmod PyWFS, mH=8) (aol2, modes 0..19, h=8, delta=3)
+==============================================================================
+[   8.0s] loaded N=10000, M=1062, drops=0, WFS rms(0..19)=0.00137, OL rms=0.00397
+
+--- 1. GRIC Recurrence & Intrinsic Dimensionality on Candidate Keys ---
+  GRIC [e4_bands      , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [wfs_lo4       , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_e2        , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_abs_e2    , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [lo4_e2        , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_vel_e2    , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [regime_e2_vel , D= 3]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+
+--- 2. Target: WFS_res_from_WD (train=5936, test=3497) ---
+  Global linear ridge (lam=0.1): removes 34.82% var (ZOH: -194.01%)
+  [Offline 2nd-stage on linear residual E = Y - P_lin]
+    key=e1_logE        | feat=P_lin: K= 4 affine(F) lam=100    -0.01% (ctrl  +0.00%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=e4_bands       | feat=P_lin: K= 4 affine(F) lam=100    +0.02% (ctrl  +0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=wfs_lo4        | feat=P_lin: K= 8 affine(F) lam=100    +0.01% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.01% (ctrl  +0.00%)
+    key=tt2_e2         | feat=P_lin: K= 8 affine(F) lam=100    +0.00% (ctrl  +0.02%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=tt2_abs_e2     | feat=P_lin: K= 8 affine(F) lam=100    +0.01% (ctrl  +0.00%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=lo4_e2         | feat=P_lin: K= 8 affine(F) lam=100    -0.01% (ctrl  -0.00%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.00%)
+    key=regime_e2_vel  | feat=P_lin: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.00%) | feat=W_cur: K= 4 affine(F) lam=100    +0.00% (ctrl  -0.01%)
+  [Causal Online Streaming RLS on linear residual E_all = Y - P_static_lin, eval>=1500]
+    [P_lin] K=1 global online RLS (forgetting):  +3.14% (ctrl  -0.78%, K=1)
+    [P_lin] GRIC key=e4_bands       r=2.0 (K=16):  +0.67% (ctrl  -1.36%)
+    [P_lin] GRIC key=wfs_lo4        r=2.0 (K=16):  -0.32% (ctrl  -2.17%)
+    [P_lin] GRIC key=tt2_e2         r=2.0 (K=16):  -0.16% (ctrl  -2.64%)
+    [P_lin] GRIC key=tt2_abs_e2     r=2.5 (K=16):  +0.06% (ctrl  -1.60%)
+    [P_lin] GRIC key=regime_e2_vel  r=1.5 (K=16):  +0.26% (ctrl  -2.14%)
+    [W_cur] K=1 global online RLS (forgetting):  +2.14% (ctrl  -0.57%, K=1)
+    [W_cur] GRIC key=e4_bands       r=2.0 (K=16):  -0.19% (ctrl  -1.66%)
+    [W_cur] GRIC key=wfs_lo4        r=2.0 (K=16):  -0.60% (ctrl  -2.04%)
+    [W_cur] GRIC key=tt2_e2         r=2.0 (K=16):  -0.81% (ctrl  -2.38%)
+    [W_cur] GRIC key=tt2_abs_e2     r=2.5 (K=16):  -0.40% (ctrl  -1.76%)
+    [W_cur] GRIC key=regime_e2_vel  r=1.5 (K=16):  -0.68% (ctrl  -2.36%)
+  [Causal Online Streaming RLS DIRECTLY on integrator WFS residual W[t+delta]]
+    [W_0,1] K=1 online linear RLS:                +35.07% (ctrl -52.94%, K=1)
+    [W_0,1] GRIC key=e4_bands       r=2.0 (K=16): +25.10% (ctrl -37.27%)
+    [W_0,1] GRIC key=wfs_lo4        r=2.0 (K=16): +29.34% (ctrl -42.59%)
+    [W_0,1] GRIC key=tt2_e2         r=2.0 (K=16): +28.98% (ctrl -42.67%)
+    [W_0,1] GRIC key=tt2_abs_e2     r=2.5 (K=16): +27.50% (ctrl -40.16%)
+
+--- 2. Target: PSOL_from_OL (train=5936, test=3497) ---
+  Global linear ridge (lam=0.0001): removes 79.76% var (ZOH: 30.37%)
+  [Offline 2nd-stage on linear residual E = Y - P_lin]
+    key=e1_logE        | feat=P_lin: K= 4 affine(F) lam=100    -0.01% (ctrl  -0.00%) | feat=W_cur: K= 8 affine(F) lam=100    +0.01% (ctrl  -0.00%)
+    key=e4_bands       | feat=P_lin: K= 4 affine(F) lam=100    +0.02% (ctrl  +0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=wfs_lo4        | feat=P_lin: K= 8 affine(F) lam=100    +0.00% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.01% (ctrl  +0.00%)
+    key=tt2_e2         | feat=P_lin: K= 8 affine(F) lam=100    +0.00% (ctrl  +0.01%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%)
+    key=tt2_abs_e2     | feat=P_lin: K= 8 affine(F) lam=100    +0.00% (ctrl  -0.00%) | feat=W_cur: K= 8 affine(F) lam=100    +0.00% (ctrl  -0.01%)
+    key=lo4_e2         | feat=P_lin: K= 8 affine(F) lam=100    -0.01% (ctrl  -0.02%) | feat=W_cur: K= 4 affine(F) lam=100    +0.01% (ctrl  +0.00%)
+    key=regime_e2_vel  | feat=P_lin: K= 4 affine(F) lam=100    +0.01% (ctrl  -0.01%) | feat=W_cur: K= 4 affine(F) lam=100    +0.00% (ctrl  -0.01%)
+  [Causal Online Streaming RLS on linear residual E_all = Y - P_static_lin, eval>=1500]
+    [P_lin] K=1 global online RLS (forgetting):  +4.33% (ctrl  -1.25%, K=1)
+    [P_lin] GRIC key=e4_bands       r=2.0 (K=16):  +0.65% (ctrl  -1.43%)
+    [P_lin] GRIC key=wfs_lo4        r=2.0 (K=16):  +0.80% (ctrl  -1.80%)
+    [P_lin] GRIC key=tt2_e2         r=2.0 (K=16):  +0.25% (ctrl  -1.74%)
+    [P_lin] GRIC key=tt2_abs_e2     r=2.5 (K=16):  +0.74% (ctrl  -1.43%)
+    [P_lin] GRIC key=regime_e2_vel  r=1.5 (K=16):  +0.27% (ctrl  -2.78%)
+    [W_cur] K=1 global online RLS (forgetting):  +2.14% (ctrl  -0.39%, K=1)
+    [W_cur] GRIC key=e4_bands       r=2.0 (K=16):  -0.24% (ctrl  -1.63%)
+    [W_cur] GRIC key=wfs_lo4        r=2.0 (K=16):  -0.55% (ctrl  -1.83%)
+    [W_cur] GRIC key=tt2_e2         r=2.0 (K=16):  -0.83% (ctrl  -2.28%)
+    [W_cur] GRIC key=tt2_abs_e2     r=2.5 (K=16):  -0.39% (ctrl  -1.65%)
+    [W_cur] GRIC key=regime_e2_vel  r=1.5 (K=16):  -0.77% (ctrl  -2.26%)
+
+==============================================================================
+DATASET: exp1_windsw_base Stg1 (wind switch +60 deg) (aol1, modes 0..19, h=8, delta=3)
+==============================================================================
+[  16.0s] loaded N=6000, M=1024, drops=0, WFS rms(0..19)=0.00266, OL rms=0.11058
+
+--- 1. GRIC Recurrence & Intrinsic Dimensionality on Candidate Keys ---
+  GRIC [e4_bands      , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [wfs_lo4       , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_e2        , D= 4]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_abs_e2    , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [lo4_e2        , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [tt2_vel_e2    , D= 6]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+  GRIC [regime_e2_vel , D= 3]  r=1.0: rc=0  |  r=2.0: rc=0  |  r=3.0: rc=0  [Metric                   Mean ± Std Dev        P10     P25 M]
+
+--- 2. Target: WFS_res_from_WD (train=3536, test=2097) ---
+  Global linear ridge (lam=0.1): removes 76.88% var (ZOH: 82.35%)
+  [Offline 2nd-stage on linear residual E = Y - P_lin]
+    key=e1_logE        | feat=P_lin: K= 4 affine(F) lam=1      -0.25% (ctrl  -0.22%) | feat=W_cur: K= 4 affine(F) lam=100    +0.14% (ctrl  +0.06%)
+    key=e4_bands       | feat=P_lin: K= 8 affine(F) lam=100    +0.27% (ctrl  -0.03%) | feat=W_cur: K= 4 affine(F) lam=100    +0.25% (ctrl  +0.10%)
+    key=wfs_lo4        | feat=P_lin: K= 4 affine(F) lam=10     +0.71% (ctrl  +0.21%) | feat=W_cur: K= 4 affine(F) lam=100    +0.25% (ctrl  +0.05%)
+    key=tt2_e2         | feat=P_lin: K= 8 affine(F) lam=100    +0.53% (ctrl  +0.22%) | feat=W_cur: K= 8 affine(F) lam=100    +0.17% (ctrl  +0.15%)
+    key=tt2_abs_e2     | feat=P_lin: K= 8 affine(F) lam=100    +0.67% (ctrl  -0.01%) | feat=W_cur: K= 8 affine(F) lam=100    +0.34% (ctrl  +0.14%)
+    key=lo4_e2         | feat=P_lin: K= 8 affine(F) lam=100    +0.65% (ctrl  +0.24%) | feat=W_cur: K= 8 affine(F) lam=100    +0.43% (ctrl  +0.16%)
+    key=regime_e2_vel  | feat=P_lin: K= 8 affine(F) lam=10     +0.41% (ctrl  -0.25%) | feat=W_cur: K= 4 affine(F) lam=100    +0.09% (ctrl  +0.03%)
+  [Causal Online Streaming RLS on linear residual E_all = Y - P_static_lin, eval>=1500]
+    [P_lin] K=1 global online RLS (forgetting): +24.16% (ctrl -12.11%, K=1)
+    [P_lin] GRIC key=e4_bands       r=2.0 (K=16): +14.33% (ctrl  -7.08%)
+    [P_lin] GRIC key=wfs_lo4        r=2.0 (K=16): +12.67% (ctrl  -5.66%)
+    [P_lin] GRIC key=tt2_e2         r=2.0 (K=16): +13.61% (ctrl  -7.20%)
+    [P_lin] GRIC key=tt2_abs_e2     r=2.5 (K=16): +13.03% (ctrl  -7.39%)
+    [P_lin] GRIC key=regime_e2_vel  r=1.5 (K=16): +13.99% (ctrl  -7.24%)
+    [W_cur] K=1 global online RLS (forgetting): +27.27% (ctrl -11.87%, K=1)
+    [W_cur] GRIC key=e4_bands       r=2.0 (K=16): +14.70% (ctrl  -6.31%)
+    [W_cur] GRIC key=wfs_lo4        r=2.0 (K=16): +12.02% (ctrl  -4.07%)
+    [W_cur] GRIC key=tt2_e2         r=2.0 (K=16): +13.11% (ctrl  -5.57%)
+    [W_cur] GRIC key=tt2_abs_e2     r=2.5 (K=16): +12.71% (ctrl  -6.07%)
+    [W_cur] GRIC key=regime_e2_vel  r=1.5 (K=16): +14.59% (ctrl  -4.72%)
+  [Causal Online Streaming RLS DIRECTLY on integrator WFS residual W[t+delta]]
+    [W_0,1] K=1 online linear RLS:                +85.48% (ctrl -74.38%, K=1)
+    [W_0,1] GRIC key=e4_bands       r=2.0 (K=16): +48.79% (ctrl -25.80%)
+    [W_0,1] GRIC key=wfs_lo4        r=2.0 (K=16): +30.17% (ctrl -17.91%)
+    [W_0,1] GRIC key=tt2_e2         r=2.0 (K=16): +37.76% (ctrl -17.91%)
+    [W_0,1] GRIC key=tt2_abs_e2     r=2.5 (K=16): +31.83% (ctrl -19.59%)
+
+--- 2. Target: PSOL_from_OL (train=3536, test=2097) ---
+  Global linear ridge (lam=0.0001): removes 99.95% var (ZOH: 99.95%)
+  [Offline 2nd-stage on linear residual E = Y - P_lin]
+    key=e1_logE        | feat=P_lin: K= 8 affine(F) lam=100    +0.30% (ctrl  +0.21%) | feat=W_cur: K= 4 affine(F) lam=100    -0.05% (ctrl  +0.10%)
+    key=e4_bands       | feat=P_lin: K= 8 affine(F) lam=100    +1.23% (ctrl  +0.25%) | feat=W_cur: K= 8 affine(F) lam=100    +0.03% (ctrl  +0.26%)
+    key=wfs_lo4        | feat=P_lin: K= 4 affine(F) lam=10     +0.83% (ctrl  +0.35%) | feat=W_cur: K= 4 affine(F) lam=100    +0.11% (ctrl  +0.13%)
+    key=tt2_e2         | feat=P_lin: K= 4 affine(F) lam=10     +2.34% (ctrl  +0.42%) | feat=W_cur: K= 8 affine(F) lam=100    +0.16% (ctrl  +0.35%)
+    key=tt2_abs_e2     | feat=P_lin: K= 8 affine(F) lam=10     +1.06% (ctrl  -3.62%) | feat=W_cur: K= 8 affine(F) lam=100    +0.26% (ctrl  +0.27%)
+    key=lo4_e2         | feat=P_lin: K= 4 affine(F) lam=10     +3.39% (ctrl  +1.17%) | feat=W_cur: K= 8 affine(F) lam=100    +0.39% (ctrl  +0.34%)
+    key=regime_e2_vel  | feat=P_lin: K= 8 affine(F) lam=10     +3.78% (ctrl  +1.21%) | feat=W_cur: K= 8 affine(F) lam=100    +0.08% (ctrl  +0.21%)
+  [Causal Online Streaming RLS on linear residual E_all = Y - P_static_lin, eval>=1500]
+    [P_lin] K=1 global online RLS (forgetting): +62.92% (ctrl -42.71%, K=1)
+    [P_lin] GRIC key=e4_bands       r=2.0 (K=16): +47.39% (ctrl -24.57%)
+    [P_lin] GRIC key=wfs_lo4        r=2.0 (K=16): +44.66% (ctrl -18.07%)
+    [P_lin] GRIC key=tt2_e2         r=2.0 (K=16): +44.97% (ctrl -24.72%)
+    [P_lin] GRIC key=tt2_abs_e2     r=2.5 (K=16): +43.16% (ctrl -25.67%)
+    [P_lin] GRIC key=regime_e2_vel  r=1.5 (K=16): +47.32% (ctrl -27.68%)
+    [W_cur] K=1 global online RLS (forgetting): +46.26% (ctrl -19.99%, K=1)
+    [W_cur] GRIC key=e4_bands       r=2.0 (K=16): +31.83% (ctrl -10.29%)
+    [W_cur] GRIC key=wfs_lo4        r=2.0 (K=16): +28.07% (ctrl  -4.87%)
+    [W_cur] GRIC key=tt2_e2         r=2.0 (K=16): +31.23% (ctrl -10.66%)
+    [W_cur] GRIC key=tt2_abs_e2     r=2.5 (K=16): +29.71% (ctrl -10.82%)
+    [W_cur] GRIC key=regime_e2_vel  r=1.5 (K=16): +32.82% (ctrl  -7.89%)
