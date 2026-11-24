@@ -101,7 +101,9 @@ MATRIX_COLUMN_CODES: tuple[str, ...] = (
     "3DRM/FACT",
     "LAG/2PT",
     "SRM",
+    "INT",
     "PSOL",
+    "EOF",
     "OG/POKE",
     "2WFS/LIVE",
     "MOPT",
@@ -268,7 +270,7 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         ],
         "tests": ["test_09_measdynresp.py"],
         "metrics": ["1.69 us stroboscopic timing jitter, r = 0.998, 34.3% plate cross-mode coupling resolved"],
-        "related_reports": ["dm64_dyn_rm_calib", "dm_dynamics_report"],
+        "related_reports": ["dm_preshaper_demo", "dm64_dyn_rm_calib", "dm_dynamics_report"],
     },
     {
         "code": "PRESH/CAL",
@@ -276,19 +278,21 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "role": "calibration",
         "status": "verified",
         "stages": ["stg1"],
-        "summary": "Computes causal 4 kHz MIMO FIR inverse pre-shaper kernel from Pass-1 3D RM.",
+        "summary": "Computes causal 2-8 kHz modal or per-actuator FIR inverse pre-shaper kernels from Pass-1 3D RM.",
         "details": [
-            "Solves a Tikhonov-regularized causal MIMO FIR inversion of the Pass-1 3D response "
-            "tensor (`H_raw`) at an upsampled 4 kHz rate with unity DC-gain constraint.",
-            "Produces the `dm01_preshaper_m32.fits` kernel deployed by real-time `PRESH` "
-            "(`dmpreshaper`) to cancel coupled flexural/membrane plate overshoot and ringing "
-            "without adding artificial loop latency.",
+            "Solves a Tikhonov-regularized causal FIR inversion of the Pass-1 3D response tensor "
+            "(`H_raw`) with two-sided finite-support Toeplitz WFS-exposure deconvolution (`deconv_exp=ON`), "
+            "physical WFS/actuator energy weighting (`energy_weight=ON`), and exact unity DC-gain preservation.",
+            "Supports five kernel modes (`KMODE = 0..4`): modal MIMO (`0`), decoupled modal SISO (`1`), "
+            "uniform broadcast SISO (`2`), per-actuator diagonal SISO (`3`, `[dmx, dmy, M_buf]`), and "
+            "per-actuator spatially-varying `(2R+1)x(2R+1)` local-stencil MIMO (`4`, `[N_nb, dmx*dmy, M_buf]`, "
+            "capturing free-rim edge asymmetry and actuator-to-actuator heterogeneity with optional `.fill_uncal`).",
         ],
         "units": ["cacao-fpsexec-cacaocc-compdmpreshaper"],
         "variants": [
             {
                 "code": "PRESH/CAL",
-                "summary": "Regularized causal MIMO FIR pre-shaper synthesis (default 4 kHz upsampling).",
+                "summary": "Regularized causal MIMO/per-actuator FIR pre-shaper synthesis (`KMODE=0..4`, `deconv_exp=ON`).",
                 "flags": [],
             },
         ],
@@ -304,8 +308,11 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
             ("cacao-work", "scripts/studies/ao3k_phases1to5_calib.milk"),
         ],
         "tests": ["test_10_dmpreshaper.py"],
-        "metrics": ["0.09% DC parity on 12x12; 0.79% DC parity on 64x64 ALPAO plate; stable at +-10% plant mismatch"],
-        "related_reports": ["dm64_dyn_rm_calib", "dm_dynamics_report"],
+        "metrics": [
+            "12x12 HIL: 5.12x modal MIMO ringing cut; per-actuator KMODE=4 cuts free-rim overshoot 9.5x (+6.25% -> +0.66%), ringing 4.5x, 2D waves 2.55x RMS",
+            "64x64 ALPAO 8 kHz demo: 0.79% DC parity, 4-11x ringing suppression across rings/Zernike/Bessel modes",
+        ],
+        "related_reports": ["dm_preshaper_demo", "dm64_dyn_rm_calib", "dm_dynamics_report"],
     },
     {
         "code": "3DRM/P2",
@@ -707,15 +714,26 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
     # ------------------------------------------------------------------
     {
         "code": "PRESH",
-        "name": "High-Rate DM Command Pre-Shaper",
+        "name": "High-Rate DM Mechanical Anti-Vibration Pre-Shaper",
         "role": "loop_operation",
         "status": "verified",
         "stages": ["stg1"],
-        "summary": "Real-time 4 kHz upsampled MIMO FIR filter linearizing coupled plate DM dynamics.",
+        "summary": (
+            "Real-time 2-4 kHz MIMO FIR filter suppressing ALPAO plate mechanical "
+            "vibrations, ringing, and cross-mode coupling downstream of DMch2disp."
+        ),
         "details": [
-            "Runs inline upstream of `dm01disp` (`cacao-fpsexec-dmpreshaper`), convolving modal "
-            "commands at 4 kHz with the calibrated causal MIMO FIR kernel (`PRESH/CAL`) to suppress "
-            "mechanical overshoot, ringing, and inter-mode cross-talk on the 64x64 ALPAO plate DM.",
+            "Runs strictly downstream of `DMch2disp` (`mvalpacer -> mvalC2dm -> DMch2disp -> "
+            "dmpreshaper -> DM`), convolving DM commands at 2-8 kHz with calibrated causal "
+            "modal MIMO (`KMODE=0`), uniform SISO (`KMODE=2`), per-actuator SISO (`KMODE=3`), or "
+            "per-actuator spatially-varying `(2R+1)x(2R+1)` local-stencil MIMO (`KMODE=4`) kernels "
+            "(`PRESH/CAL`) to suppress mechanical plate overshoot, ringing (`f0 ~ 1 kHz`), free-rim "
+            "edge reflections, and cross-actuator 2D wave coupling.",
+            "Targets DM mechanical plate vibrations (distinct from 10-150 Hz optical/telescope "
+            "vibrations cancelled in modal space by `CMODES/NOTCH` and `EOF`). Synergizes directly "
+            "with upstream Multi-Rate DM Pacing (`MRDM`): smooth 1 kHz linear ramps reduce step "
+            "derivatives seen by `dmpreshaper`, cutting peak pre-shaper stroke by 18-40% with "
+            "zero actuator clips and -40% ALPAO 1 kHz plate-band energy.",
             "Requires Pass-2 3D RM (`3DRM/P2`) when paired with Dynamic PSOL so downstream observers "
             "see the exact shaped plant group delay and residual coupling.",
         ],
@@ -723,7 +741,7 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "variants": [
             {
                 "code": "PRESH/4K",
-                "summary": "4 kHz upsampled real-time MIMO FIR DM command pre-shaper.",
+                "summary": "2-8 kHz real-time modal (`KMODE=0..2`) & per-actuator (`KMODE=3, 4`) FIR DM pre-shaper.",
                 "flags": ["--dm1-preshaper"],
             },
         ],
@@ -735,9 +753,14 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "env_vars": [],
         "fps_refs": [],
         "sources": [("cacao", "AOloopControl_DM/AOloopControl_DM_preshaper.c")],
-        "tests": ["test_10_dmpreshaper.py", "ao3k_phases1to5_bench.py"],
-        "metrics": ["5.88x ringing cut (12x12 HIL); 3.87x full MIMO ringing cut (64x64 ALPAO plate)"],
-        "related_reports": ["dm64_dyn_rm_calib", "dm_dynamics_report"],
+        "tests": ["test_10_dmpreshaper.py", "test_18_multirate_dm.py", "ao3k_phases1to5_bench.py"],
+        "metrics": [
+            "12x12 HIL: 5.12x modal MIMO ringing cut; per-actuator KMODE=4 cuts rim overshoot 9.5x, ringing 4.5x, 2D waves 2.55x RMS (2 & 4 kHz)",
+            "64x64 ALPAO plate: 3.87x full MIMO ringing cut at 2 kHz; 4-11x at 8 kHz with exposure deconvolution",
+            "Paired with upstream 1 kHz Multi-Rate DM Pacing (m=6, 250 Hz): -40% 1 kHz plate-band "
+            "energy, -35% HF OPD ripple, -18..40% pre-shaper stroke, 0 clips, +2.7 pts Vis Strehl",
+        ],
+        "related_reports": ["dm_preshaper_demo", "control_architecture_synthesis", "control_implementation_plan", "dm64_dyn_rm_calib", "dm_dynamics_report"],
     },
     {
         "code": "INT",
@@ -807,7 +830,10 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
             "(`H_mimo.fits` via `cblas_sgemv`) with hybrid fallback for high-order modes.",
             "Tracks total applied DM command (`u_ctrl + selfRM/testOL/ogprobe` pokes) for 0.0000% "
             "probe leakage into `modevalOL`, scales WFS residuals by live per-mode `aolN_mWFSfact`, "
-            "and fixes `mzeropoint` units when predictive control is active.",
+            "fixes `mzeropoint` units when predictive control is active, and applies the exact "
+            "exposure-averaged ramp correction `+0.5*alpha*(1-alpha)*(v_old - v_new)` when Stage-1 "
+            "Multi-Rate DM Pacing (`MRDM`) is enabled. Requires camera dark-pedestal subtraction "
+            "(`--wfs-dark-adu`) and low `WFSnormfloor` for faint-star magnitude/rate invariance.",
         ],
         "units": ["cacao-fpsexec-modalfilter (.comp.dynpsol.*)"],
         "variants": [
@@ -831,13 +857,23 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "optional_requires": ["PRESH", "3DRM/FACT", "LAG/2PT"],
         "feedback_from": ["OG/POKE", "2WFS/LIVE"],
         "excludes": [],
-        "cli_flags": ["--dynpsol1", "--dynpsol2"],
-        "env_vars": ["CACAO_DYNPSOL_KERNEL", "CACAO_PSOL_WFSFACT", "CACAO_TBUFF_SIZE"],
+        "cli_flags": ["--dynpsol1", "--dynpsol2", "--wfs-dark-adu"],
+        "env_vars": [
+            "CACAO_DYNPSOL_KERNEL",
+            "CACAO_PSOL_WFSFACT",
+            "CACAO_TBUFF_SIZE",
+            "CACAO_WFS_DARK_ADU",
+            "CACAO_WFS_DARKSUB",
+            "CACAO_WFS_NORMFLOOR",
+        ],
         "fps_refs": [],
         "sources": [("cacao", "AOloopControl/modalfilter.c")],
-        "tests": ["test_12_dyn_psol.py"],
-        "metrics": ["12.2x live GPU plate PSOL error cut (34.14% -> 2.79%); 0.0000% probe leak; +24.2 us MIMO-64"],
-        "related_reports": ["dm64_dyn_rm_calib"],
+        "tests": ["test_12_dyn_psol.py", "test_18_multirate_dm.py"],
+        "metrics": [
+            "12.2x live GPU plate PSOL error cut (34.14% -> 2.79%); 0.0000% probe leak; +24.2 us MIMO-64",
+            "Exact exposure-averaged multi-rate ramp integral matches 1 kHz DM sub-steps to machine precision",
+        ],
+        "related_reports": ["control_architecture_synthesis", "dm64_dyn_rm_calib"],
     },
     {
         "code": "ZPO",
@@ -1097,11 +1133,194 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
             ("cacao", "AOloopControl_PredictiveControl/eoflin_phys.c"),
             ("cacao", "AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_applyEOFPF.c"),
         ],
-        "tests": ["test_15_unified_eof_windlayers.py", "ao3k_phases1to5_bench.py"],
+        "tests": ["test_15_unified_eof_windlayers.py", "test_18_multirate_dm.py", "ao3k_phases1to5_bench.py"],
         "metrics": [
-            "Real AO3k cold start -3,070% -> +69.9% VR; live +60 deg wind switch: 6.16x lower Stg1 WFE (8.3x post-switch); FX cuts ringing Q_vw 26.4x"
+            "Real AO3k cold start -3,070% -> +69.9% VR; live +60 deg wind switch: 6.16x lower Stg1 WFE (8.3x post-switch); FX cuts ringing Q_vw 26.4x",
+            "Faint-star m=10 live GPU WFS rate reduction (1000 -> 250 Hz): Stage-1 H-band Strehl climbs 68.2% -> 80.2% (80.4% with Multi-Rate DM) vs best integrator 50.7% @ 500 Hz",
+            "Operates strictly in the fixed outer modal basis; serves as the mandatory linear anchor for Cascaded Online Self-Learning (SELFLEARN) and Multi-Rate DM Pacing (MRDM)",
         ],
-        "related_reports": ["predictive_control_report"],
+        "related_reports": ["control_architecture_synthesis", "control_implementation_plan", "predictive_control_report"],
+    },
+    {
+        "code": "SELFLEARN",
+        "name": "Cascaded Online Self-Learning Residual Refiner",
+        "role": "loop_operation",
+        "status": "verified",
+        "stages": ["stg1", "stg2"],
+        "summary": (
+            "Cascaded Global Online Adaptive Filter (single-model RLS) and Clustered "
+            "State-Dependent Self-Learning (libgric) on top of Fixed-Basis Block-EOF."
+        ),
+        "details": [
+            "Runs strictly as a bounded residual refiner cascaded on top of Fixed-Basis Block-EOF "
+            "(`u_total = u_EOF + delta_u_global + delta_u_cluster`) inside "
+            "`cacao-fpsexec-cacaopc-selflearn`. Layer 1 (`SL/GLOBAL`, Global Online Adaptive Filter) "
+            "learns a single continuously updated per-mode RLS residual model shared across all "
+            "operating states; Layer 2 (`SL/CLUST`, Clustered State-Dependent Self-Learning) uses "
+            "online `libgric` clustering (`K <= 12` state clusters) to track regime-dependent "
+            "nonlinear optical-gain distortion (unmodulated PyWFS) and changing vibrations without "
+            "forgetting prior regimes.",
+            "Every residual layer is guarded by an independent causal James-Stein shrinkage gate "
+            "computed from rolling out-of-sample prediction error. On the 40 nm pure white-noise "
+            "null test, both gates close to 0.00 / 0.00, leaking only 1.43 nm RMS DM noise "
+            "(1.000x null amplification) — in stark contrast to standalone self-learning without "
+            "Block-EOF, which degrades pure turbulence (33.5 vs 19.2 nm) and leaks 18.35 nm "
+            "(1.10x noise amplification). Must remain in the fixed outer modal basis.",
+        ],
+        "units": ["cacao-fpsexec-cacaopc-selflearn", "selflearn_core.c", "libgric"],
+        "variants": [
+            {
+                "code": "SL/GLOBAL",
+                "summary": (
+                    "Global Online Adaptive Filter (single-model K=1 RLS + causal Stein gate) "
+                    "cascaded on Block-EOF for fast tracking of global gain drift and shared dynamics."
+                ),
+                "flags": ["--predictive", "--pf-mode"],
+            },
+            {
+                "code": "SL/CLUST",
+                "summary": (
+                    "Clustered State-Dependent Self-Learning (libgric K<=12 clusters + per-cluster "
+                    "RLS + causal Stein gates) cascaded on top of Global Online Adaptive Filter."
+                ),
+                "flags": ["--predictive", "--pf-mode"],
+            },
+        ],
+        "requires": ["RM", "PSOL", "EOF"],
+        "optional_requires": ["OG/POKE", "2WFS/LIVE", "WIND"],
+        "feedback_from": [],
+        "excludes": [
+            {
+                "code": "SELFLEARN",
+                "reason": (
+                    "Do NOT run self-learning standalone (without Block-EOF): standalone RLS leaks "
+                    "18.35 nm (1.10x) on pure white noise and degrades pure turbulence (33.5 vs 19.2 nm). "
+                    "Always cascade SELFLEARN on Fixed-Basis Block-EOF and keep inner CMODES basis "
+                    "rotations strictly decoupled inside modalfilter."
+                ),
+            }
+        ],
+        "cli_flags": ["--predictive", "--pf-mode"],
+        "env_vars": ["CACAO_PF_MODE", "CACAO_PF_BLOCKSIZE", "CACAO_PF_ORDER"],
+        "fps_refs": [],
+        "sources": [
+            ("cacao", "AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_selflearn.c"),
+            ("cacao", "AOloopControl_PredictiveControl/selflearn_core.c"),
+        ],
+        "tests": ["test_17_selflearn.py", "Offline 7-regime + white-noise null + RT CPU benchmark"],
+        "metrics": [
+            "Unmodulated PyWFS residual: 16.16 -> 10.27 nm (-36.4% vs Fixed EOF); Combined OG+Vib stress: 33.46 -> 27.06 nm (-19.1%)",
+            "Pure 40 nm white-noise null safety: 1.43 nm DM leakage (1.000x, Stein gates 0.00/0.00) vs 18.35 nm (1.10x) standalone",
+            "Full decoupled RT CPU budget: 88.9 us @ 128 modes (17.8% of 2 kHz) and 113.9 us @ 256 modes (22.8%)",
+        ],
+        "related_reports": ["control_architecture_synthesis", "control_implementation_plan", "predictive_control_report"],
+    },
+    {
+        "code": "MRDM",
+        "name": "Multi-Rate DM Command Pacing & Slow-WFS Trajectory",
+        "role": "loop_operation",
+        "status": "verified",
+        "stages": ["stg1"],
+        "summary": (
+            "Drives DM commands at a user-specified hardware-dependent rate f_DM (smooth centered "
+            "linear ramps) even when a faint-star WFS slows to 200-500 Hz, sitting upstream of DMch2disp and dmpreshaper."
+        ),
+        "details": [
+            "Decouples the DM command rate f_DM (hardware-dependent, explicitly supplied by the user "
+            "— e.g. 1 kHz on AO3k ALPAO 64x64 or 2-4 kHz on fast MEMS DMs) from a slower faint-star "
+            "WFS frame rate (200-500 Hz) via three coordinated C upgrades: (1) a zero-DC temporal-difference "
+            "velocity predictor (`EOF/VEL`) inside `mkEOFPF`/`applyEOFPF` with exact Cholesky-trace "
+            "James-Stein shrinkage that prevents noise-driven sawtooth ramps; (2) zero-latency "
+            "j=0 waking `cacao-fpsexec-mvalpacer` emitting centered zero-mean linear-ramp sub-steps "
+            "(`K_sub = round(f_DM / f_WFS)`, `0.000` fr added lag) upstream of `mvalC2dm -> DMch2disp -> dmpreshaper`; "
+            "and (3) exact exposure-averaged ramp PSOL (`+0.5*alpha*(1-alpha)*(v_old - v_new)`) in "
+            "`modalfilter.c` with dual-writer suppression (`PF.mr_pacer_out`).",
+            "Verified across 23 live GPU `cacaosim` runs on AO3k (`f_DM = 1 kHz`): slowing Stage-1 WFS from 1000 Hz to "
+            "250 Hz at m=10 under predictive control boosts Stage-1 H-band Strehl from 68.2% to "
+            "80.4% (vs best integrator 50.7% @ 500 Hz) and full 2-stage H-band Strehl to 86.9% "
+            "(94.0 nm, 9.19e-5 coronagraph contrast), while cutting downstream `dmpreshaper` "
+            "stroke 18-40%, HF OPD ripple -35%, and ALPAO 1 kHz plate-band energy -40% with zero "
+            "actuator clips. Subaru 4-spider island-petaling imposes a physical rate floor near "
+            "~250 Hz at 0.6\" seeing.",
+        ],
+        "units": [
+            "cacao-fpsexec-mvalpacer",
+            "modalfilter (exact ramp PSOL + aolN_modevalDM_traj)",
+            "mkEOFPF / applyEOFPF (EOF/VEL zero-DC velocity)",
+        ],
+        "variants": [
+            {
+                "code": "DM/MR",
+                "summary": (
+                    "Multi-rate centered linear-ramp DM command pacer (`mvalpacer`) driven at a "
+                    "user-specified hardware-dependent rate `f_DM` upstream of `DMch2disp -> dmpreshaper` "
+                    "with zero-latency j=0 wake."
+                ),
+                "flags": ["--mr-dm1", "--mr-substeps", "--mr-vel-gain", "--mr-vel-reg-mult"],
+            },
+            {
+                "code": "EOF/VEL",
+                "summary": (
+                    "Zero-DC temporal-difference velocity solver with exact Cholesky-trace "
+                    "James-Stein shrinkage inside `mkEOFPF` / `applyEOFPF`."
+                ),
+                "flags": ["--mr-dm1", "--mr-vel-gain", "--mr-vel-reg-mult"],
+            },
+            {
+                "code": "WFS/SLOW",
+                "summary": (
+                    "Faint-star WFS frame-rate reduction (1000 -> 250-500 Hz) with camera "
+                    "dark-pedestal subtraction (`--wfs-dark-adu`) and low `WFSnormfloor`."
+                ),
+                "flags": ["--wfs1-rate", "--wfs-dark-adu", "--star-mag"],
+            },
+        ],
+        "requires": ["RM", "PSOL", "EOF"],
+        "optional_requires": ["PRESH", "3DRM/FACT", "WIND"],
+        "feedback_from": [],
+        "excludes": [
+            {
+                "code": "MRDM",
+                "reason": (
+                    "Signal-flow order rule: `mvalpacer` MUST sit upstream of `mvalC2dm -> "
+                    "DMch2disp -> dmpreshaper -> DM` (never downstream of the plate pre-shaper). "
+                    "Avoid slowing Stage-1 WFS below ~250 Hz at 0.6\" seeing on Subaru's 4-spider "
+                    "pupil where island-effect petaling dominates."
+                ),
+            }
+        ],
+        "cli_flags": [
+            "--wfs1-rate",
+            "--mr-dm1",
+            "--mr-substeps",
+            "--mr-vel-gain",
+            "--mr-vel-reg-mult",
+            "--wfs-dark-adu",
+        ],
+        "env_vars": [
+            "CACAO_PF_MR_ENABLE",
+            "CACAO_PF_MR_SUBSTEPS",
+            "CACAO_PF_MR_VELGAIN",
+            "CACAO_PF_MR_VEL_REG_MULT",
+            "CACAO_PF_MR_PACER_OUT",
+            "CACAO_WFS_DARK_ADU",
+            "CACAO_WFS_DARKSUB",
+            "CACAO_WFS_NORMFLOOR",
+        ],
+        "fps_refs": [],
+        "sources": [
+            ("cacao", "AOloopControl_DM/AOloopControl_DM_mvalpacer.c"),
+            ("cacao", "AOloopControl/modalfilter.c"),
+            ("cacao", "AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_mkEOFPF.c"),
+            ("cacao", "AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_applyEOFPF.c"),
+        ],
+        "tests": ["test_18_multirate_dm.py (3/3 passed)", "23-run live GPU cacaosim shootout"],
+        "metrics": [
+            "m=10 live GPU Stage 1 (1000 -> 250 Hz): H-Strehl 68.2% -> 80.4% (129.3 nm total, 108.7 nm SS) vs best integrator 50.7% @ 500 Hz",
+            "Full 2-stage m=10 (Stg1 250 Hz MR + Stg2 2 kHz): 94.0 nm final WFE, 86.9% H-Strehl, 53.8% Vis Strehl, 9.19e-5 coro 3-10 l/D",
+            "m=6 250 Hz 2x2 ablation (MR + 2 kHz Pre-Shaper): -35% HF OPD ripple, -40% 1 kHz plate band, -18..40% pre-shaper stroke, 0 clips, 0.000 fr added lag",
+        ],
+        "related_reports": ["control_architecture_synthesis", "control_implementation_plan", "dm64_dyn_rm_calib", "predictive_control_report"],
     },
     # ------------------------------------------------------------------
     # Diagnostics & Post-Loop Analysis
@@ -1146,8 +1365,11 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
             ("cacao", "AOloopControl/modalCTRL_stats.c"),
         ],
         "tests": ["test_11_whiteness_and_zpo.py", "ao3k_phases1to5_bench.py"],
-        "metrics": ["Catches ZPO ringing (>8-10x) & EOF overfit (1.57); live AO3k Stg2 Q_vw cut 2.5-14.5x"],
-        "related_reports": ["predictive_control_report"],
+        "metrics": [
+            "Catches ZPO ringing (>8-10x) & EOF overfit (1.57); live AO3k Stg2 Q_vw cut 2.5-14.5x",
+            "40 nm pure white-noise null safety test: Cascaded Self-Learning 1.43 nm (1.000x) vs Standalone 18.35 nm (1.10x)",
+        ],
+        "related_reports": ["control_architecture_synthesis", "predictive_control_report"],
     },
     {
         "code": "TLM",
@@ -1344,8 +1566,79 @@ ALGORITHMS_RAW: list[dict[str, object]] = [
         "related_reports": [],
     },
     # ------------------------------------------------------------------
-    # Research Queue (Planned — Phase 6a)
+    # Research Queue (Planned — Inner Control Modes & Phase 6a)
     # ------------------------------------------------------------------
+    {
+        "code": "CMODES",
+        "name": "Inner Control-Mode Optimization (On-the-Fly Rotation Matrix)",
+        "role": "planned",
+        "status": "planned",
+        "stages": ["stg1", "stg2"],
+        "summary": (
+            "Noise-whitened inner modal rotation matrix Q and 16-mode AR(48) telescope "
+            "vibration notch strictly decoupled inside modalfilter."
+        ),
+        "details": [
+            "Continuously optimizes the inner closed-loop control modal basis via an orthogonal "
+            "or noise-whitened rotation matrix `Q` (`WFS_rot = Q^T WFS`, `DM = Q DM_rot`) inside "
+            "`modalfilter`, pairing rotated modes with optimal inner `(gain, leak)` (`CMODES/ROT`) "
+            "and an optional 16-mode high-order `AR(48)` narrowband notch (`CMODES/NOTCH`) targeting "
+            "10-150 Hz telescope and optical-bench structural vibrations.",
+            "Strict Architectural Decoupling Rule: `Q` MUST remain strictly confined inside the "
+            "inner `modalfilter` loop so the outer modal basis seen by `modevalOL`, Block-EOF, and "
+            "Cascaded Self-Learning remains 100% invariant. At every atomic swap `Q_old -> Q_new`, "
+            "the 48-frame inner AR history buffer is rotated in place (`H_new = (Q_new^T Q_old) H_old`), "
+            "achieving 47.5 nm 100% bumpless swaps (vs 286.8 nm without history re-projection and "
+            "213-367 nm catastrophic spikes if the basis is rotated underneath EOF/self-learning).",
+        ],
+        "units": [
+            "modalfilter (inner Q rotation & AR(48) notch — planned)",
+            "milk-fpsexec-mlt-cmodes (async covariance & Q solver — planned)",
+        ],
+        "variants": [
+            {
+                "code": "CMODES/ROT",
+                "summary": (
+                    "Noise-whitened on-the-fly inner modal rotation matrix Q inside modalfilter "
+                    "with atomic basis swaps (leaves outer EOF/SELFLEARN basis 100% fixed)."
+                ),
+                "flags": [],
+            },
+            {
+                "code": "CMODES/NOTCH",
+                "summary": (
+                    "Inner 16-mode narrowband AR(48) telescope-vibration notch with atomic "
+                    "history re-projection `H_new = (Q_new^T Q_old) H_old` across basis swaps."
+                ),
+                "flags": [],
+            },
+        ],
+        "requires": ["RM", "INT"],
+        "optional_requires": ["MOPT", "PSOL", "EOF", "SELFLEARN"],
+        "feedback_from": [],
+        "excludes": [
+            {
+                "code": "CMODES",
+                "reason": (
+                    "NEVER rotate the outer modal basis underneath Block-EOF or Self-Learning "
+                    "(causes 213-367 nm swap spikes and invalidates Gram/RLS memory), and NEVER "
+                    "swap Q without re-projecting the inner AR(48) history buffer (286.8 nm spike "
+                    "without re-projection vs 47.5 nm bumpless)."
+                ),
+            }
+        ],
+        "cli_flags": [],
+        "env_vars": [],
+        "fps_refs": [],
+        "sources": [("cacao", "AOloopControl/modalfilter.c")],
+        "tests": ["Offline 7-regime + live basis-swap + RT CPU timing benchmark (ready for C deployment)"],
+        "metrics": [
+            "Live mid-run basis swaps: 47.5 nm peak bumpless (vs 286.8 nm unrotated & 213-367 nm coupled EOF/selflearn)",
+            "+30 nm narrowband telescope vibrations: 25.84 -> 22.22 nm (-14.0%); pure turb: 19.23 -> 18.17 nm",
+            "Inner Q + AR(48) RT overhead: +2.4 us @ 128 modes (21.2 us total with Fixed EOF = 4.2% of 2 kHz)",
+        ],
+        "related_reports": ["control_architecture_synthesis", "control_implementation_plan"],
+    },
     {
         "code": "HESS/CORO",
         "name": "Coronagraphic WFS-to-PSF Quadratic / Hessian Model",
@@ -1395,6 +1688,7 @@ _STAGE_REQ_OVERRIDES: dict[str, dict[str, object]] = {
     "OFFL": {"mode": "all", "stages": ["stg1", "stg2"]},
     "2WFS/POST": {"mode": "all", "stages": ["stg1", "stg2"]},
     "ZPO": {"mode": "all", "stages": ["stg2", "stg3"]},
+    "MRDM": {"mode": "all", "stages": ["stg1"]},
     "HESS/CORO": {"mode": "all", "stages": ["stg2"]},
 }
 
@@ -1620,6 +1914,19 @@ PIPELINE_CHOICES_RAW: list[dict[str, object]] = [
         "excl": ["WFS/MOD"],
         "doc_slug": "sim-plate",
         "doc_anchor": "",
+    },
+    {
+        "code": "WFS/SLOW",
+        "name": "Faint-Star Slow WFS (250-500 Hz)",
+        "role": "simulation",
+        "zone": "sim_rate",
+        "stage_req": {"mode": "all", "stages": ["stg1"]},
+        "req_clauses": [],
+        "opt": [],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "mrdm",
+        "doc_anchor": "opt-wfs-slow",
     },
     # --- Calibration: Offline ---
     {
@@ -1937,13 +2244,78 @@ PIPELINE_CHOICES_RAW: list[dict[str, object]] = [
         "doc_anchor": "opt-eof-fx",
     },
     {
-        "code": "PRESH/4K",
-        "name": "4 kHz DM Plate Pre-Shaper",
+        "code": "SL/GLOBAL",
+        "name": "Global Online Adaptive Filter (RLS)",
         "role": "loop_operation",
-        "zone": "ctrl_aux",
+        "zone": "ctrl_selflearn",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"]],
+        "opt": ["OG/POKE", *_TWOWFS_ANY, "WFS/UNMOD"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "selflearn",
+        "doc_anchor": "opt-sl-global",
+    },
+    {
+        "code": "SL/CLUST",
+        "name": "Clustered Self-Learning (libgric)",
+        "role": "loop_operation",
+        "zone": "ctrl_selflearn",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["EOF/BASE"], ["SL/GLOBAL"]],
+        "opt": ["OG/POKE", *_TWOWFS_ANY, "WFS/UNMOD"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "selflearn",
+        "doc_anchor": "opt-sl-clust",
+    },
+    {
+        "code": "CMODES/ROT",
+        "name": "Inner Rotation Matrix Q (Whitened)",
+        "role": "planned",
+        "zone": "ctrl_cmodes",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [list(_INT_ANY)],
+        "opt": ["MOPT", "EOF/BASE", "SL/GLOBAL", "SL/CLUST"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "cmodes",
+        "doc_anchor": "opt-cmodes-rot",
+    },
+    {
+        "code": "CMODES/NOTCH",
+        "name": "Inner 16-Mode AR(48) Vib Notch",
+        "role": "planned",
+        "zone": "ctrl_cmodes",
+        "stage_req": {"mode": "any", "stages": ["stg1", "stg2"]},
+        "req_clauses": [["CMODES/ROT"]],
+        "opt": ["EOF/BASE"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "cmodes",
+        "doc_anchor": "opt-cmodes-notch",
+    },
+    {
+        "code": "DM/MR",
+        "name": "Multi-Rate DM Pacing (user f_DM)",
+        "role": "loop_operation",
+        "zone": "ctrl_dm",
+        "stage_req": {"mode": "all", "stages": ["stg1"]},
+        "req_clauses": [["EOF/BASE"]],
+        "opt": ["WFS/SLOW", "PRESH/4K", "EOF/WIND"],
+        "fb_in": [],
+        "excl": [],
+        "doc_slug": "mrdm",
+        "doc_anchor": "opt-dm-mr",
+    },
+    {
+        "code": "PRESH/4K",
+        "name": "2-8 kHz DM Anti-Vib Pre-Shaper (K0-4)",
+        "role": "loop_operation",
+        "zone": "ctrl_dm",
         "stage_req": {"mode": "all", "stages": ["stg1"]},
         "req_clauses": [["SIM/PLATE"], ["3DRM/MIMO"]],
-        "opt": [],
+        "opt": ["DM/MR"],
         "fb_in": [],
         "excl": [],
         "doc_slug": "presh",
@@ -1996,7 +2368,7 @@ PIPELINE_CHOICES_RAW: list[dict[str, object]] = [
         "zone": "diag",
         "stage_req": {"mode": "any", "stages": ["stg1", "stg2", "stg3"]},
         "req_clauses": [list(_INT_ANY), list(_LAG_ANY)],
-        "opt": ["PF/AR", "EOF/BASE", "ZPO/FIX", "ZPO/OG"],
+        "opt": ["PF/AR", "EOF/BASE", "SL/GLOBAL", "SL/CLUST", "ZPO/FIX", "ZPO/OG"],
         "fb_in": [],
         "excl": [],
         "doc_slug": "white",

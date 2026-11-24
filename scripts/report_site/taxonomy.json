@@ -5,19 +5,23 @@
       "title": "Wavefront Control & Prediction",
       "short_title": "Wavefront Control",
       "accent": "#2563eb",
-      "description": "Modal leaky integrators, PSOL per-mode diagonal AR(4..64) predictors, and full cross-mode Block-EOF VAR(P) real-time controllers.",
+      "description": "Core real-time wavefront control (integrators, autotuned gain/leak, diagonal AR, cross-mode Block-EOF, cascaded online self-learning), inner control-mode rotation matrices, and multi-rate / anti-vibration DM actuation.",
       "subgroups": [
         {
+          "id": "integrator",
+          "label": "Manual & Autotuned Integrators"
+        },
+        {
           "id": "diagonal-ar",
-          "label": "PSOL Diagonal AR(P)"
+          "label": "Per-Mode AR(P)"
         },
         {
           "id": "block-eof",
-          "label": "Cross-Mode Block-EOF (VAR)"
+          "label": "Block-EOF & Cascaded Self-Learning"
         },
         {
-          "id": "integrator",
-          "label": "Modal Integrators"
+          "id": "control-modes-dm",
+          "label": "Adaptive Modes & Multi-Rate DM"
         }
       ],
       "keywords": [
@@ -28,7 +32,13 @@
         "var(",
         "wavefront control",
         "control law",
-        "predictive_control"
+        "predictive_control",
+        "self-learning",
+        "selflearn",
+        "control modes",
+        "rotation matrix",
+        "multirate",
+        "multi-rate"
       ]
     },
     {

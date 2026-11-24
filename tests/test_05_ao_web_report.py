@@ -1398,6 +1398,27 @@ def test_options_reference_config_and_run_options_tracking(
     assert 'data-pipe-code="EOF/BASE"' in control_html
     assert 'data-pipe-code="EOF/WIND"' in control_html
     assert 'data-pipe-code="EOF/FX"' in control_html
+    assert 'data-pipe-code="SL/GLOBAL"' in control_html
+    assert 'data-pipe-code="SL/CLUST"' in control_html
+    assert 'data-pipe-code="CMODES/ROT"' in control_html
+    assert 'data-pipe-code="CMODES/NOTCH"' in control_html
+    assert 'data-pipe-code="DM/MR"' in control_html
+    assert 'data-pipe-code="WFS/SLOW"' in sim_strip_html
+    assert 'id="algo-pipe-guidance"' in algos_html
+    assert 'id="architecture-synthesis"' in algos_html
+    assert 'id="algorithm-summary"' in algos_html
+    assert 'id="algo-pipe-preset-select"' in algos_html
+    assert 'id="algo-pipe-depth-select"' in algos_html
+    assert 'id="algo-role-select"' in algos_html
+    assert 'id="algo-stage-select"' in algos_html
+    assert 'id="algo-trace-select"' in algos_html
+    assert 'class="algo-ctrl-select"' in algos_html
+    assert 'class="algo-lock-reason hidden"' in algos_html
+    assert 'role="switch"' in algos_html
+    assert algos_html.count('<select class="algo-ctrl-select"') >= 12
+    assert (pub / "algorithms" / "selflearn" / "index.html").is_file()
+    assert (pub / "algorithms" / "cmodes" / "index.html").is_file()
+    assert (pub / "algorithms" / "mrdm" / "index.html").is_file()
     assert 'data-pipe-code="WHITE/RT"' in diag_html
     assert 'data-pipe-code="TLM/SYNC"' in diag_html
     assert "data-pipe-pin" not in algos_html
@@ -1487,12 +1508,79 @@ def test_options_reference_config_and_run_options_tracking(
                 "WHITE/RT", "WHITE/OOS",
             },
         ),
+        # 9. Full Decoupled Architecture: Block-EOF + Cascaded Self-Learning + Inner Modes + Pre-Shaper
+        (
+            {"stg1", "stg2", "stg3"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "RM/DIR", "3DRM/MIMO", "OG/POKE", "2WFS/IV", "WIND",
+                "INT/MGAIN", "PSOL/MIMO", "EOF/BASE", "EOF/ZOH", "EOF/WIND",
+                "SL/GLOBAL", "SL/CLUST", "CMODES/ROT", "CMODES/NOTCH",
+                "PRESH/4K", "ZPO/OG", "OFFL/2TO1", "WHITE/RT", "WHITE/OOS",
+            },
+        ),
+        # 10. Faint-Star m=10 Slow-WFS (250 Hz) + Block-EOF + Multi-Rate 1 kHz DM + Plate Pre-Shaper
+        (
+            {"stg1", "stg2"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD", "WFS/SLOW",
+                "MLAT", "RM/FAST", "3DRM/MIMO", "WIND",
+                "INT/MGAIN", "PSOL/MIMO", "EOF/BASE", "EOF/ZOH", "EOF/WIND",
+                "DM/MR", "PRESH/4K", "WHITE/RT", "WHITE/OOS",
+            },
+        ),
     ]
     for st_set, sel_set in valid_sims:
         errs = validate_pipeline_selection(st_set, sel_set)
         assert not errs, f"Valid simulation failed constraints: {errs}"
 
+    # Verify every UI preset in _PIPELINE_PRESETS satisfies all pipeline constraints
+    from report_site.pages.algorithms import _PIPELINE_PRESETS
+
+    for pid, _plbl, pcodes in _PIPELINE_PRESETS:
+        pst: set[str] = set()
+        for c in pcodes:
+            sr = pipe_graph[c]["stage_req"]
+            if sr["mode"] == "all":
+                pst.update(sr["stages"])
+        if not pst:
+            pst.add("stg1")
+        perrs = validate_pipeline_selection(pst, set(pcodes))
+        assert not perrs, f"Preset {pid!r} failed constraints: {perrs}"
+
     invalid_sims = [
+        # Standalone self-learning without Block-EOF is strictly forbidden
+        (
+            {"stg1"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "INT/MGAIN", "PSOL/2TAP", "SL/GLOBAL",
+            },
+        ),
+        # Clustered self-learning requires Global Online Adaptive Filter + Block-EOF
+        (
+            {"stg1"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "INT/MGAIN", "PSOL/2TAP", "EOF/BASE", "SL/CLUST",
+            },
+        ),
+        # Inner AR(48) vibration notch requires inner basis rotation Q
+        (
+            {"stg1"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD",
+                "MLAT", "RM/FAST", "INT/MGAIN", "CMODES/NOTCH",
+            },
+        ),
+        # Multi-rate DM pacing requires Block-EOF velocity channel (EOF/BASE)
+        (
+            {"stg1"},
+            {
+                "SIM/FUSED", "SIM/PLATE", "SIM/TURB", "WFS/MOD", "WFS/SLOW",
+                "MLAT", "RM/FAST", "INT/MGAIN", "PSOL/2TAP", "DM/MR",
+            },
+        ),
         # RM/FAST impossible under SIM/MOD
         ({"stg1"}, {"SIM/MOD", "SIM/PLATE", "SIM/TURB", "WFS/MOD", "RM/FAST"}),
         # PRESH/4K impossible under SIM/IDEAL

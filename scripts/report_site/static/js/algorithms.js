@@ -34,8 +34,9 @@
 
   const viewBtns = Array.from(root.querySelectorAll("[data-algo-view]"));
   const panels = Array.from(root.querySelectorAll("[data-algo-panel]"));
-  const roleBtns = Array.from(root.querySelectorAll("[data-algo-role-filter]"));
-  const stageBtns = Array.from(root.querySelectorAll("[data-algo-stage-filter]"));
+  const roleSelect = document.getElementById("algo-role-select");
+  const stageSelect = document.getElementById("algo-stage-select");
+  const traceSelect = document.getElementById("algo-trace-select");
   const searchInput = document.getElementById("algo-search");
   const resetBtn = document.getElementById("algo-reset");
   const countEl = document.getElementById("algo-count");
@@ -85,6 +86,12 @@
     root.querySelectorAll("[data-algo-trace]").forEach((b) => {
       b.classList.toggle("active", b.getAttribute("data-algo-trace") === activeTrace);
     });
+    if (traceSelect) {
+      const hasOpt =
+        activeTrace &&
+        Array.from(traceSelect.options).some((o) => o.value === activeTrace);
+      traceSelect.value = hasOpt ? activeTrace : "";
+    }
     catalogRows.forEach((tr) => {
       tr.classList.remove("algo-dimmed", "algo-selected", "algo-req", "algo-enables");
     });
@@ -164,23 +171,27 @@
     });
   });
 
-  roleBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      roleBtns.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      activeRole = btn.getAttribute("data-algo-role-filter") || "all";
+  if (roleSelect) {
+    roleSelect.addEventListener("change", () => {
+      activeRole = roleSelect.value || "all";
       applyFilters();
     });
-  });
+  }
 
-  stageBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      stageBtns.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      activeStage = btn.getAttribute("data-algo-stage-filter") || "all";
+  if (stageSelect) {
+    stageSelect.addEventListener("change", () => {
+      activeStage = stageSelect.value || "all";
       applyFilters();
     });
-  });
+  }
+
+  if (traceSelect) {
+    traceSelect.addEventListener("change", () => {
+      const v = traceSelect.value || "";
+      activeTrace = null;
+      applyTrace(v || null);
+    });
+  }
 
   root.addEventListener("click", (ev) => {
     const tbtn = ev.target.closest("[data-algo-trace]");
@@ -199,13 +210,10 @@
     resetBtn.addEventListener("click", () => {
       activeRole = "all";
       activeStage = "all";
+      if (roleSelect) roleSelect.value = "all";
+      if (stageSelect) stageSelect.value = "all";
+      if (traceSelect) traceSelect.value = "";
       if (searchInput) searchInput.value = "";
-      roleBtns.forEach((b) =>
-        b.classList.toggle("active", b.getAttribute("data-algo-role-filter") === "all")
-      );
-      stageBtns.forEach((b) =>
-        b.classList.toggle("active", b.getAttribute("data-algo-stage-filter") === "all")
-      );
       applyTrace(null);
       applyFilters();
     });
@@ -221,6 +229,7 @@
   const pipeWorkspace = document.getElementById("algo-pipe-workspace");
   const pipeStatus = document.getElementById("algo-pipe-status");
   const pipeProfile = document.getElementById("algo-pipe-profile");
+  const pipeGuidance = document.getElementById("algo-pipe-guidance");
   if (!pipeWorkspace) return;
 
   let pipeGraph = {};
@@ -233,9 +242,14 @@
     }
   }
 
-  const pipeCards = Array.from(
-    pipeWorkspace.querySelectorAll(".algo-pipe-card[data-pipe-code]")
+  const toggleCards = Array.from(
+    pipeWorkspace.querySelectorAll(".algo-pipe-toggle-card[data-pipe-code]")
   );
+  const selectCards = Array.from(
+    pipeWorkspace.querySelectorAll(".algo-pipe-select-card[data-pipe-select-group]")
+  );
+  const allPipeWidgets = [].concat(selectCards, toggleCards);
+  const allOrderedCodes = Object.keys(pipeGraph);
   const stageToggleBtns = Array.from(
     pipeWorkspace.querySelectorAll("[data-pipe-stage]")
   );
@@ -295,7 +309,7 @@
     return visited;
   }
 
-  function missingPrereqs(code) {
+  function missingPrereqsWithSet(code, activeSet) {
     const node = pipeGraph[code];
     if (!node) return { stages: [], reqs: [] };
     const missStages = [];
@@ -312,15 +326,37 @@
     }
     const missReqs = [];
     (node.req_clauses || []).forEach((clause) => {
-      if (clause.length && !clause.some((r) => selectedCodes.has(r))) {
+      if (clause.length && !clause.some((r) => activeSet.has(r))) {
         missReqs.push(clause.join(" or "));
       }
     });
     return { stages: missStages, reqs: missReqs };
   }
 
+  function missingPrereqs(code) {
+    return missingPrereqsWithSet(code, selectedCodes);
+  }
+
   function isSelectable(code) {
     const m = missingPrereqs(code);
+    return m.stages.length === 0 && m.reqs.length === 0;
+  }
+
+  function optionMissing(valStr, groupCodes) {
+    if (!valStr) return { stages: [], reqs: [] };
+    const parts = valStr.split("+").filter(Boolean);
+    const trial = new Set(selectedCodes);
+    (groupCodes || []).forEach((gc) => trial.delete(gc));
+    for (let i = 0; i < parts.length; i += 1) {
+      const m = missingPrereqsWithSet(parts[i], trial);
+      if (m.stages.length || m.reqs.length) return m;
+      trial.add(parts[i]);
+    }
+    return { stages: [], reqs: [] };
+  }
+
+  function isOptionSelectable(valStr, groupCodes) {
+    const m = optionMissing(valStr, groupCodes);
     return m.stages.length === 0 && m.reqs.length === 0;
   }
 
@@ -344,6 +380,22 @@
     return parts.join("; ");
   }
 
+  function activeCodeForSelectCard(card) {
+    const sel = card.querySelector("select.algo-ctrl-select");
+    if (!sel) return "";
+    const curVal = sel.value || "";
+    if (curVal) {
+      const parts = curVal.split("+").filter(Boolean);
+      return parts[parts.length - 1] || "";
+    }
+    const opts = Array.from(sel.options);
+    for (let i = 0; i < opts.length; i += 1) {
+      const pc = opts[i].getAttribute("data-pipe-code") || "";
+      if (pc) return pc;
+    }
+    return "";
+  }
+
   function renderPipeline() {
     pruneInvalidSelections();
 
@@ -351,18 +403,160 @@
       const sk = btn.getAttribute("data-pipe-stage") || "";
       const on = activeStages.has(sk);
       btn.classList.toggle("active", on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.setAttribute("aria-checked", on ? "true" : "false");
     });
 
-    document.querySelectorAll("[data-pipe-preset]").forEach((b) => {
-      b.classList.toggle("active", b.getAttribute("data-pipe-preset") === activePreset);
-    });
+    const presetSel = document.getElementById("algo-pipe-preset-select");
+    if (presetSel) {
+      presetSel.value = activePreset || "";
+    }
 
     let nSel = 0;
     let nAvail = 0;
     let nLocked = 0;
 
-    pipeCards.forEach((el) => {
+    // 1. Sync Pulldown (<select>) cards
+    selectCards.forEach((card) => {
+      const sel = card.querySelector("select.algo-ctrl-select");
+      if (!sel) return;
+      const groupCodes = (card.getAttribute("data-pipe-codes") || "")
+        .split(",")
+        .filter(Boolean);
+      const allowOff = card.getAttribute("data-pipe-allow-off") === "1";
+      const opts = Array.from(sel.options);
+
+      // Determine best matching value from selectedCodes (prefer longest composite match)
+      let matchedVal = "";
+      let bestLen = 0;
+      opts.forEach((opt) => {
+        const val = opt.value || "";
+        if (!val) return;
+        const parts = val.split("+").filter(Boolean);
+        if (parts.length > bestLen && parts.every((p) => selectedCodes.has(p))) {
+          matchedVal = val;
+          bestLen = parts.length;
+        }
+      });
+
+      // Enable/disable individual <option> entries based on live prerequisites
+      let anyNonOffSelectable = false;
+      let firstLockedReason = "";
+      const lockedOptItems = [];
+      opts.forEach((opt) => {
+        const val = opt.value || "";
+        const baseLbl = opt.getAttribute("data-base-label") || opt.textContent || "";
+        if (!val) {
+          opt.disabled = false;
+          opt.textContent = baseLbl;
+          return;
+        }
+        const m = optionMissing(val, groupCodes);
+        const ok = m.stages.length === 0 && m.reqs.length === 0;
+        opt.disabled = !ok;
+        if (ok) {
+          anyNonOffSelectable = true;
+          opt.textContent = baseLbl;
+        } else {
+          const reason = formatMissingText(m);
+          if (!firstLockedReason) firstLockedReason = reason;
+          const optCode = opt.getAttribute("data-pipe-code") || val;
+          lockedOptItems.push({ code: optCode, reason: reason });
+          opt.textContent = baseLbl + " [disabled: needs " + reason + "]";
+        }
+      });
+
+      sel.value = matchedVal;
+      const isLockedSelect = allowOff && !matchedVal && !anyNonOffSelectable;
+      sel.disabled = isLockedSelect;
+      if (isLockedSelect && opts[0] && !opts[0].value) {
+        opts[0].textContent = "Off (Disabled)";
+      }
+
+      const lockNote = card.querySelector(".algo-lock-reason");
+      if (lockNote) {
+        if (isLockedSelect) {
+          lockNote.textContent =
+            "\u2298 Disabled \u2014 needs " + (firstLockedReason || "prerequisites");
+          lockNote.classList.remove("hidden", "algo-lock-partial");
+          lockNote.classList.add("algo-lock-full");
+        } else if (lockedOptItems.length > 0) {
+          const summary = lockedOptItems
+            .map((it) => `${it.code} (needs ${it.reason})`)
+            .join(" \u00b7 ");
+          lockNote.textContent = "\u2298 Disabled choice: " + summary;
+          lockNote.classList.remove("hidden", "algo-lock-full");
+          lockNote.classList.add("algo-lock-partial");
+        } else {
+          lockNote.textContent = "";
+          lockNote.classList.add("hidden");
+          lockNote.classList.remove("algo-lock-full", "algo-lock-partial");
+        }
+      }
+
+      // Sync active code badge & docs link in card header
+      const badge = card.querySelector(".algo-select-active-badge");
+      const dlink = card.querySelector(".algo-select-docs-link");
+      const activeOpt = sel.selectedOptions && sel.selectedOptions[0];
+      const firstRealOpt = opts.find((o) => Boolean(o.value));
+      const refOpt = (activeOpt && activeOpt.value ? activeOpt : firstRealOpt) || null;
+      const activeCode =
+        activeOpt && activeOpt.value ? activeOpt.getAttribute("data-pipe-code") || "" : "";
+      const refHref = refOpt ? refOpt.getAttribute("data-doc-href") || "#" : "#";
+      const refCode = refOpt ? refOpt.getAttribute("data-pipe-code") || "" : "";
+
+      if (badge) {
+        badge.textContent = isLockedSelect ? "DISABLED" : activeCode || "OFF";
+        badge.setAttribute("href", refHref);
+        badge.setAttribute(
+          "title",
+          isLockedSelect
+            ? "Disabled (needs " + (firstLockedReason || "prerequisites") + ") — click to view " + refCode + " docs"
+            : activeCode
+            ? "Open " + activeCode + " documentation"
+            : "Currently off — click to view " + refCode + " documentation"
+        );
+        badge.classList.toggle("algo-badge-off", !activeCode && !isLockedSelect);
+        badge.classList.toggle("algo-badge-locked", isLockedSelect);
+      }
+      if (dlink) {
+        dlink.setAttribute("href", refHref);
+        dlink.setAttribute("title", "Open " + (activeCode || refCode) + " documentation");
+      }
+
+      card.classList.remove(
+        "pipe-selected",
+        "pipe-available",
+        "pipe-locked",
+        "pipe-dim",
+        "pipe-focus",
+        "pipe-up",
+        "pipe-opt",
+        "pipe-down",
+        "pipe-fb",
+        "pipe-excl"
+      );
+
+      const isSimGroup = groupCodes.every((gc) => (pipeGraph[gc] || {}).role === "simulation");
+      if (matchedVal) {
+        card.classList.add("pipe-selected");
+        card.setAttribute("title", activeCode + " is active — use pulldown to switch");
+        if (!isSimGroup) nSel += 1;
+      } else if (anyNonOffSelectable) {
+        card.classList.add("pipe-available");
+        card.setAttribute("title", "Off — choose an option from the pulldown");
+        if (!isSimGroup) nAvail += 1;
+      } else {
+        card.classList.add("pipe-locked");
+        card.setAttribute(
+          "title",
+          "Disabled — requires: " + (firstLockedReason || "prerequisites")
+        );
+        if (!isSimGroup) nLocked += 1;
+      }
+    });
+
+    // 2. Sync ON/OFF Toggle Switch cards
+    toggleCards.forEach((el) => {
       const c = el.getAttribute("data-pipe-code") || "";
       const node = pipeGraph[c] || {};
       const isSim = node.role === "simulation";
@@ -382,31 +576,44 @@
         "pipe-excl"
       );
 
+      const swLbl = el.querySelector(".algo-switch-lbl");
+      const lockNote = el.querySelector(".algo-lock-reason");
       if (sel) {
         el.classList.add("pipe-selected");
-        el.setAttribute("aria-pressed", "true");
+        el.setAttribute("aria-checked", "true");
         el.setAttribute("aria-disabled", "false");
-        el.setAttribute(
-          "title",
-          node.radio_group
-            ? c + " is active"
-            : c + " is selected — click to turn off"
-        );
+        el.setAttribute("title", c + " is ON — click to turn OFF");
+        if (swLbl) swLbl.textContent = "ON";
+        if (lockNote) {
+          lockNote.textContent = "";
+          lockNote.classList.add("hidden");
+          lockNote.classList.remove("algo-lock-full");
+        }
         if (!isSim) nSel += 1;
       } else if (avail) {
         el.classList.add("pipe-available");
-        el.setAttribute("aria-pressed", "false");
+        el.setAttribute("aria-checked", "false");
         el.setAttribute("aria-disabled", "false");
-        const exList = (node.excl || []).filter((x) => x !== c && selectedCodes.has(x));
-        const exTip = exList.length ? " (switches off " + exList.join(", ") + ")" : "";
-        el.setAttribute("title", "Click to select " + c + exTip);
+        el.setAttribute("title", c + " is OFF — click to turn ON");
+        if (swLbl) swLbl.textContent = "OFF";
+        if (lockNote) {
+          lockNote.textContent = "";
+          lockNote.classList.add("hidden");
+          lockNote.classList.remove("algo-lock-full");
+        }
         if (!isSim) nAvail += 1;
       } else {
         el.classList.add("pipe-locked");
-        el.setAttribute("aria-pressed", "false");
+        el.setAttribute("aria-checked", "false");
         el.setAttribute("aria-disabled", "true");
         const miss = formatMissingText(missingPrereqs(c));
-        el.setAttribute("title", "Locked — requires: " + (miss || "prerequisites"));
+        el.setAttribute("title", "Disabled — requires: " + (miss || "prerequisites"));
+        if (swLbl) swLbl.textContent = "DISABLED";
+        if (lockNote) {
+          lockNote.textContent = "\u2298 Disabled \u2014 needs " + (miss || "prerequisites");
+          lockNote.classList.remove("hidden");
+          lockNote.classList.add("algo-lock-full");
+        }
         if (!isSim) nLocked += 1;
       }
     });
@@ -415,8 +622,7 @@
       const stagePills = DEFAULT_STAGES.filter((s) => activeStages.has(s)).map(
         (s) => `<span class="algo-prof-tag algo-prof-stage">${STAGE_LABELS[s] || s}</span>`
       );
-      const choicePills = pipeCards
-        .map((el) => el.getAttribute("data-pipe-code") || "")
+      const choicePills = allOrderedCodes
         .filter((c) => selectedCodes.has(c))
         .map((c) => {
           const r = (pipeGraph[c] || {}).role || "loop_operation";
@@ -427,6 +633,92 @@
         (stagePills.length || choicePills.length
           ? stagePills.concat(choicePills).join("")
           : '<span class="muted">None selected</span>');
+    }
+
+    if (pipeGuidance) {
+      const hasEof = selectedCodes.has("EOF/BASE");
+      const hasAr = selectedCodes.has("PF/AR");
+      const hasSlGlob = selectedCodes.has("SL/GLOBAL");
+      const hasSlClust = selectedCodes.has("SL/CLUST");
+      const hasMopt = selectedCodes.has("MOPT");
+      const hasRot = selectedCodes.has("CMODES/ROT");
+      const hasNotch = selectedCodes.has("CMODES/NOTCH");
+      const hasMr = selectedCodes.has("DM/MR");
+      const hasPresh = selectedCodes.has("PRESH/4K");
+      const hasSlow = selectedCodes.has("WFS/SLOW");
+      const hasUnmod = selectedCodes.has("WFS/UNMOD");
+
+      let coreTier = "None";
+      if (hasSlClust) coreTier = "Block-EOF + Cascaded Global & Clustered Self-Learning";
+      else if (hasSlGlob) coreTier = "Block-EOF + Cascaded Global Online Adaptive Filter";
+      else if (hasEof) coreTier = "Cross-Mode Block-EOF";
+      else if (hasAr) coreTier = "Per-Mode Diagonal AR(P)";
+      else if (hasMopt) coreTier = "Autotuned Leaky Integrator (MOPT)";
+      else if (selectedCodes.has("INT/MGAIN")) coreTier = "Power-Law Modal Integrator";
+      else if (selectedCodes.has("INT/LEAK")) coreTier = "Manual Uniform Leaky Integrator";
+
+      let innerTier = "Fixed modal basis (standard modalfilter)";
+      if (hasNotch) innerTier = "Decoupled Q-Rotation + 16-Mode AR(48) Notch (re-projected)";
+      else if (hasRot) innerTier = "Decoupled Noise-Whitened Q-Rotation inside modalfilter";
+
+      let dmTier = "Standard WFS-rate DM commands";
+      if (hasMr && hasPresh) dmTier = "Multi-Rate Pacer (user f_DM) -> DMch2disp -> Plate Pre-Shaper (f_presh >= f_DM)";
+      else if (hasMr) dmTier = "Multi-Rate Centered Linear-Ramp Pacer (mvalpacer @ user f_DM)";
+      else if (hasPresh) dmTier = "2-8 kHz DM Mechanical Anti-Vibration Pre-Shaper (modal & per-actuator)";
+
+      let rtCpu = "~22.6 us (1,255 modes baseline)";
+      if (hasSlClust || hasSlGlob) {
+        rtCpu = "~88.9 us @ 128 m (17.8% of 2 kHz) / ~113.9 us @ 256 m (22.8%)";
+      } else if (hasEof && hasRot) {
+        rtCpu = "~21.2 us @ 128 m (4.2% of 2 kHz)";
+      } else if (hasEof) {
+        rtCpu = "~18.8 us @ 128 m (applyEOFPF + modalfilter)";
+      }
+
+      const notes = [];
+      if (hasSlGlob || hasSlClust) {
+        notes.push(
+          "Cascaded on Fixed-Basis Block-EOF: Stein gates hold pure white-noise leakage to 1.43 nm (1.000x vs 18.35 nm standalone)."
+        );
+      }
+      if (hasRot && (hasEof || hasSlGlob || hasSlClust)) {
+        notes.push(
+          "Decoupled basis invariant: Q rotates strictly inside modalfilter (47.5 nm bumpless swaps vs 213-367 nm if rotating outer EOF/SL)."
+        );
+      }
+      if (hasMr && hasPresh) {
+        notes.push(
+          "Optimal DM order: smooth ramps at user hardware rate f_DM upstream of dmpreshaper cut pre-shaper stroke 18-40%, HF ripple -35%, plate band -40%, 0 clips (AO3k f_DM=1 kHz benchmark)."
+        );
+      } else if (hasSlow && !hasMr) {
+        notes.push(
+          "Tip: With WFS/SLOW (250-500 Hz), pair EOF/BASE + DM/MR (supplying hardware DM rate f_DM) to replace coarse ZOH steps with smooth linear ramps (0.000 fr added lag)."
+        );
+      } else if (hasSlow && !hasEof) {
+        notes.push(
+          "Warning: Slowing WFS to 250 Hz without predictive control causes integrator Strehl collapse (50.7% -> 38.6% at m=10)."
+        );
+      }
+      if (hasUnmod && hasEof && !hasSlClust) {
+        notes.push(
+          "Tip: Unmodulated 0 l/D PyWFS benefits strongly from Cascaded Clustered Self-Learning (SL/GLOBAL + SL/CLUST: -36.4% WFE)."
+        );
+      }
+
+      const noteHtml = notes.length
+        ? '<div class="algo-guid-notes">' +
+          notes.map((n) => `<span class="algo-guid-note">${n}</span>`).join("") +
+          "</div>"
+        : "";
+
+      pipeGuidance.innerHTML =
+        '<div class="algo-guid-row">' +
+        `<span><strong>Core Control:</strong> ${coreTier}</span>` +
+        `<span><strong>Inner Modes:</strong> ${innerTier}</span>` +
+        `<span><strong>DM Actuation:</strong> ${dmTier}</span>` +
+        `<span><strong>Est. RT CPU:</strong> ${rtCpu}</span>` +
+        "</div>" +
+        noteHtml;
     }
 
     const focus = hoveredCode;
@@ -459,14 +751,23 @@
         });
       }
 
-      pipeCards.forEach((el) => {
+      function widgetCodes(el) {
+        if (el.classList.contains("algo-pipe-select-card")) {
+          return (el.getAttribute("data-pipe-codes") || "").split(",").filter(Boolean);
+        }
         const c = el.getAttribute("data-pipe-code") || "";
-        if (c === focus) el.classList.add("pipe-focus");
-        else if (exclSet.has(c)) el.classList.add("pipe-excl");
-        else if (upReq.has(c)) el.classList.add("pipe-up");
-        else if (downSet.has(c)) el.classList.add("pipe-down");
-        else if (fbSet.has(c)) el.classList.add("pipe-fb");
-        else if (upOpt.has(c) || downOpt.has(c)) el.classList.add("pipe-opt");
+        return c ? [c] : [];
+      }
+
+      allPipeWidgets.forEach((el) => {
+        const codes = widgetCodes(el);
+        const hasAny = (set) => codes.some((c) => set.has(c));
+        if (codes.indexOf(focus) !== -1) el.classList.add("pipe-focus");
+        else if (hasAny(upReq)) el.classList.add("pipe-up");
+        else if (hasAny(downSet)) el.classList.add("pipe-down");
+        else if (hasAny(fbSet)) el.classList.add("pipe-fb");
+        else if (hasAny(exclSet)) el.classList.add("pipe-excl");
+        else if (hasAny(upOpt) || hasAny(downOpt)) el.classList.add("pipe-opt");
         else el.classList.add("pipe-dim");
       });
 
@@ -476,10 +777,8 @@
           !selectedCodes.has(focus) && (miss.stages.length || miss.reqs.length)
             ? " &middot; <strong>Locked (needs: " + formatMissingText(miss) + ")</strong>"
             : selectedCodes.has(focus)
-            ? node.radio_group
-              ? " &middot; <strong>Active</strong>"
-              : " &middot; <strong>Selected</strong> (click to turn off)"
-            : " &middot; <strong>Selectable</strong> (click to enable)";
+            ? " &middot; <strong>Active</strong>"
+            : " &middot; <strong>Available</strong>";
         const exclStr = exclSet.size
           ? " &middot; Exclusive: <strong>" + Array.from(exclSet).join(", ") + "</strong>"
           : "";
@@ -502,10 +801,58 @@
       const noteHtml = lastNotice ? ` &middot; <strong>${lastNotice}</strong>` : "";
       pipeStatus.innerHTML =
         `<span>Stages: <strong>${stStr}</strong> &middot; ` +
-        `Choices: <strong>${nSel} selected</strong>, ` +
-        `<strong>${nAvail} selectable</strong>, ` +
-        `<strong>${nLocked} locked</strong>${noteHtml}</span>`;
+        `Controls: <strong>${nSel} active</strong>, ` +
+        `<strong>${nAvail} available</strong>, ` +
+        `<strong>${nLocked} disabled</strong>${noteHtml}</span>`;
     }
+  }
+
+  function applySelectGroup(card, valStr) {
+    const groupCodes = (card.getAttribute("data-pipe-codes") || "")
+      .split(",")
+      .filter(Boolean);
+    const labelEl = card.querySelector(".algo-select-lbl");
+    const groupLbl = labelEl ? labelEl.textContent.trim() : "Choice";
+    activePreset = null;
+
+    if (valStr && !isOptionSelectable(valStr, groupCodes)) {
+      const miss = formatMissingText(optionMissing(valStr, groupCodes));
+      lastNotice = `${valStr} is locked — enable ${miss} first.`;
+      renderPipeline();
+      return;
+    }
+
+    const before = new Set(selectedCodes);
+    groupCodes.forEach((gc) => selectedCodes.delete(gc));
+    const added = [];
+    if (valStr) {
+      valStr
+        .split("+")
+        .filter(Boolean)
+        .forEach((code) => {
+          const excls = ((pipeGraph[code] || {}).excl || []).filter((x) => x !== code);
+          excls.forEach((x) => selectedCodes.delete(x));
+          selectedCodes.add(code);
+          added.push(code);
+        });
+    }
+    pruneInvalidSelections();
+
+    let cascaded = 0;
+    before.forEach((c) => {
+      if (!selectedCodes.has(c) && groupCodes.indexOf(c) === -1) cascaded += 1;
+    });
+    if (!valStr) {
+      lastNotice =
+        cascaded > 0
+          ? `Turned off ${groupLbl} (and ${cascaded} dependent option${cascaded === 1 ? "" : "s"}).`
+          : `Turned off ${groupLbl}.`;
+    } else {
+      lastNotice =
+        `Set ${groupLbl} → ${added.join(" + ")}` +
+        (cascaded > 0 ? ` (turned off ${cascaded} incompatible/dependent).` : ".");
+    }
+    renderPipeline();
   }
 
   function toggleCode(code) {
@@ -513,18 +860,13 @@
     if (!node) return;
     activePreset = null;
     if (selectedCodes.has(code)) {
-      if (node.radio_group) {
-        lastNotice = `${code} is active — click its paired option to switch.`;
-        renderPipeline();
-        return;
-      }
       const before = selectedCodes.size;
       selectedCodes.delete(code);
       pruneInvalidSelections();
       const dropped = before - selectedCodes.size - 1;
       lastNotice =
         dropped > 0
-          ? `Turned off ${code} (and ${dropped} dependent choice${dropped === 1 ? "" : "s"}).`
+          ? `Turned off ${code} (and ${dropped} dependent option${dropped === 1 ? "" : "s"}).`
           : `Turned off ${code}.`;
     } else if (!isSelectable(code)) {
       const miss = formatMissingText(missingPrereqs(code));
@@ -540,10 +882,10 @@
       const cascaded = Math.max(0, before - conflicts.length + 1 - selectedCodes.size);
       if (conflicts.length) {
         lastNotice =
-          `Selected ${code} — switched off ${conflicts.join(", ")}` +
+          `Enabled ${code} — switched off ${conflicts.join(", ")}` +
           (cascaded > 0 ? ` (+${cascaded} dependent).` : ".");
       } else {
-        lastNotice = `Selected ${code}.`;
+        lastNotice = `Enabled ${code}.`;
       }
     }
     renderPipeline();
@@ -598,7 +940,26 @@
     });
   });
 
-  pipeCards.forEach((el) => {
+  selectCards.forEach((card) => {
+    const sel = card.querySelector("select.algo-ctrl-select");
+    card.addEventListener("mouseenter", () => {
+      hoveredCode = activeCodeForSelectCard(card) || null;
+      renderPipeline();
+    });
+    card.addEventListener("mouseleave", () => {
+      hoveredCode = null;
+      renderPipeline();
+    });
+    if (sel) {
+      sel.addEventListener("change", () => {
+        applySelectGroup(card, sel.value || "");
+        hoveredCode = activeCodeForSelectCard(card) || null;
+        renderPipeline();
+      });
+    }
+  });
+
+  toggleCards.forEach((el) => {
     const code = el.getAttribute("data-pipe-code") || "";
     el.addEventListener("mouseenter", () => {
       hoveredCode = code;
@@ -622,21 +983,21 @@
     });
   });
 
-  document.querySelectorAll("[data-pipe-preset]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const pid = btn.getAttribute("data-pipe-preset") || "";
+  const pipePresetSelect = document.getElementById("algo-pipe-preset-select");
+  if (pipePresetSelect) {
+    pipePresetSelect.addEventListener("change", () => {
+      const pid = pipePresetSelect.value || "";
       if (pid) applyPreset(pid);
     });
-  });
+  }
 
-  document.querySelectorAll("[data-pipe-depth]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("[data-pipe-depth]").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      scopeDepth = btn.getAttribute("data-pipe-depth") || "direct";
+  const pipeDepthSelect = document.getElementById("algo-pipe-depth-select");
+  if (pipeDepthSelect) {
+    pipeDepthSelect.addEventListener("change", () => {
+      scopeDepth = pipeDepthSelect.value || "direct";
       renderPipeline();
     });
-  });
+  }
 
   const pipeResetBtn = document.getElementById("algo-pipe-reset");
   if (pipeResetBtn) {
