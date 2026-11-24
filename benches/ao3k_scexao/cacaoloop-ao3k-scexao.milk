@@ -144,6 +144,14 @@ PF_REGIME_KMAX="${CACAO_PF_REGIME_KMAX:-0}"
 PF_REGIME_KAPPA="${CACAO_PF_REGIME_KAPPA:-0.10}"
 PF_REGIME_BW="${CACAO_PF_REGIME_BW:-3.0}"
 PF_REGIME_RLIM="${CACAO_PF_REGIME_RLIM:-4.0}"
+PF_MR_ENABLE="${CACAO_PF_MR_ENABLE:-OFF}"
+PF_MR_SUBSTEPS="${CACAO_PF_MR_SUBSTEPS:-1}"
+PF_MR_VELGAIN="${CACAO_PF_MR_VELGAIN:-1.0}"
+PF_MR_VEL_REG_MULT="${CACAO_PF_MR_VEL_REG_MULT:-3.5}"
+PF_MR_PACER_OUT="${CACAO_PF_MR_PACER_OUT:-OFF}"
+WFS_DARK_ADU="${CACAO_WFS_DARK_ADU:-0.0}"
+WFS_DARKSUB="${CACAO_WFS_DARKSUB:-OFF}"
+WFS_NORMFLOOR="${CACAO_WFS_NORMFLOOR:-1.0}"
 
 if [[ "${PF_MODE}" == "eof" ]]; then
     PF_MK_UNIT="mkEOFPF-${N}"
@@ -358,6 +366,9 @@ cmd_deploy() {
     append_extra_cacaovars
 
     ensure_stream_zeros wfsdark     "${WFSX}, ${WFSY}"
+    if [[ "${WFS_DARKSUB}" == "ON" ]]; then
+        @calc "s.${PFX}wfsdark = zeros(${WFSX}, ${WFSY}) + ${WFS_DARK_ADU}"
+    fi
     ensure_stream_zeros wfszpo      "${WFSX}, ${WFSY}"
     ensure_stream_zeros DMastrogrid "${DMX}, ${DMY}"
     if (( ! init_only )); then
@@ -463,8 +474,8 @@ EOF
     fpspipe.setparams <<EOF
 acquWFS-${N}.AOloopindex              = ${N}
 acquWFS-${N}.insname                  = ${PFX}wfsim
-acquWFS-${N}.WFSnormfloor             = 1.0
-acquWFS-${N}.comp.darksub             = OFF
+acquWFS-${N}.WFSnormfloor             = ${WFS_NORMFLOOR}
+acquWFS-${N}.comp.darksub             = ${WFS_DARKSUB}
 acquWFS-${N}.comp.WFSnormalize        = ON
 acquWFS-${N}.comp.WFSrefsub           = ON
 acquWFS-${N}.comp.WFSsigav            = ON
@@ -1292,8 +1303,8 @@ EOF
     milk-stream-wait -q -t 15 "${PFX}imWFS1+15"
     @get flux_post="f.acquWFS-${N}.out.fluxtotal"
     norm_scale="$(awk -v a="${flux_pre}" -v b="${flux_post}" \
-        -v nx="${WFSX}" -v ny="${WFSY}" 'BEGIN {
-            off = 1.0 * nx * ny
+        -v nx="${WFSX}" -v ny="${WFSY}" -v fl="${WFS_NORMFLOOR}" 'BEGIN {
+            off = fl * nx * ny
             da = a + off; db = b + off
             if (da > 0.0 && db > 0.0) printf "%.8f", da / db
             else printf "1.0"
@@ -1444,6 +1455,16 @@ cmd_pf_on() {
             ln -sfn "$(realpath "${PF_DMMODES}")" "${d_link}"
             milk-fps-set -q "${PF_MK_UNIT}.dmmodes=../conf/pf_dmmodes.fits"
         fi
+        if [[ "${PF_MR_ENABLE}" == "ON" ]]; then
+            milk-fps-set -q \
+                "${PF_MK_UNIT}.mr_enable=ON" \
+                "${PF_MK_UNIT}.mr_vel_reg_mult=${PF_MR_VEL_REG_MULT}" \
+                "${PF_APP_UNIT}.mr_enable=ON" \
+                "mfilt-${N}.PF.mr_substeps=${PF_MR_SUBSTEPS}" \
+                "mfilt-${N}.PF.mr_velgain=${PF_MR_VELGAIN}" \
+                "mfilt-${N}.PF.mr_pacer_out=${PF_MR_PACER_OUT}" \
+                "mfilt-${N}.PF.mr_enable=ON"
+        fi
     fi
     if [[ -n "${PF_MAXNORM2}" ]]; then
         milk-fps-set -q "${PF_MK_UNIT}.maxnorm2=${PF_MAXNORM2}"
@@ -1454,14 +1475,22 @@ cmd_pf_on() {
     if [[ "${PF_MODE}" == "eof" ]]; then
         OPENBLAS_NUM_THREADS="${PF_MKTHREADS}" OMP_NUM_THREADS="${PF_MKTHREADS}" \
             milk-fps-runstart -q "${PF_MK_UNIT}"
-        milk-stream-wait -q -t 15 "${PFX}${PF_MAT_SFX}"
+        if [[ "${PF_MR_ENABLE}" == "ON" ]]; then
+            milk-stream-wait -q -t 15 "${PFX}${PF_MAT_SFX}" "${PFX}${PF_MAT_SFX}_vel"
+        else
+            milk-stream-wait -q -t 15 "${PFX}${PF_MAT_SFX}"
+        fi
         OMP_NUM_THREADS="${PF_NTHREADS}" milk-fps-runstart -q "${PF_APP_UNIT}"
     else
         milk-fps-runstart -q "${PF_MK_UNIT}"
         milk-stream-wait -q -t 15 "${PFX}${PF_MAT_SFX}"
         milk-fps-runstart -q "${PF_APP_UNIT}"
     fi
-    milk-stream-wait -q -t 15 "${PFX}modevalPF"
+    if [[ "${PF_MODE}" == "eof" && "${PF_MR_ENABLE}" == "ON" ]]; then
+        milk-stream-wait -q -t 15 "${PFX}modevalPF" "${PFX}modevalPF_vel"
+    else
+        milk-stream-wait -q -t 15 "${PFX}modevalPF"
+    fi
     @set "f.mfilt-${N}.PF.enable=ON"
 }
 
