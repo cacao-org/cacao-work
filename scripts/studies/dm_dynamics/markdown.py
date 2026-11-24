@@ -214,7 +214,7 @@ While the SCExAO measurement video (`LepICSaBL-E`) displays the **1 ms consecuti
 
 Both halves advance in exact `50 μs` lockstep (`20 kHz`, synchronized at poke onset `t = 0.00 ms`) for a `~1 μm` peak surface poke at actuator `({meta['poke_x']}, {meta['poke_y']})`, processed with the exact **`1.0 ms` consecutive-exposure boxcar difference** (`mean(t - 1 ms .. t) - mean(t - 2 ms .. t - 1 ms)`) matching `LepICSaBL-E`:
 
-- **Left**: Actual SCExAO June 2024 laboratory measurement on the ALPAO 64×64 magnetic DM ([`LepICSaBL-E`](https://www.youtube.com/watch?v=LepICSaBL-E)).
+- **Left**: Actual SCExAO June 2024 laboratory measurement on the ALPAO 64×64 magnetic DM ([`LepICSaBL-E`](https://www.youtube.com/watch?v=LepICSaBL-E); top-row PyWFS camera panels horizontally mirrored to match the DM and `cacaosim` optical orientation).
 - **Right**: Compiled `cacaosim` simulation (`cacaosim-dm-poke-sim` with `dyn_mode = "plate"`, `plate_drive = "{meta['plate_drive']}"`, `rim_bc = "{meta['rim_bc']}"`, `f0 = {meta['f0_hz']:.0f} Hz`, `wave_c = {meta['wave_c_ms']:.1f} m/s`, `bend_beta = {meta['bend_beta_m2s']:.4f} m²/s`, `damp_g0 = {meta['damp_g0']:.0f} s⁻¹`, `damp_g2 = {meta['damp_g2']:.1f}`, `tau = {meta['tau_us']:.0f} μs`, `plate_nsub = {meta['plate_nsub']}`).
 - **Rows & Columns**: Top row = 4-pupil NIR Pyramid WFS `1 ms` exposure diff · Bottom row = DM surface shape `1 ms` exposure diff · Left = Linear `1×` (`±{ripple_metrics['lim_1x_dm_surf_nm']:.0f} nm`, saturating the `~1 μm` poke tip just like `LepICSaBL-E`) · Center = Linear `50×` (`±{ripple_metrics['lim_50x_dm_surf_nm']:.2f} nm`) · Right = Per-frame Autoscale.
 

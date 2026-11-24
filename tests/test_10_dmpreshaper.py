@@ -358,6 +358,8 @@ cacaosim-bench teardown --workdir "{work_dir}" --no-view >/dev/null
             khdr = hdul[0].header
             assert int(khdr["KMODE"]) == 0
             assert int(khdr["NBIN"]) == 8
+            assert int(khdr["DECONV"]) == 1
+            assert int(khdr["ENRGWGT"]) == 1
             p_fwd = hdul["P_FWD"].data.reshape(8, -1).astype(np.float64)
             p_pinv = hdul["P_PINV"].data.reshape(8, -1).astype(np.float64)
             ortho_err = float(np.max(np.abs(p_pinv @ p_fwd.T - np.eye(8))))
@@ -421,9 +423,10 @@ cacaosim-bench teardown --workdir "{work_dir}" --no-view >/dev/null
             f"Ringing RMS: {ring_raw*100:.2f}% -> {ring_sh*100:.2f}% ({ring_raw/max(ring_sh,1e-9):.2f}x) | "
             f"Peak cross-talk: {off_raw_pk:.4f} -> {off_sh_pk:.4f} ({off_raw_pk/max(off_sh_pk,1e-9):.2f}x)"
         )
-        assert t50_sh <= t50_raw + 0.30, f"Pre-shaper added excess rise lag: {t50_raw:.2f} -> {t50_sh:.2f} ms"
+        # Posicast zero-vibration shaping on an f0 = 650 Hz plate adds <= T0/4 (~0.385 ms) rise shift
+        assert t50_sh <= t50_raw + 0.42, f"Pre-shaper added excess rise lag: {t50_raw:.2f} -> {t50_sh:.2f} ms"
         assert ov_sh < ov_raw * 0.45, f"Overshoot not suppressed enough: {ov_raw:.2f}% -> {ov_sh:.2f}%"
-        assert ring_sh < ring_raw * 0.40, f"Ringing not suppressed enough: {ring_raw:.4f} -> {ring_sh:.4f}"
+        assert ring_sh < ring_raw * 0.25, f"Ringing not suppressed enough: {ring_raw:.4f} -> {ring_sh:.4f}"
         assert off_sh_pk < off_raw_pk * 0.55, (
             f"Cross-mode wave coupling not suppressed: {off_raw_pk:.4f} -> {off_sh_pk:.4f}"
         )
@@ -629,5 +632,421 @@ cacaosim-bench teardown --workdir "{work_dir}" --no-view >/dev/null
             f"Uniform 4 kHz pre-shaper ringing not suppressed: {ring_raw:.4f} -> {ring_sh:.4f}"
         )
         assert ov_sh < ov_raw * 0.78, f"Uniform 4 kHz pre-shaper overshoot: {ov_raw:.2f}% -> {ov_sh:.2f}%"
+    finally:
+        _cleanup_sandbox(env, shm_dir, work_dir)
+
+
+def _build_zonal_disk_modes(nact: int = 12, r_max: float = 4.7) -> tuple[np.ndarray, list[tuple[int, int]]]:
+    """Build single-actuator zonal poke basis covering interior + free-rim pupil actuators."""
+    ctr = 0.5 * (nact - 1)
+    coords: list[tuple[int, int]] = []
+    for iy in range(nact):
+        for ix in range(nact):
+            if math.hypot(ix - ctr, iy - ctr) <= r_max:
+                coords.append((ix, iy))
+    cube = np.zeros((len(coords), nact, nact), dtype=np.float32)
+    for m, (ix, iy) in enumerate(coords):
+        cube[m, iy, ix] = 1.0
+    return cube, coords
+
+
+def test_preshaper_per_actuator_siso_and_local_stencil_mimo_hil(tmp_path: Path) -> None:
+    """Live GPU HIL validation of per-actuator KMODE=3 (SISO) and KMODE=4 (local-stencil MIMO)."""
+    env, shm_dir, work_dir = _sandbox_env(tmp_path, "peract")
+    raw_dir = work_dir / "cal"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    bench_file = work_dir / "plate12.bench"
+    bench_file.write_text(PLATE12_PRESHAPER_BENCH, encoding="utf-8")
+
+    zonal_cube, coords = _build_zonal_disk_modes(12, r_max=4.7)
+    coord_to_idx = {xy: i for i, xy in enumerate(coords)}
+    # Four probes spanning interior + mid-pupil + east/north free-rim edges
+    probe_coords = [(5, 5), (3, 4), (10, 5), (5, 10)]
+    for xy in probe_coords:
+        assert xy in coord_to_idx, f"Probe actuator {xy} not in active zonal disk"
+    probe_indices = [coord_to_idx[xy] for xy in probe_coords]
+
+    probe_cube = np.zeros((len(probe_coords), 12, 12), dtype=np.float32)
+    for j, (ix, iy) in enumerate(probe_coords):
+        probe_cube[j, iy, ix] = 1.0
+
+    fits.writeto(raw_dir / "poke_zonal.fits", zonal_cube, overwrite=True)
+    fits.writeto(raw_dir / "poke_probe4.fits", probe_cube, overwrite=True)
+
+    py = env.get("PYTHON_BIN") or shutil.which("python3") or "python3"
+    script = f"""
+set -euo pipefail
+source "{REPO_ROOT}/env.sh"
+export MILK_SHM_DIR="{shm_dir}"
+export MILK_PROC_DIR="{shm_dir}/proc"
+export CACAOSIM_WORKDIR="{work_dir}"
+
+cleanup() {{
+    milk-fps-runstop -q dmps_pa >/dev/null 2>&1 || true
+    milk-fps-rm -f -q mdr_z cps_k3 cps_k3f cps_k4 cps_k4f dmps_pa mdr_p >/dev/null 2>&1 || true
+    cacaosim-bench teardown --workdir "{work_dir}" --no-view >/dev/null 2>&1 || true
+}}
+trap cleanup EXIT
+
+cacaosim-bench deploy --workdir "{work_dir}" --config "{bench_file}" --mode fused --no-view >/dev/null
+milk-stream-wait -q -t 20 csim_wfs:48x48 dm01disp:12x12
+cd "{raw_dir}"
+
+milk-fpsexec-iofits-saveFITS --no-procinfo -n snapwfs exec csim_wfs "!wfs_snap.fits" >/dev/null
+"{py}" - <<'PY'
+import numpy as np
+from astropy.io import fits
+wfs = fits.getdata("wfs_snap.fits").astype(np.float32)
+sig = wfs - float(np.percentile(wfs, 5.0))
+fits.writeto("wfsmask.fits", (sig > 0.20 * float(sig.max())).astype(np.float32), overwrite=True)
+fits.writeto("zero12.fits", np.zeros((12, 12), dtype=np.float32), overwrite=True)
+PY
+milk-FITS2shm --no-procinfo -n ldcmd exec zero12.fits @S:dm01cmd >/dev/null
+
+# 1. Measure baseline unshaped zonal 3D RM across all {len(coords)} active pupil actuators
+milk-fps-init -q mdr_z cacao-fpsexec-cacaoac-measdynresp >/dev/null
+milk-fps-set -q \\
+    mdr_z.streamin=dm01disp \\
+    mdr_z.streamout=csim_wfs \\
+    mdr_z.inmodes=poke_zonal.fits \\
+    mdr_z.outcube=resp3D_zonal_raw.fits \\
+    mdr_z.outmask=wfsmask.fits \\
+    mdr_z.ampl=0.04 \\
+    mdr_z.timing.WFSfrequ=0.0 \\
+    mdr_z.timing.frameratewait=0.25 \\
+    mdr_z.timing.NBsubfr=4 \\
+    mdr_z.timing.NBrespfr=14 \\
+    mdr_z.timing.NBprefr=2 \\
+    mdr_z.timing.NBsettlefr=2 \\
+    mdr_z.timing.NBcycle=1 \\
+    mdr_z.pokemode=1 \\
+    mdr_z.phaseorder=0 \\
+    mdr_z.procinfo.loopcntMax=1
+milk-fps-runstart -q mdr_z
+milk-fps-wait -q -t 90 mdr_z
+milk-fps-rm -f -q mdr_z
+
+# 2. Synthesize KMODE=3 (per-actuator SISO) with fill_uncal OFF and ON
+milk-fps-init -q cps_k3 cacao-fpsexec-cacaocc-compdmpreshaper >/dev/null
+milk-fps-set -q \\
+    cps_k3.resp3d=resp3D_zonal_raw.fits \\
+    cps_k3.inmodes=poke_zonal.fits \\
+    cps_k3.outkernel=dm_ps_k3.fits \\
+    cps_k3.mode=3 \\
+    cps_k3.fill_uncal=OFF \\
+    cps_k3.n_taps=22 \\
+    cps_k3.tau_target_us=100.0 \\
+    cps_k3.lambda_ctrl=0.015 \\
+    cps_k3.lambda_diff=0.015 \\
+    cps_k3.max_gain=2.5 \\
+    cps_k3.procinfo.loopcntMax=1
+milk-fps-runstart -q cps_k3
+milk-fps-wait -q -t 30 cps_k3
+milk-fps-rm -f -q cps_k3
+
+milk-fps-init -q cps_k3f cacao-fpsexec-cacaocc-compdmpreshaper >/dev/null
+milk-fps-set -q \\
+    cps_k3f.resp3d=resp3D_zonal_raw.fits \\
+    cps_k3f.inmodes=poke_zonal.fits \\
+    cps_k3f.outkernel=dm_ps_k3_fill.fits \\
+    cps_k3f.mode=3 \\
+    cps_k3f.fill_uncal=ON \\
+    cps_k3f.n_taps=22 \\
+    cps_k3f.tau_target_us=100.0 \\
+    cps_k3f.lambda_ctrl=0.015 \\
+    cps_k3f.lambda_diff=0.015 \\
+    cps_k3f.max_gain=2.5 \\
+    cps_k3f.procinfo.loopcntMax=1
+milk-fps-runstart -q cps_k3f
+milk-fps-wait -q -t 30 cps_k3f
+milk-fps-rm -f -q cps_k3f
+
+# 3. Synthesize KMODE=4 (per-actuator local-stencil MIMO, R=2 -> 5x5) with fill_uncal OFF and ON
+milk-fps-init -q cps_k4 cacao-fpsexec-cacaocc-compdmpreshaper >/dev/null
+milk-fps-set -q \\
+    cps_k4.resp3d=resp3D_zonal_raw.fits \\
+    cps_k4.inmodes=poke_zonal.fits \\
+    cps_k4.outkernel=dm_ps_k4.fits \\
+    cps_k4.mode=4 \\
+    cps_k4.stencil_rad=2 \\
+    cps_k4.fill_uncal=OFF \\
+    cps_k4.n_taps=22 \\
+    cps_k4.tau_target_us=100.0 \\
+    cps_k4.lambda_ctrl=0.015 \\
+    cps_k4.lambda_diff=0.015 \\
+    cps_k4.max_gain=2.5 \\
+    cps_k4.procinfo.loopcntMax=1
+milk-fps-runstart -q cps_k4
+milk-fps-wait -q -t 45 cps_k4
+milk-fps-rm -f -q cps_k4
+
+milk-fps-init -q cps_k4f cacao-fpsexec-cacaocc-compdmpreshaper >/dev/null
+milk-fps-set -q \\
+    cps_k4f.resp3d=resp3D_zonal_raw.fits \\
+    cps_k4f.inmodes=poke_zonal.fits \\
+    cps_k4f.outkernel=dm_ps_k4_fill.fits \\
+    cps_k4f.mode=4 \\
+    cps_k4f.stencil_rad=2 \\
+    cps_k4f.fill_uncal=ON \\
+    cps_k4f.n_taps=22 \\
+    cps_k4f.tau_target_us=100.0 \\
+    cps_k4f.lambda_ctrl=0.015 \\
+    cps_k4f.lambda_diff=0.015 \\
+    cps_k4f.max_gain=2.5 \\
+    cps_k4f.procinfo.loopcntMax=1
+milk-fps-runstart -q cps_k4f
+milk-fps-wait -q -t 45 cps_k4f
+milk-fps-rm -f -q cps_k4f
+
+run_pass2() {{
+    local kern="$1"
+    local rate="$2"
+    local outcube="$3"
+    local infofile="$4"
+    milk-fps-init -q dmps_pa cacao-fpsexec-dmpreshaper >/dev/null
+    milk-fps-set -q \\
+        dmps_pa.streamin=dm01cmd \\
+        dmps_pa.streamout=dm01disp \\
+        dmps_pa.kernelfile="${{kern}}" \\
+        dmps_pa.rate_hz="${{rate}}" \\
+        dmps_pa.freerun=OFF \\
+        dmps_pa.enable=ON \\
+        dmps_pa.gain=1.0 \\
+        dmps_pa.procinfo.loopcntMax=-1
+    milk-fps-runstart -q dmps_pa
+    sleep 0.15
+
+    milk-fps-init -q mdr_p cacao-fpsexec-cacaoac-measdynresp >/dev/null
+    milk-fps-set -q \\
+        mdr_p.streamin=dm01cmd \\
+        mdr_p.streamout=csim_wfs \\
+        mdr_p.inmodes=poke_probe4.fits \\
+        mdr_p.outcube="${{outcube}}" \\
+        mdr_p.outmask=wfsmask.fits \\
+        mdr_p.ampl=0.04 \\
+        mdr_p.timing.WFSfrequ=0.0 \\
+        mdr_p.timing.frameratewait=0.25 \\
+        mdr_p.timing.NBsubfr=4 \\
+        mdr_p.timing.NBrespfr=14 \\
+        mdr_p.timing.NBprefr=2 \\
+        mdr_p.timing.NBsettlefr=2 \\
+        mdr_p.timing.NBcycle=1 \\
+        mdr_p.pokemode=1 \\
+        mdr_p.phaseorder=0 \\
+        mdr_p.procinfo.loopcntMax=1
+    milk-fps-runstart -q mdr_p
+    milk-fps-wait -q -t 40 mdr_p
+    milk-fps-rm -f -q mdr_p
+
+    milk-fps-info dmps_pa > "${{infofile}}"
+    milk-fps-runstop -q dmps_pa
+    milk-fps-wait -q -t 10 dmps_pa
+    milk-fps-rm -f -q dmps_pa
+}}
+
+# 4. Live GPU Pass-2 probes for KMODE=3 (2 kHz), KMODE=4 (2 kHz), and KMODE=4 resampled (4 kHz)
+run_pass2 dm_ps_k3.fits 0.0 resp3D_k3.fits info_k3.txt
+run_pass2 dm_ps_k4.fits 0.0 resp3D_k4.fits info_k4.txt
+run_pass2 dm_ps_k4.fits 4000.0 resp3D_k4_4k.fits info_k4_4k.txt
+
+cacaosim-bench teardown --workdir "{work_dir}" --no-view >/dev/null
+"""
+    try:
+        res = _run_bash(script, env=env, timeout=240.0)
+        assert res.returncode == 0, f"STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+
+        # 1. Verify KMODE=3 FITS structure, spatial non-uniformity & fill_uncal
+        with fits.open(raw_dir / "dm_ps_k3.fits") as hdul:
+            assert len(hdul) == 1
+            h3 = hdul[0].header
+            assert int(h3["KMODE"]) == 3
+            assert int(h3["DECONV"]) == 1
+            assert int(h3["ENRGWGT"]) == 1
+            k3 = hdul[0].data.astype(np.float64)  # [M_buf, 12, 12]
+            assert k3.shape[1:] == (12, 12)
+            assert float(np.max(np.abs(k3[:, 0, 0]))) == 0.0, "Uncalibrated corner not zero for fill_uncal=OFF"
+            k3_int = k3[:, 5, 5]
+            k3_rim = k3[:, 5, 10]
+            k3_diff_rel = float(np.linalg.norm(k3_rim - k3_int) / max(np.linalg.norm(k3_int), 1e-12))
+            assert k3_diff_rel > 0.05, f"KMODE=3 interior vs rim unexpectedly uniform (rel={k3_diff_rel:.4f})"
+
+        k3_fill = fits.getdata(raw_dir / "dm_ps_k3_fill.fits").astype(np.float64)
+        assert float(np.linalg.norm(k3_fill[:, 0, 0])) > 1.0e-3, "KMODE=3 fill_uncal=ON did not populate corner"
+
+        # 2. Verify KMODE=4 FITS structure, gather stencil geometry, rim asymmetry & fill_uncal
+        with fits.open(raw_dir / "dm_ps_k4.fits") as hdul:
+            assert len(hdul) == 1
+            h4 = hdul[0].header
+            assert int(h4["KMODE"]) == 4
+            assert int(h4["STNCLRAD"]) == 2
+            assert int(h4["STNCLNB"]) == 25
+            assert int(h4["DECONV"]) == 1
+            assert int(h4["ENRGWGT"]) == 1
+            k4 = hdul[0].data.astype(np.float64)  # [M_buf, 144, 25]
+            assert k4.shape[1:] == (144, 25)
+            # Corner (0, 0) uncalibrated -> exact zeros
+            assert float(np.max(np.abs(k4[:, 0, :]))) == 0.0, "KMODE=4 uncal corner not zero"
+            i_int = 5 * 12 + 5
+            i_rim = 5 * 12 + 10
+            # Center tap p = (dy+2)*5 + (dx+2) = 12; dx=-1 -> p=11; dx=+1 -> p=13
+            assert float(np.linalg.norm(k4[:, i_int, 11])) > 1.0e-3, "Interior stencil missing dx=-1 neighbor"
+            assert float(np.linalg.norm(k4[:, i_int, 13])) > 1.0e-3, "Interior stencil missing dx=+1 neighbor"
+            assert float(np.linalg.norm(k4[:, i_rim, 11])) > 1.0e-3, "East-rim stencil missing inward dx=-1"
+            assert float(np.max(np.abs(k4[:, i_rim, 13]))) == 0.0, "East-rim stencil should be 0 outside disk (dx=+1)"
+            k4_self_diff = float(
+                np.linalg.norm(k4[:, i_rim, 12] - k4[:, i_int, 12])
+                / max(np.linalg.norm(k4[:, i_int, 12]), 1e-12)
+            )
+            assert k4_self_diff > 0.05, f"KMODE=4 interior vs rim self-tap too uniform (rel={k4_self_diff:.4f})"
+
+        k4_fill = fits.getdata(raw_dir / "dm_ps_k4_fill.fits").astype(np.float64)
+        assert float(np.linalg.norm(k4_fill[:, 0, 12])) > 1.0e-3, "KMODE=4 fill_uncal=ON did not populate corner"
+
+        # Verify 2x resampled output rate on KMODE=4
+        eff_rate_4k = 0.0
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", (raw_dir / "info_k4_4k.txt").read_text(encoding="utf-8"))
+        for line in clean.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[1].lstrip(".") == "out.rate_hz":
+                eff_rate_4k = float(parts[3])
+        assert abs(eff_rate_4k - 4000.0) < 10.0, f"Expected 4000 Hz KMODE=4 rate, got {eff_rate_4k}"
+
+        # 3. Project raw & all 3 Pass-2 probes onto the FULL calibrated zonal actuator space
+        r_raw = fits.getdata(raw_dir / "resp3D_zonal_raw.fits").astype(np.float64)
+        h_raw = fits.getheader(raw_dir / "resp3D_zonal_raw.fits")
+        stat_raw = fits.getdata(raw_dir / "resp3D_zonal_raw_static.fits").astype(np.float64)  # [N_act, N_wfs]
+        u, s, vt = np.linalg.svd(stat_raw, full_matrices=False)
+        c_pinv_all = (u * np.where(s > 1e-3 * s[0], 1.0 / s, 0.0)[None, :]) @ vt  # [N_act, N_wfs]
+
+        dt_ms = float(h_raw["DT_SEC"]) * 1.0e3
+        i_ring = int(round(3.5 / dt_ms))
+        q0_raw = int(h_raw["Q0_BIN"])
+
+        # Extract the 4 probe columns from baseline raw 3D RM
+        m_raw_4 = np.einsum("ap,tjp->taj", c_pinv_all, r_raw[q0_raw:, probe_indices, :], optimize=True)
+        stat_raw_4 = stat_raw[probe_indices]
+
+        def _eval_pass2(cube_name: str, stat_name: str) -> dict[str, float]:
+            rc = fits.getdata(raw_dir / cube_name).astype(np.float64)
+            hc = fits.getheader(raw_dir / cube_name)
+            st = fits.getdata(raw_dir / stat_name).astype(np.float64)
+            dc_err = float(np.linalg.norm(st - stat_raw_4) / np.linalg.norm(stat_raw_4))
+            rc_post = rc[int(hc["Q0_BIN"]) :, :, :]
+            mc = np.einsum("ap,tjp->taj", c_pinv_all, rc_post, optimize=True)
+            # Oblique self-actuator curves [L, 4] and matched-filter WFS self-response [L, 4]
+            self_curves = np.stack([mc[:, probe_indices[j], j] for j in range(len(probe_indices))], axis=1)
+            mf_curves = np.stack(
+                [
+                    (rc_post[:, j, :] @ stat_raw_4[j]) / max(float(np.dot(stat_raw_4[j], stat_raw_4[j])), 1e-18)
+                    for j in range(len(probe_indices))
+                ],
+                axis=1,
+            )
+            ov_mean = float(np.mean((self_curves.max(axis=0) - 1.0) * 100.0))
+            ov_int = float(np.mean((self_curves[:, :2].max(axis=0) - 1.0) * 100.0))
+            ov_rim = float(np.mean((self_curves[:, 2:].max(axis=0) - 1.0) * 100.0))
+            ring_mean = float(np.sqrt(np.mean((self_curves[i_ring:] - 1.0) ** 2)))
+            ring_rim = float(np.sqrt(np.mean((self_curves[i_ring:, 2:] - 1.0) ** 2)))
+            ring_mf = float(np.sqrt(np.mean((mf_curves[i_ring:] - 1.0) ** 2)))
+            ov_mf = float(np.mean((mf_curves.max(axis=0) - 1.0) * 100.0))
+
+            off_pks = []
+            off_rms = []
+            for j, m_idx in enumerate(probe_indices):
+                sub = mc[:, :, j].copy()
+                sub[:, m_idx] = 0.0
+                norms_t = np.linalg.norm(sub, axis=1)
+                off_pks.append(float(norms_t.max()))
+                off_rms.append(float(np.sqrt(np.mean(norms_t**2))))
+            return {
+                "dc_err": dc_err,
+                "ov": ov_mean,
+                "ov_int": ov_int,
+                "ov_rim": ov_rim,
+                "ring": ring_mean,
+                "ring_rim": ring_rim,
+                "ring_mf": ring_mf,
+                "ov_mf": ov_mf,
+                "off_pk": float(np.mean(off_pks)),
+                "off_rms": float(np.mean(off_rms)),
+            }
+
+        # Evaluate baseline raw on the exact same 4 probes
+        r_raw_post = r_raw[q0_raw:, probe_indices, :]
+        raw_self = np.stack([m_raw_4[:, probe_indices[j], j] for j in range(len(probe_indices))], axis=1)
+        raw_mf = np.stack(
+            [
+                (r_raw_post[:, j, :] @ stat_raw_4[j]) / max(float(np.dot(stat_raw_4[j], stat_raw_4[j])), 1e-18)
+                for j in range(len(probe_indices))
+            ],
+            axis=1,
+        )
+        raw_off_pks = []
+        raw_off_rms = []
+        for j, m_idx in enumerate(probe_indices):
+            sub = m_raw_4[:, :, j].copy()
+            sub[:, m_idx] = 0.0
+            norms_t = np.linalg.norm(sub, axis=1)
+            raw_off_pks.append(float(norms_t.max()))
+            raw_off_rms.append(float(np.sqrt(np.mean(norms_t**2))))
+        m_raw = {
+            "ov": float(np.mean((raw_self.max(axis=0) - 1.0) * 100.0)),
+            "ov_int": float(np.mean((raw_self[:, :2].max(axis=0) - 1.0) * 100.0)),
+            "ov_rim": float(np.mean((raw_self[:, 2:].max(axis=0) - 1.0) * 100.0)),
+            "ring": float(np.sqrt(np.mean((raw_self[i_ring:] - 1.0) ** 2))),
+            "ring_rim": float(np.sqrt(np.mean((raw_self[i_ring:, 2:] - 1.0) ** 2))),
+            "ring_mf": float(np.sqrt(np.mean((raw_mf[i_ring:] - 1.0) ** 2))),
+            "ov_mf": float(np.mean((raw_mf.max(axis=0) - 1.0) * 100.0)),
+            "off_pk": float(np.mean(raw_off_pks)),
+            "off_rms": float(np.mean(raw_off_rms)),
+        }
+        m_k3 = _eval_pass2("resp3D_k3.fits", "resp3D_k3_static.fits")
+        m_k4 = _eval_pass2("resp3D_k4.fits", "resp3D_k4_static.fits")
+        m_k4_4k = _eval_pass2("resp3D_k4_4k.fits", "resp3D_k4_4k_static.fits")
+
+        print(
+            f"\n[HIL Per-Actuator ({len(coords)} act, 4 probes: int+rim)] "
+            f"Spatial diff: K3={k3_diff_rel*100:.1f}%, K4_self={k4_self_diff*100:.1f}%\n"
+            f"  RAW       : Ov=+{m_raw['ov']:.2f}% (int +{m_raw['ov_int']:.2f}%, rim +{m_raw['ov_rim']:.2f}%) | "
+            f"Ring={m_raw['ring']*100:.2f}% (MF {m_raw['ring_mf']*100:.2f}%) | "
+            f"2D-Wave pk={m_raw['off_pk']:.4f}, rms={m_raw['off_rms']:.4f}\n"
+            f"  KMODE=3   : DC={m_k3['dc_err']*100:.2f}% | Ov=+{m_k3['ov']:.2f}% (rim +{m_k3['ov_rim']:.2f}%) | "
+            f"Ring={m_k3['ring']*100:.2f}% ({m_raw['ring']/max(m_k3['ring'],1e-9):.2f}x obliq, MF {m_raw['ring_mf']/max(m_k3['ring_mf'],1e-9):.2f}x) | "
+            f"2D-Wave pk={m_k3['off_pk']:.4f} ({m_raw['off_pk']/max(m_k3['off_pk'],1e-9):.2f}x), rms={m_k3['off_rms']:.4f}\n"
+            f"  KMODE=4 2k: DC={m_k4['dc_err']*100:.2f}% | Ov=+{m_k4['ov']:.2f}% (rim +{m_k4['ov_rim']:.2f}%) | "
+            f"Ring={m_k4['ring']*100:.2f}% ({m_raw['ring']/max(m_k4['ring'],1e-9):.2f}x) | "
+            f"2D-Wave pk={m_k4['off_pk']:.4f} ({m_raw['off_pk']/max(m_k4['off_pk'],1e-9):.2f}x), rms={m_k4['off_rms']:.4f}\n"
+            f"  KMODE=4 4k: DC={m_k4_4k['dc_err']*100:.2f}% | Ov=+{m_k4_4k['ov']:.2f}% (rim +{m_k4_4k['ov_rim']:.2f}%) | "
+            f"Ring={m_k4_4k['ring']*100:.2f}% ({m_raw['ring']/max(m_k4_4k['ring'],1e-9):.2f}x) | "
+            f"2D-Wave pk={m_k4_4k['off_pk']:.4f} ({m_raw['off_pk']/max(m_k4_4k['off_pk'],1e-9):.2f}x), rate={eff_rate_4k:.0f} Hz"
+        )
+
+        # Unity DC gain preserved across all modes & resampling rates
+        assert m_k3["dc_err"] < 0.025, f"KMODE=3 DC gain drifted: {m_k3['dc_err']:.4f}"
+        assert m_k4["dc_err"] < 0.025, f"KMODE=4 2k DC gain drifted: {m_k4['dc_err']:.4f}"
+        assert m_k4_4k["dc_err"] < 0.025, f"KMODE=4 4k DC gain drifted: {m_k4_4k['dc_err']:.4f}"
+
+        # Both KMODE=3 (matched-filter SISO) and KMODE=4 (full local-stencil MIMO) suppress ringing & overshoot
+        assert m_k3["ring_mf"] < m_raw["ring_mf"] * 0.68, (
+            f"KMODE=3 matched-filter ringing not suppressed: {m_raw['ring_mf']:.4f} -> {m_k3['ring_mf']:.4f}"
+        )
+        assert m_k3["ring"] < m_raw["ring"] * 0.75, f"KMODE=3 oblique ringing not suppressed: {m_raw['ring']:.4f} -> {m_k3['ring']:.4f}"
+        assert m_k3["ov"] < m_raw["ov"] * 0.78, f"KMODE=3 overshoot not suppressed: {m_raw['ov']:.2f}% -> {m_k3['ov']:.2f}%"
+        assert m_k4["ring"] < m_raw["ring"] * 0.45, f"KMODE=4 ringing not suppressed: {m_raw['ring']:.4f} -> {m_k4['ring']:.4f}"
+        assert m_k4["ov"] < m_raw["ov"] * 0.65, f"KMODE=4 overshoot not suppressed: {m_raw['ov']:.2f}% -> {m_k4['ov']:.2f}%"
+        assert m_k4_4k["ring"] < m_raw["ring"] * 0.50, f"KMODE=4 4k ringing not suppressed: {m_raw['ring']:.4f} -> {m_k4_4k['ring']:.4f}"
+
+        # KMODE=4 local-stencil MIMO must strictly beat BOTH raw AND KMODE=3 on 2D cross-actuator wave coupling!
+        assert m_k4["off_pk"] < m_raw["off_pk"] * 0.65, (
+            f"KMODE=4 2D wave coupling not cut vs raw: {m_raw['off_pk']:.4f} -> {m_k4['off_pk']:.4f}"
+        )
+        assert m_k4["off_rms"] < m_k3["off_rms"] * 0.80, (
+            f"KMODE=4 did not beat KMODE=3 on 2D cross-actuator wave RMS: "
+            f"K3={m_k3['off_rms']:.4f} vs K4={m_k4['off_rms']:.4f}"
+        )
+        assert m_k4_4k["off_rms"] < m_k3["off_rms"] * 0.85, (
+            f"KMODE=4 4k resampled did not beat KMODE=3 on 2D wave RMS: "
+            f"K3={m_k3['off_rms']:.4f} vs K4_4k={m_k4_4k['off_rms']:.4f}"
+        )
     finally:
         _cleanup_sandbox(env, shm_dir, work_dir)

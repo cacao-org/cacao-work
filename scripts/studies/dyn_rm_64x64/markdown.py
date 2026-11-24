@@ -239,16 +239,20 @@ To evaluate modal-space calibration directly applicable to CACAO's `modalfilter.
 
 ---
 
-## 5. Fixed-Exposure Boxcar Physics & Pre-Shaper Deconvolution Preview
+## 5. Fixed-Exposure Boxcar Physics & Two-Sided Finite-Support Toeplitz Inversion
 
-Because `cacaoac-measdynresp` preserves the **raw exposure-integrated** response `Y(τ) = (b₁ₘₛ * s)(τ)`, downstream calibration tools can cleanly separate the two use cases:
+Because `cacaoac-measdynresp` preserves the **raw exposure-integrated** response `Y(τ) = (b₁ₘₛ * s)(τ)`, downstream calibration tools separate cleanly into two regimes:
 
-1. **PSOL & Filtered-X EOF (Features 2 & 3)**: Consume raw `Y(τ)` directly — no deconvolution required, zero noise amplification near `1/T_exp` nulls.
-2. **High-Rate Command Pre-Shaper (Feature 1)**: Apply regularized Wiener deconvolution to `b₁ₘₛ` to recover the sharper instantaneous physical DM step response `s(t)` before synthesizing the schedule-ahead cancellation kernel `δK[0..M−1]`.
+1. **PSOL & Filtered-X EOF (Features 2 & 3)**: Consume raw `Y(τ)` directly — no deconvolution required.
+2. **Physical DM Step Recovery & High-Rate Pre-Shaper (Feature 1)**: Although a periodic Fourier transform of the `1.0 ms` exposure boxcar has a `sinc(f · T_exp) = 0` null right at `f = 1 kHz`, **we are not blind at `1 kHz`**. Because a physical DM step response is **time-limited** (`s(t) = 0` before causal onset and `s(t) → 1` after `T_max ≈ 14 ms`), no non-zero response can be `1 ms`-periodic: the tall two-sided Toeplitz boxcar matrix `B` (`80 × 51`) has **strictly zero null space** and a moderate condition number **`κ(B) = {deconv_info['toeplitz_cond_b']:.1f}`**.
 
-![Fixed 1 ms Exposure Transfer Function & Regularized Wiener Deconvolution Preview (1x2)](dm64_3drm_exposure_deconv_1x2.png)
+![Fixed 1 ms Exposure Transfer Function & Two-Sided Finite-Support Toeplitz Inversion (1x2)](dm64_3drm_exposure_deconv_1x2.png)
 
-Deconvolving the `1.0 ms` boxcar restores the higher instantaneous overshoot masked by camera integration: for `(22, 23)` the projected overshoot sharpens from **`+{deconv_info['raw_overshoot_m0_pct']:.1f}%` → `+{deconv_info['deconv_overshoot_m0_pct']:.1f}%`**, and for the free rim `(57, 31)` from **`+{deconv_info['raw_overshoot_m3_pct']:.1f}%` → `+{deconv_info['deconv_overshoot_m3_pct']:.1f}%`**, cleanly revealing the first millisecond dynamics needed for input shaping.
+Contrasting the **two-sided finite-support Toeplitz solver** directly against a naive periodic FFT Wiener filter on the live `1 kHz` PyWFS data:
+
+- **Full `f₀ = 1 kHz` resonance recovery**: While the raw `1 ms` PyWFS magnitude dips to `{deconv_info['raw_h1khz_m0']:.2f}` at `1 kHz` and periodic FFT deconvolution leaves a deep zero-notch, the two-sided finite-support Toeplitz solver cleanly recovers **`|H_phys(1 kHz)| = {deconv_info['toeplitz_h1khz_m0']:.2f}`** for `(22, 23)` and **`{deconv_info['toeplitz_h1khz_m3']:.2f}`** for the free rim `(57, 31)`.
+- **Causal, exact-DC physical step**: Unlike periodic FFT inversion (which introduces acausal pre-ringing before `1.0 ms` and artificially damps overshoot to `+{deconv_info['fft_wiener_overshoot_m0_pct']:.1f}%`), the two-sided Toeplitz solver stays strictly `0` before causal onset, settles cleanly to `1.000`, reproduces the measured `1 ms` PyWFS curve to **`{deconv_info['toeplitz_fit_rms_m0_pct']:.2f}%` RMS**, and restores the true underdamped plate overshoot (**`+{deconv_info['raw_overshoot_m0_pct']:.1f}%` → `+{deconv_info['deconv_overshoot_m0_pct']:.1f}%`** for `(22, 23)`, **`+{deconv_info['raw_overshoot_m3_pct']:.1f}%` → `+{deconv_info['deconv_overshoot_m3_pct']:.1f}%`** for the free rim).
+- **Direct time-domain pre-shaper synthesis (`cacao-fpsexec-cacaocc-compdmpreshaper`)**: Exploits the exact same finite-window time-domain Toeplitz structure directly (`S_raw * K ≈ b₁ₘₛ * s_target`, `∑ K = I`) to drive the asynchronous high-rate look-ahead pre-shaper (`cacao-fpsexec-dmpreshaper`) right across `f₀ = 1 kHz`.
 
 ---
 
@@ -298,6 +302,6 @@ milk-fps-runstart -q mdr && milk-fps-wait -q mdr
 - [dm64_3drm_zonal_contact_sheet.png](dm64_3drm_zonal_contact_sheet.png) — 4×6 multi-radius dynamic wave contact sheet
 - [dm64_3drm_radial_and_timing_2x2.png](dm64_3drm_radial_and_timing_2x2.png) — 2×2 radial step, Hovmöller wave, timing repeatability, and `measlinresp` static-parity diagnostics
 - [dm64_3drm_modal_28x28_2x2.png](dm64_3drm_modal_28x28_2x2.png) — 2×2 `28×28` Zernike modal dispersion, coupling heatmaps, and PSOL error comparison
-- [dm64_3drm_exposure_deconv_1x2.png](dm64_3drm_exposure_deconv_1x2.png) — Fixed 1 ms exposure boxcar spectrum and regularized Wiener deconvolution preview
+- [dm64_3drm_exposure_deconv_1x2.png](dm64_3drm_exposure_deconv_1x2.png) — Fixed 1 ms exposure boxcar spectrum and two-sided finite-support Toeplitz physical step inversion vs. periodic FFT Wiener
 """
     (out_dir / "REPORT.md").write_text(report_md, encoding="utf-8")

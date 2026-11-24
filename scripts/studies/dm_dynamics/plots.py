@@ -58,6 +58,21 @@ def _load_ttf(bold: bool = True, mono: bool = False, size: int = 16) -> ImageFon
     return ImageFont.load_default()
 
 
+def _align_actual_pywfs_orientation(act_f: np.ndarray) -> np.ndarray:
+    """Horizontally mirror the 3 top-row SCExAO PyWFS panels to match DM & cacaosim orientation.
+
+    In actual_LepICSaBL-E.mp4 (scaled to 810x518), the bottom-row reconstructed DM surface
+    already places the poke in the lower-left (matching cacaosim), whereas the raw top-row
+    4-pupil NIR PyWFS camera view has an odd-mirror horizontal reflection (poke in lower-right
+    of each pupil). Mirroring each exact 259x259 top-row PyWFS panel aligns all 4 pupils and
+    their optical slope dipoles 1-to-1 with both the DM surface below and the simulation on the right.
+    """
+    out = act_f.copy()
+    for x0, x1 in ((2, 261), (275, 534), (548, 807)):
+        out[2:261, x0:x1] = out[2:261, x0:x1][:, ::-1]
+    return out
+
+
 def _render_sim_half_810x518(
     wfs_im: np.ndarray,
     dm_im: np.ndarray,
@@ -237,8 +252,11 @@ def render_side_by_side_video_and_sheet(
         if len(buf) < frame_bytes:
             break
         if idx_dec in needed_act:
-            actual_cache[idx_dec] = np.frombuffer(buf, dtype=np.uint8).reshape((h_body, w_half, 3)).copy()
-        last_frame = np.frombuffer(buf, dtype=np.uint8).reshape((h_body, w_half, 3))
+            raw_f = np.frombuffer(buf, dtype=np.uint8).reshape((h_body, w_half, 3)).copy()
+            actual_cache[idx_dec] = _align_actual_pywfs_orientation(raw_f)
+        last_frame = _align_actual_pywfs_orientation(
+            np.frombuffer(buf, dtype=np.uint8).reshape((h_body, w_half, 3))
+        )
         idx_dec += 1
         if idx_dec > max_act_idx:
             break

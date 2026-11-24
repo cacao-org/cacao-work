@@ -525,7 +525,7 @@ def render_modal_28x28_2x2(
         sax = fig.add_subplot(gs_sub[sidx // 2, sidx % 2])
         k = min(n_t - 1, q0 + int(round(ts / dt_ms)))
         mat = np.log10(np.clip(np.abs(m3_norm[k]), 1e-3, 1.5))
-        im_m = sax.imshow(mat, cmap="magma", vmin=-2.8, vmax=0.1, origin="upper")
+        im_m = sax.imshow(mat, cmap="magma", vmin=-2.8, vmax=0.1, origin="lower")
         sax.set_title(f"τ = +{t_ms[k]:.2f} ms", fontsize=10.0)
         sax.set_xlabel("Poked mode", fontsize=8.5)
         sax.set_ylabel("Sensed mode", fontsize=8.5)
@@ -625,12 +625,65 @@ def render_modal_28x28_2x2(
     return out_path
 
 
+def _solve_twosided_toeplitz_step(
+    y_step: np.ndarray,
+    n_sub: int,
+    dt_s: float,
+    lam: float = 3.0e-3,
+    t_max_s: float = 0.014,
+) -> tuple[np.ndarray, float, float]:
+    """Invert fixed-exposure boxcar using BOTH time-domain boundaries (t<t_on: 0, t>=T_max: 1).
+
+    Because a physical DM step response is zero before causal onset and settles to 1.0 after
+    T_max, the tall rectangular Toeplitz boxcar operator B has strictly zero null space even
+    at f = k / T_exp (finite condition number kappa(B) ~ 27-40 instead of infinity).
+    """
+    l_obs = len(y_step)
+    n_on = int(np.argmax(y_step >= 0.02)) if np.any(y_step >= 0.02) else 0
+    n_end = min(l_obs - (n_sub - 1), max(n_on + 2 * n_sub, int(round(t_max_s / dt_s))))
+    l_act = n_end - n_on
+
+    b_mat = np.zeros((l_obs, l_act), dtype=np.float64)
+    c_tail = np.zeros(l_obs, dtype=np.float64)
+    for n in range(l_obs):
+        for j in range(n_sub):
+            idx = n - j
+            if n_on <= idx < n_end:
+                b_mat[n, idx - n_on] = 1.0 / float(n_sub)
+            elif idx >= n_end:
+                c_tail[n] += 1.0 / float(n_sub)
+
+    sv = np.linalg.svd(b_mat, compute_uv=False)
+    cond_b = float(sv[0] / max(sv[-1], 1e-12))
+
+    t_act = (np.arange(l_act) + 0.5) * dt_s
+    w_env = np.exp(2.0 * (t_act / 0.006))
+    d_imp = np.zeros((l_act + 1, l_act), dtype=np.float64)
+    b_imp = np.zeros(l_act + 1, dtype=np.float64)
+    for k in range(l_act):
+        d_imp[k, k] = 1.0
+        if k > 0:
+            d_imp[k, k - 1] = -1.0
+    d_imp[l_act, l_act - 1] = -1.0
+    b_imp[l_act] = -1.0
+
+    rhs_y = y_step - c_tail
+    w_s = np.diag(w_env)
+    a_sys = b_mat.T @ b_mat + lam * (0.25 * w_s + 0.75 * (d_imp.T @ d_imp))
+    rhs = b_mat.T @ rhs_y + lam * (0.25 * (w_s @ np.ones(l_act)) + 0.75 * (d_imp.T @ b_imp))
+    s_act = np.linalg.solve(a_sys, rhs)
+
+    s_full = np.concatenate([np.zeros(n_on), s_act, np.ones(l_obs - n_end)])
+    fit_rms_pct = 100.0 * float(np.sqrt(np.mean((b_mat @ s_act + c_tail - y_step) ** 2)))
+    return s_full, cond_b, fit_rms_pct
+
+
 def render_exposure_deconv_1x2(
     raw_dir: Path,
     out_dir: Path,
     summary: dict[str, Any],
 ) -> tuple[Path, dict[str, float]]:
-    """Render fixed 1 ms exposure boxcar transfer function & regularized Wiener deconvolution."""
+    """Render 1 ms exposure spectrum & two-sided finite-support Toeplitz deconvolution."""
     _set_mpl_style()
     r3_z4 = fits.getdata(raw_dir / "zonal4_resp3D.fits").astype(np.float64)
     stat_z4 = fits.getdata(raw_dir / "zonal4_resp3D_static.fits").astype(np.float64)
@@ -641,123 +694,175 @@ def render_exposure_deconv_1x2(
     t_exp_s = float(n_sub) * dt_s  # 1.0 ms fixed exposure
     n_t = r3_z4.shape[0]
     t_ms = (np.arange(n_t) - q0 + 0.5) * dt_s * 1.0e3
+    t_post_ms = t_ms[q0:]
 
     # Project each actuator's 3D PyWFS response onto its own static spatial pattern -> 1D step s(t)
     w_m0 = stat_z4[0] / max(float(np.dot(stat_z4[0], stat_z4[0])), 1e-18)
-    y_step_m0 = r3_z4[:, 0, :] @ w_m0  # normalized to 1.0 at steady state
+    y_step_m0 = r3_z4[:, 0, :] @ w_m0
     w_m3 = stat_z4[3] / max(float(np.dot(stat_z4[3], stat_z4[3])), 1e-18)
     y_step_m3 = r3_z4[:, 3, :] @ w_m3
 
-    # Differentiate step -> exposure-integrated impulse response h_raw[n]
-    h_raw_m0 = np.diff(y_step_m0, prepend=0.0)
-    h_raw_m3 = np.diff(y_step_m3, prepend=0.0)
+    # 1. Two-sided finite-support Toeplitz solver (strict zero before onset & unity after 14 ms)
+    s_toep_m0, cond_b, fit_m0_pct = _solve_twosided_toeplitz_step(y_step_m0[q0:], n_sub, dt_s)
+    s_toep_m3, _, fit_m3_pct = _solve_twosided_toeplitz_step(y_step_m3[q0:], n_sub, dt_s)
+    h_toep_m0 = np.diff(s_toep_m0, prepend=0.0)
+    h_toep_m3 = np.diff(s_toep_m3, prepend=0.0)
 
-    # Zero-padded FFT for frequency spectrum & regularized Wiener deconvolution of 1 ms boxcar
+    # 2. Baseline naive periodic FFT Wiener filter (for direct contrast at the 1 kHz sinc null)
+    h_raw_m0 = np.diff(y_step_m0[q0:], prepend=0.0)
+    h_raw_m3 = np.diff(y_step_m3[q0:], prepend=0.0)
     n_fft = 1024
     freqs = np.fft.rfftfreq(n_fft, d=dt_s)
+    nyq_hz = 0.5 / dt_s
+    eff_khz = (1.0 / dt_s) / 1.0e3
+
     h_box = np.zeros(n_fft, dtype=np.float64)
     h_box[:n_sub] = 1.0 / float(n_sub)
     H_box = np.fft.rfft(h_box)
+    H_raw_m0 = np.fft.rfft(h_raw_m0, n=n_fft)
+    H_raw_m3 = np.fft.rfft(h_raw_m3, n=n_fft)
 
-    H_m0 = np.fft.rfft(h_raw_m0, n=n_fft)
-    H_m3 = np.fft.rfft(h_raw_m3, n=n_fft)
-
-    # Wiener filter with zero DC bias (reg[0]=0 -> exact steady-state gain 1.0) & high-freq rolloff
-    nyq_hz = 0.5 / dt_s
-    eff_khz = (1.0 / dt_s) / 1.0e3
     f_hp = (freqs / 550.0) ** 2
-    reg = 0.015 * (f_hp / (1.0 + f_hp)) + 0.08 * (freqs / (0.95 * nyq_hz)) ** 4
-    W_deconv = np.conj(H_box) / (np.abs(H_box) ** 2 + reg)
-    h_dec_m0 = np.fft.irfft(H_m0 * W_deconv, n=n_fft)[:n_t]
-    h_dec_m3 = np.fft.irfft(H_m3 * W_deconv, n=n_fft)[:n_t]
-    s_dec_m0 = np.cumsum(h_dec_m0)
-    s_dec_m3 = np.cumsum(h_dec_m3)
-    # Shift by +0.5*T_exp so deconvolved instantaneous step aligns in physical time with exposure midpoint
-    t_inst_ms = t_ms - 0.5 * t_exp_s * 1.0e3
+    reg_fft = 0.015 * (f_hp / (1.0 + f_hp)) + 0.08 * (freqs / (0.95 * nyq_hz)) ** 4
+    W_fft = np.conj(H_box) / (np.abs(H_box) ** 2 + reg_fft)
+    H_fft_m0 = H_raw_m0 * W_fft
+    s_fft_m0 = np.cumsum(np.fft.irfft(H_fft_m0, n=n_fft)[: len(t_post_ms)])
+    t_fft_ms = t_post_ms - 0.5 * t_exp_s * 1.0e3
+
+    H_toep_m0 = np.fft.rfft(h_toep_m0, n=n_fft)
+    H_toep_m3 = np.fft.rfft(h_toep_m3, n=n_fft)
+
+    # Normalize frequency magnitudes to DC = 1.0
+    mag_raw_m0 = np.abs(H_raw_m0) / max(float(np.abs(H_raw_m0[0])), 1e-12)
+    mag_fft_m0 = np.abs(H_fft_m0) / max(float(np.abs(H_fft_m0[0])), 1e-12)
+    mag_toep_m0 = np.abs(H_toep_m0) / max(float(np.abs(H_toep_m0[0])), 1e-12)
+    mag_toep_m3 = np.abs(H_toep_m3) / max(float(np.abs(H_toep_m3[0])), 1e-12)
+
+    i1k = int(np.argmin(np.abs(freqs - 1000.0)))
+    h1k_raw_m0 = float(mag_raw_m0[i1k])
+    h1k_toep_m0 = float(mag_toep_m0[i1k])
+    h1k_toep_m3 = float(mag_toep_m3[i1k])
 
     raw_ov_m0 = (float(np.max(y_step_m0[q0:])) - 1.0) * 100.0
-    dec_ov_m0 = (float(np.max(s_dec_m0[q0:])) - 1.0) * 100.0
+    fft_ov_m0 = (float(np.max(s_fft_m0)) - 1.0) * 100.0
+    dec_ov_m0 = (float(np.max(s_toep_m0)) - 1.0) * 100.0
     raw_ov_m3 = (float(np.max(y_step_m3[q0:])) - 1.0) * 100.0
-    dec_ov_m3 = (float(np.max(s_dec_m3[q0:])) - 1.0) * 100.0
+    dec_ov_m3 = (float(np.max(s_toep_m3)) - 1.0) * 100.0
 
-    fig, axes = plt.subplots(1, 2, figsize=(13.8, 5.2), constrained_layout=True)
+    # Align physical step time axis: causal boxcar averages [t - T_exp + dt, t], so sample n
+    # corresponds to physical time (n + 0.5)*dt (starting right at causal onset ~1.25 ms).
+    t_phys_ms = t_post_ms
 
-    # Left panel: Frequency transfer functions & 1 ms sinc nulls
+    fig, axes = plt.subplots(1, 2, figsize=(14.0, 5.4), constrained_layout=True)
+
+    # Left panel: Frequency transfer functions showing 1 kHz recovery via two-sided Toeplitz
     ax = axes[0]
     sinc_mag = np.abs(np.sinc(freqs * t_exp_s))
-    ax.plot(freqs, sinc_mag, color="#64748b", ls="--", lw=1.8, label="|sinc(f · T_exp)| (1.0 ms camera)")
     ax.plot(
         freqs,
-        np.abs(H_m0) / max(float(np.abs(H_m0[0])), 1e-12),
-        color="#2563eb",
-        lw=2.0,
-        label="Measured raw 3D RM |H(f)| — (22,23)",
+        sinc_mag,
+        color="#94a3b8",
+        ls=":",
+        lw=1.6,
+        label="|sinc(f · 1 ms)| boxcar (null at 1 kHz)",
     )
     ax.plot(
         freqs,
-        np.abs(H_m3) / max(float(np.abs(H_m3[0])), 1e-12),
-        color="#dc2626",
-        lw=1.8,
-        alpha=0.85,
-        label="Measured raw 3D RM |H(f)| — Free Rim (57,31)",
-    )
-    ax.axvline(1000.0, color="#be123c", ls=":", lw=1.3, label="f₀ = 1 kHz & 1st exposure null")
-    ax.axvline(2000.0, color="#be123c", ls=":", lw=1.0, alpha=0.6)
-    ax.set_xlim(0.0, nyq_hz * 0.98)
-    ax.set_ylim(0.0, 1.15)
-    ax.set_xlabel("Temporal frequency f [Hz]")
-    ax.set_ylabel("Normalized magnitude |H(f)|")
-    ax.set_title(f"(a) Fixed 1 ms Exposure vs. {eff_khz:.0f} kHz Stroboscopic Spectrum")
-    ax.grid(True)
-    ax.legend(loc="upper right", frameon=True, facecolor="white")
-
-    # Right panel: Raw 1 ms exposure-integrated step vs Wiener-deconvolved instantaneous step
-    ax = axes[1]
-    ax.plot(
-        t_ms,
-        y_step_m0,
+        mag_raw_m0,
         color="#2563eb",
         ls="--",
-        lw=1.8,
-        label=f"Raw 1 ms-integrated (22,23) (+{raw_ov_m0:.1f}% pk)",
+        lw=1.6,
+        alpha=0.75,
+        label=f"Raw 1 ms PyWFS |H_obs(f)| — (22,23) (1 kHz: {h1k_raw_m0:.2f})",
     )
     ax.plot(
-        t_inst_ms,
-        s_dec_m0,
+        freqs,
+        mag_fft_m0,
+        color="#64748b",
+        ls="-.",
+        lw=1.5,
+        alpha=0.85,
+        label="Naive periodic FFT Wiener — (22,23) (null notch)",
+    )
+    ax.plot(
+        freqs,
+        mag_toep_m0,
         color="#1d4ed8",
         lw=2.3,
-        label=f"Wiener-deconvolved (22,23) (+{dec_ov_m0:.1f}% pk)",
+        label=f"Two-sided Toeplitz |H_phys(f)| — (22,23) (1 kHz: {h1k_toep_m0:.2f})",
     )
     ax.plot(
-        t_ms,
-        y_step_m3,
-        color="#f97316",
-        ls="--",
-        lw=1.7,
-        label=f"Raw 1 ms-integrated Rim (57,31) (+{raw_ov_m3:.1f}% pk)",
-    )
-    ax.plot(
-        t_inst_ms,
-        s_dec_m3,
+        freqs,
+        mag_toep_m3,
         color="#dc2626",
-        lw=2.2,
-        label=f"Wiener-deconvolved Rim (57,31) (+{dec_ov_m3:.1f}% pk)",
+        lw=2.1,
+        label=f"Two-sided Toeplitz |H_phys(f)| — Rim (57,31) (1 kHz: {h1k_toep_m3:.2f})",
+    )
+    ax.axvline(1000.0, color="#be123c", ls=":", lw=1.3)
+    ax.set_xlim(0.0, nyq_hz * 0.98)
+    ax.set_ylim(0.0, max(2.75, float(max(mag_toep_m0.max(), mag_toep_m3.max())) * 1.32))
+    ax.set_xlabel("Temporal frequency f [Hz]")
+    ax.set_ylabel("Normalized transfer magnitude |H(f)|")
+    ax.set_title(f"(a) Recovering f₀ = 1 kHz Across Camera Null ({eff_khz:.0f} kHz Grid)")
+    ax.grid(True)
+    ax.legend(loc="upper left", frameon=True, facecolor="white", fontsize=8.3)
+
+    # Right panel: Raw 1 ms step vs FFT Wiener vs Two-sided finite-support Toeplitz physical step
+    ax = axes[1]
+    ax.plot(
+        t_post_ms,
+        y_step_m0[q0:],
+        color="#2563eb",
+        ls="--",
+        lw=1.6,
+        alpha=0.75,
+        label=f"Raw 1 ms PyWFS (22,23) (+{raw_ov_m0:.1f}% pk)",
+    )
+    ax.plot(
+        t_fft_ms,
+        s_fft_m0,
+        color="#64748b",
+        ls="-.",
+        lw=1.5,
+        alpha=0.85,
+        label=f"Periodic FFT Wiener (22,23) (+{fft_ov_m0:.1f}%, pre-ring)",
+    )
+    ax.plot(
+        t_phys_ms,
+        s_toep_m0,
+        color="#1d4ed8",
+        lw=2.3,
+        label=f"Two-sided Toeplitz (22,23) (+{dec_ov_m0:.1f}%, fit {fit_m0_pct:.2f}%)",
+    )
+    ax.plot(
+        t_phys_ms,
+        s_toep_m3,
+        color="#dc2626",
+        lw=2.1,
+        label=f"Two-sided Toeplitz Rim (57,31) (+{dec_ov_m3:.1f}%, fit {fit_m3_pct:.2f}%)",
     )
     ax.axvline(1.0, color="#64748b", ls=":", lw=1.1, label="Hardware transport delay (1.0 ms)")
     ax.axhline(1.0, color="#0f172a", ls=":", lw=0.9)
     ax.set_xlim(0.0, 8.0)
-    ax.set_ylim(-0.08, 1.55)
-    ax.set_xlabel("Physical time after DM command [ms]")
+    ax.set_ylim(-0.08, 1.58)
+    ax.set_xlabel("Lag after DM command τ [ms]")
     ax.set_ylabel("Projected step response (static = 1.0)")
-    ax.set_title("(b) Regularized Boxcar Deconvolution Preview")
+    ax.set_title(f"(b) Two-Sided Finite-Support Toeplitz Inversion (κ(B) = {cond_b:.1f})")
     ax.grid(True)
-    ax.legend(loc="lower right", frameon=True, facecolor="white")
+    ax.legend(loc="lower right", frameon=True, facecolor="white", fontsize=8.3)
 
     out_path = out_dir / "dm64_3drm_exposure_deconv_1x2.png"
     fig.savefig(out_path, dpi=165)
     plt.close(fig)
     return out_path, {
+        "toeplitz_cond_b": cond_b,
+        "toeplitz_fit_rms_m0_pct": fit_m0_pct,
+        "toeplitz_fit_rms_m3_pct": fit_m3_pct,
+        "raw_h1khz_m0": h1k_raw_m0,
+        "toeplitz_h1khz_m0": h1k_toep_m0,
+        "toeplitz_h1khz_m3": h1k_toep_m3,
         "raw_overshoot_m0_pct": raw_ov_m0,
+        "fft_wiener_overshoot_m0_pct": fft_ov_m0,
         "deconv_overshoot_m0_pct": dec_ov_m0,
         "raw_overshoot_m3_pct": raw_ov_m3,
         "deconv_overshoot_m3_pct": dec_ov_m3,
