@@ -42,6 +42,13 @@ def render_nav_inner(
             f'<span class="drop-item-sub">{html.escape(str(dom.get("short_title", dtitle)), quote=False)} overview</span></span>'
             f'<span class="drop-count">{len(t_list)} TR &middot; {sim_cnt} sim</span></a>'
         )
+        if did == "wavefront-control":
+            topics_items.append(
+                f'<a class="drop-item" href="{base}/predictive-control/index.html">'
+                '<span><strong>Predictive Control Guide</strong>'
+                '<span class="drop-item-sub">AR(P), Block-EOF &amp; Self-Learning setup &amp; tuning</span></span>'
+                '<span class="drop-count">Guide</span></a>'
+            )
         for tm in t_list:
             if not isinstance(tm, dict):
                 continue
@@ -57,7 +64,11 @@ def render_nav_inner(
         f'<a class="drop-item" href="{base}/simulations/index.html">'
         f'<span><strong>All Simulations Catalog</strong>'
         f'<span class="drop-item-sub">Filter, compare &amp; sort parameters</span></span>'
-        f'<span class="drop-count">{len(run_metas)}</span></a>'
+        f'<span class="drop-count">{len(run_metas)}</span></a>',
+        f'<a class="drop-item" href="{base}/turbulence/index.html">'
+        f'<span><strong>Default Turbulence &amp; Perturbation Model</strong>'
+        f'<span class="drop-item-sub">Maunakea profile, wind, vibrations &amp; petaling</span></span>'
+        f'<span class="drop-count">Model</span></a>',
     ]
     for dom in domains:
         if not isinstance(dom, dict):
@@ -84,6 +95,12 @@ def render_nav_inner(
             )
 
     stack_items = (
+        f'<a class="drop-item" href="{base}/predictive-control/index.html">'
+        f'<span><strong>Predictive Control Guide</strong>'
+        f'<span class="drop-item-sub">AR, Block-EOF &amp; Self-Learning tuning manual</span></span></a>'
+        f'<a class="drop-item" href="{base}/turbulence/index.html">'
+        f'<span><strong>Turbulence &amp; Perturbation Model</strong>'
+        f'<span class="drop-item-sub">Default Maunakea, wind, vib &amp; petaling spec</span></span></a>'
         f'<a class="drop-item" href="{base}/stack/index.html#github-repositories">'
         f'<span><strong>GitHub Repositories</strong>'
         f'<span class="drop-item-sub">9 open-source MILK/CACAO checkouts</span></span></a>'
@@ -107,8 +124,8 @@ def render_nav_inner(
         else ""
     )
     home_cls = " active" if active_nav == "home" else ""
-    top_cls = " active" if active_nav == "topics" else ""
-    sim_cls = " active" if active_nav == "simulations" else ""
+    top_cls = " active" if active_nav in ("topics", "predictive_control") else ""
+    sim_cls = " active" if active_nav in ("simulations", "turbulence") else ""
     alg_cls = " active" if active_nav == "algorithms" else ""
     ref_cls = " active" if active_nav == "reference" else ""
     stk_cls = " active" if active_nav == "stack" else ""
@@ -172,6 +189,12 @@ def render_sidebar_tree_inner(
             f'<li><a{hub_act} href="{base}/topics/{html.escape(did, quote=True)}/index.html">'
             f"Overview: {html.escape(dtitle, quote=False)}</a></li>"
         ]
+        if did == "wavefront-control":
+            pc_act = ' class="active"' if active_slug == "__predictive_control__" else ""
+            items.append(
+                f'<li><a{pc_act} href="{base}/predictive-control/index.html">'
+                "<strong>Predictive Control Guide (AR / EOF / SL)</strong></a></li>"
+            )
         for tm in techs:
             if not isinstance(tm, dict):
                 continue
@@ -225,6 +248,7 @@ def render_sidebar_html(
     active_slug: str = "",
     active_sim_tab: str = "",
     has_compute_report: bool = False,
+    has_pyrwfs_report: bool = False,
     toc_items: list[tuple[str, str]] | tuple[tuple[str, str], ...] = (),
     page_kind: str = "",
 ) -> str:
@@ -237,17 +261,24 @@ def render_sidebar_html(
     )
     views_sec = ""
     if page_kind == "simulation":
-        tabs = (
+        tabs_list: list[tuple[str, str, str]] = [
             ("overview", "index.html", "Overview"),
             ("config", "config.html", "Configuration"),
             ("optical", "optical.html", "Optical Performance"),
-            (
-                "runtime",
-                "runtime.html",
-                "Runtime Performance" if has_compute_report else "Runtime Performance (N/A)",
-            ),
-            ("how_to_run", "how_to_run.html", "How to Run It"),
+        ]
+        if has_pyrwfs_report or active_sim_tab == "pyrwfs":
+            tabs_list.append(("pyrwfs", "pyrwfs.html", "Pyramid WFS"))
+        tabs_list.extend(
+            [
+                (
+                    "runtime",
+                    "runtime.html",
+                    "Runtime Performance" if has_compute_report else "Runtime Performance (N/A)",
+                ),
+                ("how_to_run", "how_to_run.html", "How to Run It"),
+            ]
         )
+        tabs = tuple(tabs_list)
         v_lis = "".join(
             f'<li><a{" class=\"active\"" if k == active_sim_tab else ""} href="{href}">'
             f"{html.escape(lbl, quote=False)}</a></li>"
@@ -297,6 +328,7 @@ def render_page_shell(
     active_slug: str = "",
     active_sim_tab: str = "",
     has_compute_report: bool = False,
+    has_pyrwfs_report: bool = False,
     page_kind: str = "",
     breadcrumbs: list[tuple[str, str | None]] = (),
     show_sidebar: bool = True,
@@ -324,6 +356,7 @@ def render_page_shell(
             active_slug=active_slug,
             active_sim_tab=active_sim_tab,
             has_compute_report=has_compute_report,
+            has_pyrwfs_report=has_pyrwfs_report,
             toc_items=toc_items,
             page_kind=page_kind,
         )

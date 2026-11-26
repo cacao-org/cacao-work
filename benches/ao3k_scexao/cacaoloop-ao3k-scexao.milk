@@ -124,10 +124,18 @@ DEF_PF_UPD=4
 PF_UPDATEPERIOD="${CACAO_PF_UPDATEPERIOD:-${DEF_PF_UPD}}"
 PF_REG="${CACAO_PF_REG:-0.005}"
 PF_MAXNORM2="${CACAO_PF_MAXNORM2:-}"
+PF_MAXDCGAIN="${CACAO_PF_MAXDCGAIN:-}"
 PF_NTHREADS="${CACAO_PF_NTHREADS:-4}"
 PF_MKTHREADS="${CACAO_PF_MKTHREADS:-8}"
 PF_MIX="${CACAO_PF_MIX:-${DEF_PF_MIX}}"
+PF_MIX_TT="${CACAO_PF_MIX_TT:-}"
+PF_LO_NMODE="${CACAO_PF_LO_NMODE:-2}"
 PF_MGAIN_EXP="${CACAO_PF_MGAIN_EXP:-0.50}"
+PF_DIFF_NMODE="${CACAO_PF_DIFF_NMODE:-0}"
+PF_DIFF_ORDER="${CACAO_PF_DIFF_ORDER:-0}"
+PF_DIFF_REG="${CACAO_PF_DIFF_REG:-0.05}"
+PF_DIFF_MAXNORM2="${CACAO_PF_DIFF_MAXNORM2:-4.0}"
+PF_DIFF_MAXDCGAIN="${CACAO_PF_DIFF_MAXDCGAIN:-0.9995}"
 PF_MAXWAITUS="${CACAO_PF_MAXWAITUS:-3000}"
 DYNPSOL_KERNEL="${CACAO_DYNPSOL_KERNEL:-}"
 PF_ZOH_RIDGE="${CACAO_PF_ZOH_RIDGE:-}"
@@ -152,6 +160,19 @@ PF_MR_PACER_OUT="${CACAO_PF_MR_PACER_OUT:-OFF}"
 WFS_DARK_ADU="${CACAO_WFS_DARK_ADU:-0.0}"
 WFS_DARKSUB="${CACAO_WFS_DARKSUB:-OFF}"
 WFS_NORMFLOOR="${CACAO_WFS_NORMFLOOR:-1.0}"
+SELFLEARN_ENABLE="${CACAO_SELFLEARN_ENABLE:-0}"
+SELFLEARN_MODES="${CACAO_SELFLEARN_MODES:-128}"
+SELFLEARN_KMAX="${CACAO_SELFLEARN_KMAX:-16}"
+SELFLEARN_KEYMODE="${CACAO_SELFLEARN_KEYMODE:-0}"
+SELFLEARN_QSHARED="${CACAO_SELFLEARN_QSHARED:-2}"
+SELFLEARN_RLIM="${CACAO_SELFLEARN_RLIM:-2.0}"
+SELFLEARN_MAX_WFS_GAIN="${CACAO_SELFLEARN_MAX_WFS_GAIN:-0.40}"
+SELFLEARN_LAM0="${CACAO_SELFLEARN_LAM0:-20.0}"
+SELFLEARN_LAM1="${CACAO_SELFLEARN_LAM1:-200.0}"
+SELFLEARN_MAX_TWEAK="${CACAO_SELFLEARN_MAX_TWEAK:-0.25}"
+SELFLEARN_NWARMUP="${CACAO_SELFLEARN_NWARMUP:-40}"
+SELFLEARN_KEYWARMUP="${CACAO_SELFLEARN_KEYWARMUP:-200}"
+SELFLEARN_NL_MODE="${CACAO_SELFLEARN_NL_MODE:-0}"
 
 if [[ "${PF_MODE}" == "eof" ]]; then
     PF_MK_UNIT="mkEOFPF-${N}"
@@ -168,6 +189,13 @@ else
 fi
 GAIN="${CACAO_LOOPGAIN:-${DEF_GAIN}}"
 MULT="${CACAO_LOOPMULT:-${DEF_MULT}}"
+MULT_TT="${CACAO_LOOPMULT_TT:-}"
+MMULT_FLOOR="${CACAO_MMULT_FLOOR:-}"
+MMULT_ALPHA="${CACAO_MMULT_ALPHA:-1.0}"
+DMMASK_RMAX="${CACAO_DMMASK_RMAX:-}"
+DEF_LOOPLIMIT_TT=""
+(( N == 1 )) && DEF_LOOPLIMIT_TT="2.5"
+LOOPLIMIT_TT="${CACAO_LOOPLIMIT_TT:-${DEF_LOOPLIMIT_TT}}"
 SVDLIM="${CACAO_SVDLIM:-${DEF_SVDLIM}}"
 CPAMAX="${CACAO_CPAMAX:-${DEF_CPAMAX}}"
 RCPAMAX="${CACAO_RCPAMAX:-${DEF_RCPAMAX}}"
@@ -261,6 +289,7 @@ ALL_UNITS+=(
     "mctrlstats-${N}"
 )
 (( USE_ZPO_MVM )) && ALL_UNITS+=("zpo-${N}")
+(( SELFLEARN_ENABLE )) && ALL_UNITS+=("selflearn-${N}")
 
 ensure_stream_zeros() {
     local sfx="$1" dims="$2"
@@ -416,6 +445,9 @@ EOF
 )"
     if (( USE_ZPO_MVM )); then
         init_manifest+=$'\nzpo-'"${N}"$'             milk-fpsexec-linalg-MVMextract'
+    fi
+    if (( SELFLEARN_ENABLE )); then
+        init_manifest+=$'\nselflearn-'"${N}"$'       cacao-fpsexec-cacaopc-selflearn'
     fi
 
     fpspipe.init <<EOF
@@ -611,14 +643,67 @@ EOF
     fi
 
     if [[ "${PF_MODE}" == "eof" ]]; then
+        local eff_diagorder="${PF_DIAGORDER}"
+        if (( PF_DIFF_NMODE > 0 && PF_DIFF_ORDER > eff_diagorder )); then
+            eff_diagorder="${PF_DIFF_ORDER}"
+        fi
         milk-fps-set -q \
             "${PF_MK_UNIT}.blocksize=${PF_BLOCKSIZE}" \
-            "${PF_MK_UNIT}.diagorder=${PF_DIAGORDER}" \
+            "${PF_MK_UNIT}.diagorder=${eff_diagorder}" \
             "${PF_MK_UNIT}.diagminsamples=${PF_DIAGMINSAMPLES}" \
             "${PF_MK_UNIT}.updateperiod=${PF_UPDATEPERIOD}" \
+            "${PF_MK_UNIT}.diff_nmode=${PF_DIFF_NMODE}" \
+            "${PF_MK_UNIT}.diff_order=${PF_DIFF_ORDER}" \
+            "${PF_MK_UNIT}.diff_reg=${PF_DIFF_REG}" \
+            "${PF_MK_UNIT}.diff_maxnorm2=${PF_DIFF_MAXNORM2}" \
+            "${PF_MK_UNIT}.diff_maxdcgain=${PF_DIFF_MAXDCGAIN}" \
             "${PF_APP_UNIT}.blocksize=${PF_BLOCKSIZE}" \
-            "${PF_APP_UNIT}.diagorder=${PF_DIAGORDER}" \
+            "${PF_APP_UNIT}.diagorder=${eff_diagorder}" \
             "${PF_APP_UNIT}.nthreads=${PF_NTHREADS}"
+        if [[ -n "${PF_MAXDCGAIN}" ]]; then
+            milk-fps-set -q "${PF_MK_UNIT}.maxdcgain=${PF_MAXDCGAIN}"
+        fi
+    fi
+    if (( SELFLEARN_ENABLE )); then
+        milk-fps-set -q \
+            "${PF_APP_UNIT}.outdata=${PFX}modevalPF_eof" \
+            "${PF_APP_UNIT}.outPFstat=${PFX}outPFstat_eof" \
+            "selflearn-${N}.AOloopindex=${N}" \
+            "selflearn-${N}.inwfs=${PFX}modevalWFS" \
+            "selflearn-${N}.inol=${PFX}modevalOL" \
+            "selflearn-${N}.indm=${PFX}modevalDM" \
+            "selflearn-${N}.inbasePF=${PFX}modevalPF_eof" \
+            "selflearn-${N}.inbaseStat=${PFX}outPFstat_eof" \
+            "selflearn-${N}.outdata=${PFX}modevalPF" \
+            "selflearn-${N}.outPFstat=${PFX}outPFstat" \
+            "selflearn-${N}.outtweak=${PFX}selflearn_tweak" \
+            "selflearn-${N}.out_mode=0" \
+            "selflearn-${N}.nl_mode=${SELFLEARN_NL_MODE}" \
+            "selflearn-${N}.key_mode=${SELFLEARN_KEYMODE}" \
+            "selflearn-${N}.NBmodeMax=${SELFLEARN_MODES}" \
+            "selflearn-${N}.kmax=${SELFLEARN_KMAX}" \
+            "selflearn-${N}.qshared=${SELFLEARN_QSHARED}" \
+            "selflearn-${N}.nwarmup=${SELFLEARN_NWARMUP}" \
+            "selflearn-${N}.keywarmup=${SELFLEARN_KEYWARMUP}" \
+            "selflearn-${N}.rampsteps=32" \
+            "selflearn-${N}.blend_soft=ON" \
+            "selflearn-${N}.rlim=${SELFLEARN_RLIM}" \
+            "selflearn-${N}.latency=${pf_lat}" \
+            "selflearn-${N}.dc_leak=0.985" \
+            "selflearn-${N}.max_wfs_gain=${SELFLEARN_MAX_WFS_GAIN}" \
+            "selflearn-${N}.max_ar_norm2=2.0" \
+            "selflearn-${N}.lam0=${SELFLEARN_LAM0}" \
+            "selflearn-${N}.lam1=${SELFLEARN_LAM1}" \
+            "selflearn-${N}.max_tweak=${SELFLEARN_MAX_TWEAK}" \
+            "selflearn-${N}.learnON=ON" \
+            "selflearn-${N}.shadow=OFF" \
+            "selflearn-${N}.enable_l0=ON" \
+            "selflearn-${N}.enable_l1=ON" \
+            "selflearn-${N}.apply_gain=1.0" \
+            "selflearn-${N}.procinfo.loopcntMax=-1" \
+            "selflearn-${N}.procinfo.triggermode=3" \
+            "selflearn-${N}.procinfo.triggersname=${PFX}modevalPF_eof" \
+            "selflearn-${N}.procinfo.MeasureTiming=ON"
     fi
     if [[ -n "${PF_MAXNORM2}" ]]; then
         milk-fps-set -q "${PF_MK_UNIT}.maxnorm2=${PF_MAXNORM2}"
@@ -711,6 +796,34 @@ imgen.mkdist imd ${nmodes} 1 0 0
 @calc "s.${PFX}mgainfact[0, 0] = ${gtt}; s.${PFX}mgainfact[1, 0] = ${gtt}"
 exit
 EOF
+    if [[ -n "${MMULT_FLOOR}" ]] && @exists "s.${PFX}mmultfact"; then
+        local mmf_lo mm_expr
+        mmf_lo="$(awk -v mf="${MMULT_FLOOR}" -v m="${MULT}" \
+            'BEGIN { printf "%.6f", (m > 1e-6 ? mf / m : 1.0) }')"
+        mm_expr="(1.0 - ${mmf_lo}) * pow(1.0 - imd / ${nmodes}, ${MMULT_ALPHA}) + ${mmf_lo}"
+        cacao-cli -q >/dev/null <<EOF
+imgen.mkdist imd ${nmodes} 1 0 0
+@calc "s.${PFX}mmultfact = ${mm_expr}"
+exit
+EOF
+    fi
+    if [[ -n "${MULT_TT}" ]] && @exists "s.${PFX}mmultfact"; then
+        local tt_mmf lo_n="${PF_LO_NMODE}" _mi
+        (( lo_n < 1 )) && lo_n=2
+        (( lo_n > nmodes )) && lo_n="${nmodes}"
+        tt_mmf="$(awk -v mt="${MULT_TT}" -v m="${MULT}" \
+            'BEGIN { printf "%.6f", (m > 1e-6 ? mt / m : 1.0) }')"
+        {
+            for (( _mi = 0; _mi < lo_n; _mi++ )); do
+                printf '@calc "s.%smmultfact[%d, 0] = %s"\n' "${PFX}" "${_mi}" "${tt_mmf}"
+            done
+            printf 'exit\n'
+        } | cacao-cli -q >/dev/null
+    fi
+    if [[ -n "${LOOPLIMIT_TT}" ]] && @exists "s.${PFX}mlimitfact"; then
+        @calc "s.${PFX}mlimitfact[0, 0] = ${LOOPLIMIT_TT}"
+        @calc "s.${PFX}mlimitfact[1, 0] = ${LOOPLIMIT_TT}"
+    fi
     milk-fpsexec-iofits-saveFITS --no-procinfo -n "${save_fps}" exec \
         "${PFX}mgainfact" "!../conf/mgainfact.fits" >/dev/null
     milk-fps-rm -f -q --ignore-missing "${save_fps}" >/dev/null 2>&1 || true
@@ -784,6 +897,12 @@ EOF
         fcmd+=" .fpowerlaw=-0.5 .rCPAmin=0.8 .rCPAmax=${RCPAMAX}"
         fcmd+=" .align.centered=0 .align.xcenter=${XCENT} .align.ycenter=${YCENT}"
 
+        local trim_cmds=""
+        if [[ -n "${DMMASK_RMAX}" ]]; then
+            trim_cmds="imgen.mkdisk dmmask_r ${DMX} ${DMY} ${XCENT} ${YCENT} ${DMMASK_RMAX}"$'\n'
+            trim_cmds+=$'@calc "dmmask = dmmask * dmmask_r"\n'
+            trim_cmds+='iofits.saveFITS dmmask "!../conf/dmmask.fits"'
+        fi
         local ts_file="/tmp/.cacaoloop_ts_$$"
         rm -f "${ts_file}"
         t0="$(date +%s.%N)"
@@ -793,6 +912,7 @@ ${fcmd}
 arith.immerge zerc Fmodes syn0 2
 imgen.mkdisk dmmaskext ${DMX} ${DMY} ${XCENT} ${YCENT} ${rad_ext}
 iofits.loadfits "../conf/dmmask.fits" dmmask .
+${trim_cmds}
 cacaocc.maskextrapolate syn0 dmmask dmmaskext RMsynDM 1.0
 iofits.saveFITS RMsynDM "!../conf/RMsyn_modesDM.fits"
 date +%s.%N > "${ts_file}"
@@ -1406,8 +1526,51 @@ cmd_pf_on() {
     if [[ -d "${ROOTDIR}/${LOOPNAME}-rundir" ]]; then
         cd "${ROOTDIR}/${LOOPNAME}-rundir"
     fi
+    local nmodes_pf=2 lo_n="${PF_LO_NMODE}" _mi
+    if @exists "s.${PFX}mgainfact"; then
+        @get nmodes_pf="s.${PFX}mgainfact.xsize"
+    fi
+    (( lo_n < 1 )) && lo_n=2
+    (( lo_n > nmodes_pf )) && lo_n="${nmodes_pf}"
     if @exists "s.${PFX}mgainfact" && @exists "s.${PFX}mPFmixfact"; then
-        @calc "s.${PFX}mPFmixfact = pow(s.${PFX}mgainfact, ${PF_MGAIN_EXP})"
+        @calc "s.${PFX}mPFmixfact = pow(min(s.${PFX}mgainfact, 1.0), ${PF_MGAIN_EXP})"
+        if [[ -n "${PF_MIX_TT}" ]]; then
+            local tt_mf
+            tt_mf="$(awk -v mt="${PF_MIX_TT}" -v mx="${mix}" \
+                'BEGIN { printf "%.6f", (mx > 1e-6 ? mt / mx : 1.0) }')"
+            {
+                for (( _mi = 0; _mi < lo_n; _mi++ )); do
+                    printf '@calc "s.%smPFmixfact[%d, 0] = %s"\n' "${PFX}" "${_mi}" "${tt_mf}"
+                done
+                printf 'exit\n'
+            } | cacao-cli -q >/dev/null
+        fi
+    fi
+    if [[ -n "${MMULT_FLOOR}" ]] && @exists "s.${PFX}mmultfact"; then
+        local mmf_lo mm_expr
+        mmf_lo="$(awk -v mf="${MMULT_FLOOR}" -v m="${MULT}" \
+            'BEGIN { printf "%.6f", (m > 1e-6 ? mf / m : 1.0) }')"
+        mm_expr="(1.0 - ${mmf_lo}) * pow(1.0 - imd / ${nmodes_pf}, ${MMULT_ALPHA}) + ${mmf_lo}"
+        cacao-cli -q >/dev/null <<EOF
+imgen.mkdist imd ${nmodes_pf} 1 0 0
+@calc "s.${PFX}mmultfact = ${mm_expr}"
+exit
+EOF
+    fi
+    if [[ -n "${MULT_TT}" ]] && @exists "s.${PFX}mmultfact"; then
+        local tt_mmf
+        tt_mmf="$(awk -v mt="${MULT_TT}" -v m="${MULT}" \
+            'BEGIN { printf "%.6f", (m > 1e-6 ? mt / m : 1.0) }')"
+        {
+            for (( _mi = 0; _mi < lo_n; _mi++ )); do
+                printf '@calc "s.%smmultfact[%d, 0] = %s"\n' "${PFX}" "${_mi}" "${tt_mmf}"
+            done
+            printf 'exit\n'
+        } | cacao-cli -q >/dev/null
+    fi
+    if [[ -n "${LOOPLIMIT_TT}" ]] && @exists "s.${PFX}mlimitfact"; then
+        @calc "s.${PFX}mlimitfact[0, 0] = ${LOOPLIMIT_TT}"
+        @calc "s.${PFX}mlimitfact[1, 0] = ${LOOPLIMIT_TT}"
     fi
     milk-fps-set -q \
         "mfilt-${N}.comp.OLmodes=ON" \
@@ -1420,9 +1583,13 @@ cmd_pf_on() {
         "${PF_MK_UNIT}.reglambda=${PF_REG}" \
         "${PF_APP_UNIT}.PForder=${PF_ORDER}"
     if [[ "${PF_MODE}" == "eof" ]]; then
+        local eff_diagorder="${PF_DIAGORDER}"
+        if (( PF_DIFF_NMODE > 0 && PF_DIFF_ORDER > eff_diagorder )); then
+            eff_diagorder="${PF_DIFF_ORDER}"
+        fi
         milk-fps-set -q \
             "${PF_MK_UNIT}.blocksize=${PF_BLOCKSIZE}" \
-            "${PF_MK_UNIT}.diagorder=${PF_DIAGORDER}" \
+            "${PF_MK_UNIT}.diagorder=${eff_diagorder}" \
             "${PF_MK_UNIT}.minsamples=${PF_MINSAMPLES}" \
             "${PF_MK_UNIT}.diagminsamples=${PF_DIAGMINSAMPLES}" \
             "${PF_MK_UNIT}.updateperiod=${PF_UPDATEPERIOD}" \
@@ -1436,9 +1603,17 @@ cmd_pf_on() {
             "${PF_MK_UNIT}.frate_hz=${PF_FRATE_HZ}" \
             "${PF_MK_UNIT}.n_prior=${PF_N_PRIOR}" \
             "${PF_MK_UNIT}.wl_switch_decay=${PF_WL_SWITCH_DECAY}" \
+            "${PF_MK_UNIT}.diff_nmode=${PF_DIFF_NMODE}" \
+            "${PF_MK_UNIT}.diff_order=${PF_DIFF_ORDER}" \
+            "${PF_MK_UNIT}.diff_reg=${PF_DIFF_REG}" \
+            "${PF_MK_UNIT}.diff_maxnorm2=${PF_DIFF_MAXNORM2}" \
+            "${PF_MK_UNIT}.diff_maxdcgain=${PF_DIFF_MAXDCGAIN}" \
             "${PF_APP_UNIT}.blocksize=${PF_BLOCKSIZE}" \
-            "${PF_APP_UNIT}.diagorder=${PF_DIAGORDER}" \
+            "${PF_APP_UNIT}.diagorder=${eff_diagorder}" \
             "${PF_APP_UNIT}.nthreads=${PF_NTHREADS}"
+        if [[ -n "${PF_MAXDCGAIN}" ]]; then
+            milk-fps-set -q "${PF_MK_UNIT}.maxdcgain=${PF_MAXDCGAIN}"
+        fi
         if [[ -n "${PF_ZOH_RIDGE}" ]]; then
             milk-fps-set -q "${PF_MK_UNIT}.zoh_ridge=${PF_ZOH_RIDGE}"
         fi
@@ -1473,6 +1648,11 @@ cmd_pf_on() {
         milk-fps-set -q "${PF_MK_UNIT}.PFlatency=${pflat}"
     fi
     if [[ "${PF_MODE}" == "eof" ]]; then
+        if (( SELFLEARN_ENABLE )); then
+            milk-fps-set -q \
+                "${PF_APP_UNIT}.outdata=${PFX}modevalPF_eof" \
+                "${PF_APP_UNIT}.outPFstat=${PFX}outPFstat_eof"
+        fi
         OPENBLAS_NUM_THREADS="${PF_MKTHREADS}" OMP_NUM_THREADS="${PF_MKTHREADS}" \
             milk-fps-runstart -q "${PF_MK_UNIT}"
         if [[ "${PF_MR_ENABLE}" == "ON" ]]; then
@@ -1481,6 +1661,24 @@ cmd_pf_on() {
             milk-stream-wait -q -t 15 "${PFX}${PF_MAT_SFX}"
         fi
         OMP_NUM_THREADS="${PF_NTHREADS}" milk-fps-runstart -q "${PF_APP_UNIT}"
+        if (( SELFLEARN_ENABLE )); then
+            milk-stream-wait -q -t 15 "${PFX}modevalPF_eof" "${PFX}outPFstat_eof"
+            local sl_lat="${pflat:-}"
+            if [[ -z "${sl_lat}" ]]; then
+                @get sl_lat="f.${PF_MK_UNIT}.PFlatency" 2>/dev/null || sl_lat="2.1"
+            fi
+            milk-fps-set -q \
+                "selflearn-${N}.NBmodeMax=${SELFLEARN_MODES}" \
+                "selflearn-${N}.kmax=${SELFLEARN_KMAX}" \
+                "selflearn-${N}.latency=${sl_lat}" \
+                "selflearn-${N}.learnON=ON" \
+                "selflearn-${N}.shadow=OFF" \
+                "selflearn-${N}.enable_l0=ON" \
+                "selflearn-${N}.enable_l1=ON" \
+                "selflearn-${N}.apply_gain=1.0"
+            OMP_NUM_THREADS="${PF_NTHREADS}" milk-fps-runstart -q "selflearn-${N}"
+            milk-stream-wait -q -t 15 "${PFX}modevalPF" "${PFX}selflearn_tweak"
+        fi
     else
         milk-fps-runstart -q "${PF_MK_UNIT}"
         milk-stream-wait -q -t 15 "${PFX}${PF_MAT_SFX}"
@@ -1500,7 +1698,7 @@ cmd_pf_freeze() {
 
 cmd_pf_off() {
     @set "f.mfilt-${N}.PF.enable=OFF"
-    milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" >/dev/null 2>&1 || true
+    milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" "selflearn-${N}" >/dev/null 2>&1 || true
 }
 
 cmd_testol() {
@@ -1546,12 +1744,12 @@ cmd_setog() {
 
 cmd_open() {
     @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF"
-    milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" "mctrlstats-${N}" >/dev/null 2>&1 || true
+    milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" "selflearn-${N}" "mctrlstats-${N}" >/dev/null 2>&1 || true
 }
 
 cmd_zero() {
     @set "f.mfilt-${N}.PF.enable=OFF" "f.mfilt-${N}.loopON=OFF" "f.mfilt-${N}.loopZERO=ON"
-    milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" "mctrlstats-${N}" >/dev/null 2>&1 || true
+    milk-fps-runstop -q "${PF_MK_UNIT}" "${PF_APP_UNIT}" "selflearn-${N}" "mctrlstats-${N}" >/dev/null 2>&1 || true
     if @exists "s.${PFX}dmC"; then
         @calc "s.${PFX}dmC = s.${PFX}dmC * 0.0"
     fi

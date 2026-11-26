@@ -364,24 +364,42 @@ def build_compute_unit_catalog(
     return units
 
 
+NON_SIM_STATIC_ROUTES: frozenset[str] = frozenset(
+    {
+        "algorithms",
+        "assets",
+        "predictive-control",
+        "reference",
+        "simulations",
+        "stack",
+        "topics",
+        "turbulence",
+    }
+)
+
+
 def extract_referenced_simulations(
     md_text: str,
     study_meta: dict[str, object],
     known_sims: set[str] | None = None,
+    excluded_slugs: set[str] | None = None,
 ) -> list[str]:
     """Extract ordered simulation slugs referenced by a technical report."""
     refs: list[str] = []
     seen: set[str] = set()
+    excluded = set(NON_SIM_STATIC_ROUTES)
+    if excluded_slugs:
+        excluded.update(excluded_slugs)
     raw_list = study_meta.get("referenced_simulations")
     if isinstance(raw_list, list):
         for item in raw_list:
             slug = str(item).strip()
-            if slug and slug not in seen:
+            if slug and slug not in seen and slug not in excluded:
                 seen.add(slug)
                 refs.append(slug)
     for m in REL_SIBLING_RE.finditer(md_text):
         cand = m.group(1).strip()
-        if cand in seen:
+        if cand in seen or cand in excluded:
             continue
         if known_sims is not None and cand not in known_sims:
             continue

@@ -86,9 +86,9 @@ def write_report_outputs(
             "28×28 Modal 3D Coupling & PSOL",
         ],
         "referenced_simulations": [
-            "ao3k_scexao_lowfs_closed",
-            "ao3k_scexao_predictive_ar16",
-            "ao3k_scexao_predictive_eof128_p8",
+            "ao3k_scexao_unmod12_mh8_opt",
+            "ao3k_scexao_s08_realistic_mod3",
+            "ao3k_stg1_opt_unmod_v2",
         ],
         "nav_label": "64×64 Plate DM 3D RM Calibration",
         "button_label": "Read 64×64 Plate DM 3D RM Calibration Report",
@@ -123,12 +123,41 @@ def write_report_outputs(
     )
 
     # Build zonal summary table rows
+    per_act = z4["per_actuator"]
+    min_pre_pct = min(float(a["pre_poke_leak_pct"]) for a in per_act)
+    max_pre_pct = max(float(a["pre_poke_leak_pct"]) for a in per_act)
+    pre_ceil_pct = max(0.3, round(max_pre_pct + 0.05, 1))
+    min_ov_act = min(per_act, key=lambda a: float(a["overshoot_pct"]))
+    max_ov_act = max(per_act, key=lambda a: float(a["overshoot_pct"]))
+    max_settle_act = max(per_act, key=lambda a: float(a["settle_3pct_ms"]))
+    jitter_heading = (
+        "Sub-2 μs wall-clock stroboscopic accuracy"
+        if float(z4["jitter_us"]) < 2.0
+        else "Low-jitter wall-clock stroboscopic accuracy"
+    )
+    pacing_note = ""
+    if float(summary.get("slowdown_factor", 1.0)) > 1.05:
+        wp = float(summary["wall_pacing_hz"])
+        ww = float(summary["wall_wfs_hz"])
+        sf = float(summary["slowdown_factor"])
+        pacing_note = (
+            f" (`8.0 kHz` / `125 μs` physical master ticks, `navg = {nsub}`, "
+            f"paced cleanly at `{wp:,.0f} Hz` / `{ww:.0f} Hz` WFS wall-clock = `{sf:.0f}×` "
+            "slow-motion for zero GPU overrun)"
+        )
+    nyq_khz = 0.5 * eff_khz
+    null_clause = (
+        f"multiple `sinc(f · T_exp) = 0` nulls (`1, 2, 3 kHz` across the `{nyq_khz:.0f} kHz` Nyquist band)"
+        if nyq_khz > 2.5
+        else "a `sinc(f · T_exp) = 0` null right at `f = 1 kHz`"
+    )
+
     zonal_rows = "\n".join(
         f"| `{a['label']}` | `{a['radius_act']:.1f} act` (`{a['radius_mm']:.1f} mm`) "
         f"| `+{a['peak_t_ms']:.2f} ms` | **`+{a['overshoot_pct']:.1f}%`** "
         f"| `{a['settle_3pct_ms']:.2f} ms` | `{a['pre_poke_leak_pct']:.3f}%` "
         f"| `{a['static_vs_measlinresp_pct']:.2f}%` |"
-        for a in z4["per_actuator"]
+        for a in per_act
     )
 
     # Group Zernike modal stats by radial order n = 1..6
@@ -151,8 +180,8 @@ def write_report_outputs(
     report_md = f"""# Raw 3D Spatiotemporal Response Matrix Calibration — ALPAO 64×64 Plate DM (`cacaoac-measdynresp`)
 
 - **Compute Unit**: New standalone CACAO FPS binary `cacao-fpsexec-cacaoac-measdynresp` (`AOloopControl_acquireCalib/measure_dyn_resp.c`, zero `libCLIcore` dependency, `MILK_RUNNABLE_FPS`)—separate from existing `mlat` and `measlinresp`.
-- **Hardware-in-the-Loop Testbed**: Live GPU `cacaosim` bench modeling the **Subaru AO3k Stage-1 ALPAO 64×64 magnetic plate DM** (`dyn_mode = "plate"`, `f₀ = 1,000 Hz`, `c_m = 14.0 m/s`, `β = 0.0085 m²/s`, `γ₀ = 195 s⁻¹`, `plate_drive = "force"`, `rim_bc = "free"`, `delay = 1.0 ms`) observed solely through a **fixed `1,000 Hz` / `1.0 ms` exposure** `160×160` J-band (`1.22 μm`) 4-sided Pyramid WFS (`{summary['n_active_wfs_pix']}` active pixels).
-- **Companion Studies**: [ALPAO 64×64 DM Spatiotemporal Dynamics](../dm_dynamics_report/index.html) · [Predictive Control (AR & Block-EOF)](../predictive_control_report/index.html) · [2-WFS + 1-DM Telemetry SysID](../calib_2wfs1dm_report/index.html)
+- **Hardware-in-the-Loop Testbed**: Live GPU `cacaosim` bench modeling the **Subaru AO3k Stage-1 ALPAO 64×64 magnetic plate DM** (`dyn_mode = "plate"`, `f₀ = 1,000 Hz`, `c_m = 14.0 m/s`, `β = 0.0085 m²/s`, `γ₀ = 195 s⁻¹`, `plate_drive = "force"`, `rim_bc = "free"`, `delay = 1.0 ms`) observed solely through a **fixed `1,000 Hz` / `1.0 ms` exposure** `160×160` J-band (`1.22 μm`) 4-sided Pyramid WFS (`{summary['n_active_wfs_pix']}` active pixels){pacing_note}.
+- **Companion Studies**: [ALPAO 64×64 DM Spatiotemporal Dynamics](../dm_dynamics_report/index.html) · [DM Anti-Vibration Pre-Shaper Demo](../dm_preshaper_demo/index.html) · [Predictive Control (AR & Block-EOF)](../predictive_control_report/index.html) · [2-WFS + 1-DM Telemetry SysID](../calib_2wfs1dm_report/index.html)
 
 > **Key Result**: Without changing camera frame rate or exposure time, shifting DM poke offsets across `NBsubfr = {nsub}` stratified bit-reversed sub-frame phases in live wall-clock real time (`CLOCK_MONOTONIC` `TIMER_ABSTIME` + `PR_SET_TIMERSLACK(1 μs)`) yields a clean **`{eff_khz:.1f} kHz` (`Δt = {z4['dt_us']:.1f} μs`) raw 3D response matrix** with **`{z4['jitter_us']:.2f} μs` RMS poke jitter**, **`{z4['tmean_linearity_rms_us']:.1f} μs` bin-centroid linearity**, **`{z4['dropped_frames']}` {drop_word}**, **`r = {z4['corr_vs_pokemode1']:.5f}`** repeatability across excitation modes, and **`{z4['static_vs_measlinresp_pct']:.2f}%`** static-tail agreement with `cacaoac-measlinresp`. On a `28×28` Zernike modal cube (`Z2–Z29`), replacing CACAO's current 2-tap scalar latency with a full 3D MIMO DM convolution observer reduces PSOL reconstruction error by **`{psol['reduction_2tap_to_3d_x']:.1f}×`** (`{psol['tot_2tap_rel_pct']:.2f}%` → `{psol['tot_3d_rel_pct']:.2f}%` RMS).
 
@@ -211,9 +240,9 @@ Acquired directly from `cacao-fpsexec-cacaoac-measdynresp` running live in wall-
 {zonal_rows}
 
 Key quantitative observations from the live wall-clock 3D acquisition:
-1. **Sub-2 μs wall-clock stroboscopic accuracy**: Tightening Linux kernel timer slack (`PR_SET_TIMERSLACK = 1 μs`) with a `60 μs` final spin-wait achieves **`{z4['jitter_us']:.2f} μs` RMS poke jitter** and **`{z4['tmean_linearity_rms_us']:.1f} μs` bin-centroid linearity** across all `{z4['nbrespfr'] * nsub}` post-poke bins (`min_cnt = {z4['min_post_cnt']}`, `ndrop = {z4['dropped_frames']}`, `late_pokes = {z4['late_pokes']}`).
-2. **Spatial & radial dependence of plate dynamics**: Peak PyWFS-RMS overshoot ranges from **`+{z4['per_actuator'][3]['overshoot_pct']:.1f}%`** (`Free Rim`, settling fastest at `{z4['per_actuator'][3]['settle_3pct_ms']:.2f} ms` with an immediate local rim reflection and `+{deconv_info['deconv_overshoot_m3_pct']:.1f}%` deconvolved local peak) up to **`+{z4['per_actuator'][2]['overshoot_pct']:.1f}%`** (`Mid-Outer`), while `LepICSaBL-E (22, 23)` rings longest (`{z4['per_actuator'][0]['settle_3pct_ms']:.2f} ms`) as waves bounce across the full circular diameter—confirming that a spatially uniform temporal kernel cannot fully capture a free-rim circular plate DM.
-3. **Repeatability, baseline flatness, and static consistency**: Independent `pokemode = 0` (`0→+a→0→−a→0`) and `pokemode = 1` (`+a↔−a`) live acquisitions agree to **`r = {z4['corr_vs_pokemode1']:.5f}`** across the full 3D tensor; pre-poke baseline bins (`τ < 0`) stay flat to **`< 0.3%`** (`0.21%–0.26%`); total polarity asymmetry (`resp3D_asym.fits`, concentrated on the steep rising edge) is **`{z4['polarity_asym_pct']:.2f}%`**; and the settled tail matches `cacaoac-measlinresp` (`NBexcl = 26`) to **`{z4['static_vs_measlinresp_pct']:.2f}%` relative L2**.
+1. **{jitter_heading}**: Tightening Linux kernel timer slack (`PR_SET_TIMERSLACK = 1 μs`) with a `60 μs` final spin-wait achieves **`{z4['jitter_us']:.2f} μs` RMS poke jitter** and **`{z4['tmean_linearity_rms_us']:.1f} μs` bin-centroid linearity** across all `{z4['nbrespfr'] * nsub}` post-poke bins (`min_cnt = {z4['min_post_cnt']}`, `ndrop = {z4['dropped_frames']}`, `late_pokes = {z4['late_pokes']}`).
+2. **Spatial & radial dependence of plate dynamics**: Peak PyWFS-RMS overshoot ranges from **`+{min_ov_act['overshoot_pct']:.1f}%`** (`{min_ov_act['label']}`, settling at `{min_ov_act['settle_3pct_ms']:.2f} ms`, with `+{deconv_info['deconv_overshoot_m3_pct']:.1f}%` deconvolved local peak at the free rim) up to **`+{max_ov_act['overshoot_pct']:.1f}%`** (`{max_ov_act['label']}`), while `{max_settle_act['label']}` rings longest (`{max_settle_act['settle_3pct_ms']:.2f} ms`) as waves bounce across the full circular diameter—confirming that a spatially uniform temporal kernel cannot fully capture a free-rim circular plate DM.
+3. **Repeatability, baseline flatness, and static consistency**: Independent `pokemode = 0` (`0→+a→0→−a→0`) and `pokemode = 1` (`+a↔−a`) live acquisitions agree to **`r = {z4['corr_vs_pokemode1']:.5f}`** across the full 3D tensor; pre-poke baseline bins (`τ < 0`) stay flat to **`< {pre_ceil_pct:.1f}%`** (`{min_pre_pct:.2f}%–{max_pre_pct:.2f}%`); total polarity asymmetry (`resp3D_asym.fits`) is **`{z4['polarity_asym_pct']:.2f}%`**; and the settled tail matches `cacaoac-measlinresp` (`NBexcl = 26`) to **`{z4['static_vs_measlinresp_pct']:.2f}%` relative L2**.
 
 ---
 
@@ -244,7 +273,7 @@ To evaluate modal-space calibration directly applicable to CACAO's `modalfilter.
 Because `cacaoac-measdynresp` preserves the **raw exposure-integrated** response `Y(τ) = (b₁ₘₛ * s)(τ)`, downstream calibration tools separate cleanly into two regimes:
 
 1. **PSOL & Filtered-X EOF (Features 2 & 3)**: Consume raw `Y(τ)` directly — no deconvolution required.
-2. **Physical DM Step Recovery & High-Rate Pre-Shaper (Feature 1)**: Although a periodic Fourier transform of the `1.0 ms` exposure boxcar has a `sinc(f · T_exp) = 0` null right at `f = 1 kHz`, **we are not blind at `1 kHz`**. Because a physical DM step response is **time-limited** (`s(t) = 0` before causal onset and `s(t) → 1` after `T_max ≈ 14 ms`), no non-zero response can be `1 ms`-periodic: the tall two-sided Toeplitz boxcar matrix `B` (`80 × 51`) has **strictly zero null space** and a moderate condition number **`κ(B) = {deconv_info['toeplitz_cond_b']:.1f}`**.
+2. **Physical DM Step Recovery & High-Rate Pre-Shaper (Feature 1)**: Although a periodic Fourier transform of the `1.0 ms` exposure boxcar has {null_clause}, **we are not blind at `1 kHz`**. Because a physical DM step response is **time-limited** (`s(t) = 0` before causal onset and `s(t) → 1` after `T_max ≈ 14 ms`), no non-zero response can be `1 ms`-periodic: the tall two-sided Toeplitz boxcar matrix `B` (`{deconv_info['toeplitz_rows']} × {deconv_info['toeplitz_cols']}`) has **strictly zero null space** and a moderate condition number **`κ(B) = {deconv_info['toeplitz_cond_b']:.1f}`**.
 
 ![Fixed 1 ms Exposure Transfer Function & Two-Sided Finite-Support Toeplitz Inversion (1x2)](dm64_3drm_exposure_deconv_1x2.png)
 

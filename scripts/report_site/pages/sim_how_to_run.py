@@ -26,6 +26,7 @@ from .sim_how_to_run_sections import (
     render_real_hardware_section,
 )
 from .sim_shell import render_sim_page_shell
+from .turbulence import render_sim_turbulence_card
 
 
 def build_sim_how_to_run_html(
@@ -40,8 +41,10 @@ def build_sim_how_to_run_html(
     repro_md: str,
     ctx: RenderContext,
     has_compute_report: bool,
+    has_pyrwfs_report: bool = False,
     updated_utc: str,
     run_options: dict[str, object] | None = None,
+    turb_profile: dict[str, object] | None = None,
 ) -> str:
     """Build the user-oriented How to Run It sub-page (how_to_run.html)."""
     ctx.has_mermaid = False
@@ -64,7 +67,7 @@ def build_sim_how_to_run_html(
 
     defaults = {
         "slug": slug,
-        "seeing": params.get("seeing", '0.60"').rstrip('"'),
+        "seeing": params.get("seeing", '0.80"').rstrip('"'),
         "phys_time": params.get("phys_time", "5.0 s").split()[0],
         "bench_mode": params.get("bench_mode", "fused"),
         "oversample": params.get("oversample", "4x").rstrip("x"),
@@ -198,9 +201,16 @@ def build_sim_how_to_run_html(
         "and repository table for full source build instructions.</p>"
     )
 
+    turb_banner = render_sim_turbulence_card(
+        turb_profile,
+        rel_root="..",
+        compact=True,
+    )
     raw_body = "\n\n".join(
-        [
+        p
+        for p in (
             f"<h1>{html.escape(title, quote=False)} &middot; How to Run It</h1>",
+            turb_banner,
             render_category_legend_html(compact=False),
             customizer_html,
             cacaosim_html,
@@ -208,7 +218,8 @@ def build_sim_how_to_run_html(
             checklist_html,
             adapt_html,
             repro_block,
-        ]
+        )
+        if p
     )
     toc = extract_toc_html(raw_body)
     if toc:
@@ -223,6 +234,7 @@ def build_sim_how_to_run_html(
         hierarchy=hierarchy,
         active_tab="how_to_run",
         has_compute_report=has_compute_report,
+        has_pyrwfs_report=has_pyrwfs_report,
         body_html=raw_body,
         toc_items=toc_items,
         page_scripts=("how_to_run.js",),

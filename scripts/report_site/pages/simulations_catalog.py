@@ -20,13 +20,21 @@ def build_simulations_catalog_html(hierarchy: dict[str, object]) -> str:
         '<section class="hero-banner">\n'
         "<h1>All Closed-Loop AO Simulation Suites</h1>\n"
         "<p>Complete side-by-side matrix of all staged simulation runs across all AO "
-        "research domains. Filter by research domain, control law, Stage-3 LLOWFS state, "
-        "or 2-WFS/1-DM system ID, and select runs to compare Strehl, WFE, and contrast.</p>\n"
+        "research domains, ordered newest-first by simulation date (click any column "
+        "header to re-sort). Filter by research domain, control law, Stage-3 LLOWFS state, "
+        "or 2-WFS/1-DM system ID, and select runs to compare Strehl, WFE, and contrast. "
+        "Every simulation references the "
+        '<a href="../turbulence/index.html"><strong>Default Turbulence &amp; Perturbation Model</strong></a> '
+        "and explicitly notes any atmosphere, wind, vibration, or petaling overrides.</p>\n"
         '<div class="kpi-grid">'
         + kpi_card("Total Simulations", str(len(run_metas)), "Staged in repository")
         + kpi_card("Research Domains", str(len(domains)), "Filterable below")
         + kpi_card("Views per Run", "5 Pages", "Overview, Config, Optical, Runtime, How-to-Run")
         + "</div>\n"
+        '<div class="hero-actions">'
+        '<a class="btn btn-secondary" href="../turbulence/index.html">'
+        "Default Turbulence &amp; Perturbation Model &rarr;</a>"
+        "</div>\n"
         "</section>"
     )
 

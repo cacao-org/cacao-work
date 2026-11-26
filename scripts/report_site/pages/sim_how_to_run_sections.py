@@ -136,7 +136,9 @@ def render_customizer_section(
         "generate custom commands for <code>run-ao3k-scexao.sh</code>, "
         "<code>cacaosim-bench</code>, and <code>cacaoloop-ao3k-scexao.milk</code>. "
         'Click any label to open its definition in the '
-        '<a href="../reference/index.html">Options Reference</a>:</p>\n'
+        '<a href="../reference/index.html">Options Reference</a>, or review baseline '
+        'atmosphere, wind, vibration, and petaling settings in the '
+        '<a href="../turbulence/index.html">Default Turbulence &amp; Perturbation Model</a>:</p>\n'
         '<div class="explorer-panel">\n'
         '<div class="customizer-grid">\n'
         f'<div class="field-box">{_opt_label("cust-seeing", "Seeing [arcsec]", "--seeing")}'

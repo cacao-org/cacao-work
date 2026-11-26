@@ -214,6 +214,11 @@
       var cbs = Array.from(simTbl.querySelectorAll("input.sim-cmp-cb"));
       cbs.forEach(function(cb) {
         if (preset === "clear") { cb.checked = false; return; }
+        if (preset === "all") {
+          var tr = cb.closest("tr");
+          cb.checked = !tr || !tr.classList.contains("hidden");
+          return;
+        }
         var s = cb.value;
         if (preset === "ar-sweep") {
           cb.checked = /(_lowfs_closed|_predictive_ar(4|8|16|32|64))$/.test(s);

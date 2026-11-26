@@ -13,6 +13,7 @@ SIM_TABS: tuple[tuple[str, str, str], ...] = (
     ("overview", "index.html", "Overview"),
     ("config", "config.html", "Configuration"),
     ("optical", "optical.html", "Optical Performance"),
+    ("pyrwfs", "pyrwfs.html", "Pyramid WFS"),
     ("runtime", "runtime.html", "Runtime Performance"),
     ("how_to_run", "how_to_run.html", "How to Run It"),
 )
@@ -26,22 +27,26 @@ def render_sim_page_shell(
     hierarchy: dict[str, object],
     active_tab: str,
     has_compute_report: bool,
+    has_pyrwfs_report: bool = False,
     body_html: str,
     toc_items: list[tuple[str, str]] | tuple[tuple[str, str], ...] = (),
     page_scripts: tuple[str, ...] = (),
     has_mermaid: bool = False,
     updated_utc: str = "",
 ) -> str:
-    """Wrap a simulation overview or sub-page in the unified site shell + 5-tab subnav."""
+    """Wrap a simulation overview or sub-page in the unified site shell + subnav."""
     slug_esc = html.escape(slug, quote=False)
-    tab_lbls = {k: lbl for k, _, lbl in SIM_TABS}
+    active_tabs = tuple(
+        t for t in SIM_TABS if (t[0] != "pyrwfs" or has_pyrwfs_report or active_tab == "pyrwfs")
+    )
+    tab_lbls = {k: lbl for k, _, lbl in active_tabs}
     tab_links: list[str] = []
-    for tkey, thref, tlbl in SIM_TABS:
+    for tkey, thref, tlbl in active_tabs:
         t_disp = f"{tlbl} (N/A)" if (tkey == "runtime" and not has_compute_report) else tlbl
         cls = ' class="active"' if active_tab == tkey else ""
         tab_links.append(f'<a href="{thref}"{cls}>{html.escape(t_disp, quote=False)}</a>')
 
-    cur_file = next(h for k, h, _ in SIM_TABS if k == active_tab)
+    cur_file = next(h for k, h, _ in active_tabs if k == active_tab)
     cur_label = tab_lbls.get(active_tab, "Overview")
     domain_map: dict[str, dict[str, object]] = hierarchy.get("domain_map") or {}  # type: ignore[assignment]
     dom = domain_map.get(domain_id) or {}
@@ -72,6 +77,7 @@ def render_sim_page_shell(
         active_slug=slug,
         active_sim_tab=active_tab,
         has_compute_report=has_compute_report,
+        has_pyrwfs_report=has_pyrwfs_report or active_tab == "pyrwfs",
         page_kind="simulation",
         breadcrumbs=[
             ("Home", "../index.html"),

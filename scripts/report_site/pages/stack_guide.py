@@ -193,7 +193,9 @@ def build_stack_guide_html(hierarchy: dict[str, object]) -> str:
             "<h1>Open-Source AO Stack &amp; Reproduction Guide</h1>",
             "<p>Complete source repository provenance, CMake build instructions, and "
             "automated CLI commands to reproduce all simulations and technical reports. "
-            'Browse every optical bench key, FPS parameter, and CLI flag in the '
+            'Inspect the baseline entrance-pupil physics in the '
+            '<a href="../turbulence/index.html"><strong>Default Turbulence &amp; Perturbation Model</strong></a> '
+            'and browse every optical bench key, FPS parameter, and CLI flag in the '
             '<a href="../reference/index.html"><strong>Simulator Options Reference</strong></a>.</p>',
             '<h2 id="github-repositories">Open-Source GitHub Repositories</h2>',
             "<p>All source repositories build into one relocatable prefix "

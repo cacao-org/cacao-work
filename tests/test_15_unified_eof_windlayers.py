@@ -793,3 +793,125 @@ milk-fps-rm -f -q mk_{tag}
     assert vr_ao3k["phys"] > 50.0, f"AO3k cold-start VR%: {vr_ao3k}"
     assert vr_ao3k["phys"] > vr_ao3k["emp"] + 15.0, f"AO3k cold-start VR%: {vr_ao3k}"
     print(f"[TP-5.5] Real AO3k 1 kHz Block-0 cold-start (N=1024) VR%={vr_ao3k}")
+
+
+def test_56_mkeofpf_diff_space_tt_whitening(shm_sandbox):
+    """TP-5.6: Difference-space EOF on leading TT modes fixes ridge starvation, DC droop,
+    cross-mode DC leakage, and whitens multi-frequency vibrations (ac(L >= 4) ~ 0)."""
+    _shm_dir, work_dir, env = shm_sandbox
+    rng = np.random.default_rng(20260506)
+
+    nbm = 16
+    b_blk = 16
+    p_eof = 12
+    p_diff = 48
+    lat_fr = 2.4
+    fs = 1000.0
+    n_tot = 6000
+    t_s = np.arange(n_tot, dtype=np.float64) / fs
+
+    # Smooth 2-pole low-pass Kolmogorov-like wander on TT (0-3 Hz, smooth velocity like real
+    # wind-blown turbulence) + slow uncorrelated drift on petal mode 2 + narrowband coupled
+    # vibrations at 49.5 Hz, 99.5 Hz, and 138.3 Hz on TT.
+    ol = np.zeros((n_tot, nbm), dtype=np.float64)
+    for m in range(nbm):
+        amp_slow = 0.40 if m < 2 else (0.20 if m == 2 else 0.015)
+        w_n = rng.standard_normal(n_tot)
+        x1 = np.zeros(n_tot, dtype=np.float64)
+        x2 = np.zeros(n_tot, dtype=np.float64)
+        a1 = 0.992 if m < 3 else 0.95
+        for i in range(1, n_tot):
+            x1[i] = a1 * x1[i - 1] + (1.0 - a1) * w_n[i]
+            x2[i] = a1 * x2[i - 1] + (1.0 - a1) * x1[i]
+        ol[:, m] = amp_slow * (x2 / max(float(np.std(x2)), 1e-9))
+
+    # Add vibrations to TT (m=0, 1) with elliptical X/Y phase offset + tiny white measurement noise
+    for freq_hz, amp0, amp1, ph1 in (
+        (49.5, 0.012, 0.009, 0.6),
+        (99.5, 0.006, 0.006, 1.1),
+        (138.3, 0.007, 0.006, 1.4),
+    ):
+        w = 2.0 * np.pi * freq_hz * t_s
+        ol[:, 0] += amp0 * np.sin(w)
+        ol[:, 1] += amp1 * np.sin(w + ph1)
+    ol += 3.0e-4 * rng.standard_normal((n_tot, nbm))
+
+    ol_tr = ol[:4000].astype(np.float32)
+    ol_te = ol[4000:].astype(np.float64)
+    fits.writeto(work_dir / "tt_tr.fits", ol_tr, overwrite=True)
+
+    res_vr: dict[str, float] = {}
+    res_ac4_max: dict[str, float] = {}
+    for tag, diff_n in (("pos", 0), ("diff", 2)):
+        cmd = f"""
+{_COPY_INPLACE_FN}
+milk-FITS2shm --no-procinfo -n l0_{tag} exec tt_tr.fits @S:ol_{tag} >/dev/null
+milk-fps-init -q mk_{tag} cacao-fpsexec-cacaopc-mkEOFPF
+milk-fps-set -q \\
+    mk_{tag}.inbuff=ol_{tag} \\
+    mk_{tag}.outPF=pf_{tag} \\
+    mk_{tag}.PForder={p_eof} \\
+    mk_{tag}.diagorder={p_diff if diff_n > 0 else p_eof} \\
+    mk_{tag}.blocksize={b_blk} \\
+    mk_{tag}.PFlatency={lat_fr} \\
+    mk_{tag}.NBtrain=4000 \\
+    mk_{tag}.diagminsamples=256 \\
+    mk_{tag}.minsamples=2000 \\
+    mk_{tag}.updateperiod=1 \\
+    mk_{tag}.reglambda=0.05 \\
+    mk_{tag}.maxnorm2=1.35 \\
+    mk_{tag}.zoh_ridge=ON \\
+    mk_{tag}.diff_nmode={diff_n} \\
+    mk_{tag}.diff_order={p_diff} \\
+    mk_{tag}.diff_reg=0.005 \\
+    mk_{tag}.diff_maxnorm2=8.0 \\
+    mk_{tag}.diff_maxdcgain=0.9995 \\
+    mk_{tag}.loopgain=1.0 \\
+    mk_{tag}.procinfo.triggermode=3 \\
+    mk_{tag}.procinfo.triggersname=ol_{tag} \\
+    mk_{tag}.procinfo.loopcntMax=-1
+milk-fps-runstart -q mk_{tag}
+sleep 0.2
+copy_inplace tt_tr.fits c0_{tag} ol_{tag}
+sleep 0.6
+milk-fpsexec-iofits-saveFITS --no-procinfo -n sv_{tag} \\
+    exec pf_{tag} "!pf_tt_{tag}.fits" >/dev/null
+milk-fps-runstop -q mk_{tag}
+milk-fps-wait -q -t 10 mk_{tag}
+milk-fps-rm -f -q mk_{tag}
+"""
+        _run(cmd, env, work_dir)
+        pf = fits.getdata(work_dir / f"pf_tt_{tag}.fits").astype(np.float64)
+        if diff_n > 0:
+            # Verify exact algebraic DC invariants on m=0, 1
+            pb_len = p_eof * b_blk
+            for m in (0, 1):
+                dc_self = sum(pf[m, k * b_blk + m] for k in range(p_eof)) + float(
+                    np.sum(pf[m, pb_len:])
+                )
+                assert abs(dc_self - 0.9995) < 1e-4, f"m={m} dc_self={dc_self}"
+                for j in range(b_blk):
+                    if j == m:
+                        continue
+                    dc_off = sum(pf[m, k * b_blk + j] for k in range(p_eof))
+                    assert abs(dc_off) < 1e-5, f"m={m} j={j} dc_off={dc_off}"
+                    if j >= diff_n:
+                        assert np.all(
+                            np.abs([pf[m, k * b_blk + j] for k in range(p_eof)]) < 1e-7
+                        ), f"m={m} leaked from mode j={j}"
+
+        ep, ez = _eval_pf_sequence(pf, ol_te, p_eof, b_blk, lat_fr)
+        ep_tt = ep[:, :2]
+        ez_tt = ez[:, :2]
+        res_vr[tag] = (1.0 - float(np.mean(ep_tt**2) / np.mean(ez_tt**2))) * 100.0
+        # Max |autocorr| at lags 4..20 ms on m=0 OOS residual
+        e0 = ep_tt[:, 0] - np.mean(ep_tt[:, 0])
+        v0 = float(np.dot(e0, e0))
+        ac_tail = [abs(float(np.dot(e0[L:], e0[:-L]) / v0)) for L in (4, 5, 8, 10, 20)]
+        res_ac4_max[tag] = max(ac_tail)
+
+    assert res_vr["diff"] > 80.0, f"diff-space TT VR too low: {res_vr}"
+    assert res_vr["diff"] > res_vr["pos"] + 30.0, f"diff vs pos VR: {res_vr}"
+    assert res_ac4_max["diff"] < 0.15, f"diff-space TT residual not whitened: {res_ac4_max}"
+    assert res_ac4_max["diff"] < res_ac4_max["pos"] * 0.4, f"whitening ratio: {res_ac4_max}"
+    print(f"[TP-5.6] TT OOS VR%={res_vr} | max|ac(4..20ms)|={res_ac4_max}")

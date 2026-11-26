@@ -90,8 +90,9 @@ def write_report_outputs(
             "Strict ALPAO-Only Scope (MEMS=RC)",
         ],
         "referenced_simulations": [
-            "ao3k_scexao_lowfs_closed",
-            "ao3k_scexao_predictive_ar16",
+            "ao3k_scexao_unmod12_mh8_opt",
+            "ao3k_scexao_s08_realistic_mod3",
+            "ao3k_stg1_opt_unmod_v2",
         ],
         "nav_label": "ALPAO 64×64 DM Dynamics",
         "button_label": "Read ALPAO 64×64 DM Dynamics Report",
@@ -204,7 +205,7 @@ While the SCExAO measurement video (`LepICSaBL-E`) displays the **1 ms consecuti
 - **Physical Scope (Strict Hardware Separation)**: Models the **Stage-1 Subaru AO3k ALPAO 64×64 magnetic voice-coil DM (`[dm.ao3k]`) ONLY**—continuous thin silicon facesheet (`1.5 mm` pitch, `~96 mm` circular aperture, ~3,228 active actuators). Does **not** apply to the **Stage-2 SCExAO 50×50 MEMS DM (`[dm.scexao]`)**, which retains independent high-bandwidth RC dynamics (`dyn_mode = "rc"`, `τ = 60 μs`).
 - **Empirical Reference**: Calibrated directly against Olivier Guyon's 20 kHz / 20 ms SCExAO laboratory single-actuator poke measurement ([YouTube: Deformable Mirror (DM) time response — `LepICSaBL-E`](https://www.youtube.com/watch?v=LepICSaBL-E)) and published ALPAO DM3228/DM241 studies (Lozi et al. 2024; Le Bouquin et al. 2018; Boudjema et al. 2025; Laslandes et al. 2026).
 - **Compiled Engine**: `cacaosim` (`cacaosim_dm_engine.c` + single-SM shared-memory `cacaosim_dm_cuda.cu`), verified at **`0.000e+00 μm` CPU–CUDA parity** and **`{plate_row['cuda_p50_us']:.1f} μs` p50** (`{plate_row['cuda_khz']:.2f} kHz`) per `8 kHz` (`4×` oversampled `2 kHz`, `dt = 125 μs`) tick—adding only `~9%` total runtime to the full Subaru `ao3k_scexao.bench` DAG (`390 Hz` vs. `426 Hz` with RC). Enabled by default on `[dm.ao3k]` in `ao3k_scexao.bench`.
-- **Companion Two-Stage Bench Runs**: [ao3k_scexao_lowfs_closed](../ao3k_scexao_lowfs_closed/index.html) · [ao3k_scexao_predictive_ar16](../ao3k_scexao_predictive_ar16/index.html) · [Simulator Options Reference](../reference/index.html)
+- **Companion Plate-DM Bench Runs**: [ao3k_scexao_unmod12_mh8_opt](../ao3k_scexao_unmod12_mh8_opt/index.html) · [ao3k_scexao_s08_realistic_mod3](../ao3k_scexao_s08_realistic_mod3/index.html) · [ao3k_stg1_opt_unmod_v2](../ao3k_stg1_opt_unmod_v2/index.html) · [Simulator Options Reference](../reference/index.html)
 
 > **Key Takeaway**: Direct 3D Fourier system identification (`|F(k, f)|²`) on the SCExAO 20 kHz measurement video (`LepICSaBL-E`) reveals the exact physics of the ALPAO 64×64 magnetic facesheet: a **`1,000 Hz` actuator foundation resonance** (which naturally falls inside the `1,000 Hz` temporal null of `LepICSaBL-E`'s consecutive `1 ms` exposure differences, explaining why fine `k = 6–10 c/pup` ripples dominate over low-`k` sloshing), combined membrane+flexural dispersion (`c_m = 14.0 m/s`, `β = 0.0085 m²/s`), **localized voice-coil force excitation** (`plate_drive = "force"`), a **free circular rim** (`rim_bc = "free"`), viscous decay `γ₀ = 195 s⁻¹` (`τ = 5.1 ms`), and exact **`1 ms` consecutive-exposure boxcar differencing**. Implementing this calibrated model in `cacaosim`'s single-SM CUDA shared-memory kernel reproduces the in-phase `t = +2.2 ms` bullseye, expanding dispersive rings, rim reflections, and crisp `t = +11.5 ms` upper-right conjugate caustic at **`{plate_row['cuda_p50_us']:.0f} μs` p50** per `8 kHz` (`4×` oversampled) tick (**`{plate_row['cuda_khz']:.1f} kHz`**, `0.000e+00 μm` CPU–CUDA parity, only `+9%` overhead in the full `ao3k_scexao.bench` optical bench)—and is now the **default** for Stage-1 `[dm.ao3k]` in `ao3k_scexao.bench`.
 

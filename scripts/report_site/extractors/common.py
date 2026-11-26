@@ -5,11 +5,30 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
 
 REL_SIBLING_RE = re.compile(r"\(\.\./([A-Za-z0-9_.-]+)/(?:[A-Za-z0-9_.-]+\.html)?\)")
+
+SIM_DATE_PRIMARY_FILES: tuple[str, ...] = (
+    "wf_stats.json",
+    "wf_timeseries.csv",
+    "strehl_timeseries.csv",
+    "ao3k_scexao.bench",
+    "compute_telemetry.json",
+    "compute_perf_metrics.json",
+    "pf_stats.json",
+)
+
+_EXPLICIT_DATE_KEYS: tuple[str, ...] = (
+    "simulation_utc",
+    "simulation_iso",
+    "run_utc",
+    "simulation_date",
+    "generated_utc",
+)
 
 
 def human_bytes(nbytes: int) -> str:
@@ -55,8 +74,117 @@ def is_tech_report_meta(meta: dict[str, object]) -> bool:
     return str(meta.get("report_type", "")) in ("study", "tech_report")
 
 
-def meta_sort_key(meta: dict[str, object]) -> tuple[int, int, str]:
-    """Deterministic ordering for tech reports and simulation runs."""
+def format_utc_timestamp(epoch: float) -> tuple[str, str, float]:
+    """Format a Unix epoch timestamp into (display_utc, iso_utc, epoch)."""
+    ep = round(float(epoch), 3)
+    dt = datetime.fromtimestamp(ep, timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M UTC"), dt.strftime("%Y-%m-%dT%H:%M:%SZ"), ep
+
+
+def parse_utc_timestamp(raw: object) -> tuple[str, str, float] | None:
+    """Parse an ISO-8601, 'YYYY-MM-DD HH:MM UTC', or numeric epoch into UTC strings + epoch."""
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        if float(raw) > 0.0:
+            return format_utc_timestamp(float(raw))
+        return None
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    iso_cand = s[:-1] + "+00:00" if s.endswith("Z") else s
+    try:
+        dt = datetime.fromisoformat(iso_cand)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return format_utc_timestamp(dt.timestamp())
+    except ValueError:
+        pass
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S UTC",
+        "%Y-%m-%d %H:%M UTC",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+            return format_utc_timestamp(dt.timestamp())
+        except ValueError:
+            continue
+    return None
+
+
+def extract_simulation_timestamp(
+    report_dir: Path | None,
+    out_slug_dir: Path | None,
+    *,
+    metrics_data: dict[str, object] | None = None,
+    run_options: dict[str, object] | None = None,
+) -> tuple[str, str, float]:
+    """Resolve the true simulation run timestamp, avoiding post-hoc report/web rebuild times."""
+    dicts_to_check: list[dict[str, object]] = []
+    if isinstance(run_options, dict):
+        dicts_to_check.append(run_options)
+    if isinstance(metrics_data, dict):
+        dicts_to_check.append(metrics_data)
+        repro = metrics_data.get("reproducibility")
+        if isinstance(repro, dict):
+            dicts_to_check.append(repro)
+
+    for src_d in dicts_to_check:
+        for key in _EXPLICIT_DATE_KEYS:
+            parsed = parse_utc_timestamp(src_d.get(key))
+            if parsed is not None:
+                return parsed
+
+    search_dirs = [d for d in (report_dir, out_slug_dir) if d is not None and d.is_dir()]
+    for d in search_dirs:
+        for fname in SIM_DATE_PRIMARY_FILES:
+            cand = d / fname
+            if cand.is_file():
+                try:
+                    return format_utc_timestamp(cand.stat().st_mtime)
+                except OSError:
+                    continue
+        for bench in sorted(d.glob("*.bench")):
+            if bench.is_file() and bench.name != "csim_active.bench":
+                try:
+                    return format_utc_timestamp(bench.stat().st_mtime)
+                except OSError:
+                    continue
+
+    for d in search_dirs:
+        fallbacks: list[Path] = []
+        mpath = find_metrics_path(d)
+        if mpath is not None:
+            fallbacks.append(mpath)
+        fallbacks.extend([d / "REPORT.md", d / "run_options.json"])
+        for cand in fallbacks:
+            if cand.is_file():
+                try:
+                    return format_utc_timestamp(cand.stat().st_mtime)
+                except OSError:
+                    continue
+    return "", "", 0.0
+
+
+def simulation_sort_epoch(meta: dict[str, object]) -> float:
+    """Return numeric UTC epoch seconds for sorting a simulation by its run date."""
+    raw_ep = meta.get("simulation_epoch")
+    if isinstance(raw_ep, (int, float)) and not isinstance(raw_ep, bool) and float(raw_ep) > 0.0:
+        return float(raw_ep)
+    for key in ("simulation_iso", "simulation_utc", "updated_utc"):
+        parsed = parse_utc_timestamp(meta.get(key))
+        if parsed is not None:
+            return parsed[2]
+    return 0.0
+
+
+def baseline_sort_key(meta: dict[str, object]) -> tuple[int, int, str]:
+    """Deterministic control-complexity key used to pick the baseline reference row."""
     if is_tech_report_meta(meta):
         return (-1, 0, str(meta.get("slug", "")))
     cmp_d = meta.get("comparison")
@@ -83,3 +211,14 @@ def meta_sort_key(meta: dict[str, object]) -> tuple[int, int, str]:
             tier = 3
         return (tier, p_ord, slug)
     return (4, 0, slug)
+
+
+def meta_sort_key(meta: dict[str, object]) -> tuple[int, float, int, int, str]:
+    """Default ordering: tech reports first, then simulations newest-first by simulation date."""
+    if is_tech_report_meta(meta):
+        return (-1, 0.0, 0, 0, str(meta.get("slug", "")))
+    tier, sub_ord, slug = baseline_sort_key(meta)
+    epoch = simulation_sort_epoch(meta)
+    if epoch > 0.0:
+        return (0, -epoch, tier, sub_ord, slug)
+    return (1, 0.0, tier, sub_ord, slug)

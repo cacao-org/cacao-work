@@ -17,6 +17,7 @@ from .fragments import (
     render_domain_badge,
 )
 from .sim_shell import render_sim_page_shell
+from .turbulence import render_sim_turbulence_card
 
 
 def _dynamic_sim_mermaid(
@@ -83,7 +84,9 @@ def build_sim_overview_html(
     out_slug_dir: Path,
     staged_files: list[Path],
     has_compute_report: bool,
+    has_pyrwfs_report: bool = False,
     updated_utc: str,
+    turb_profile: dict[str, object] | None = None,
 ) -> str:
     """Build the Simulation Overview hub page (index.html)."""
     c = cmp_dict or {}
@@ -128,6 +131,17 @@ def build_sim_overview_html(
         )
 
     kpi_html = f'<div class="kpi-grid">{"".join(kpis)}</div>' if kpis else ""
+    pyrwfs_card = (
+        '<a class="subpage-card" href="pyrwfs.html">'
+        "<div><h3>3. Pyramid WFS</h3>"
+        "<p>Live Stage-1/Stage-2 packed-zone flux budget, defocus-invariant Strehl proxy, "
+        "6-DOF pupil registration, quad-cell jitter, scintillation &amp; spider LWE maps.</p></div>"
+        '<span class="subpage-cta">Open Pyramid WFS &rarr;</span></a>\n'
+        if has_pyrwfs_report
+        else ""
+    )
+    rt_num = "4" if has_pyrwfs_report else "3"
+    htr_num = "5" if has_pyrwfs_report else "4"
     sub_cards = (
         '<div class="subpage-grid">\n'
         '<a class="subpage-card" href="config.html">'
@@ -140,15 +154,16 @@ def build_sim_overview_html(
         '<p>Interactive WFE/Strehl/modal/coronagraph charts, PSF maps, predictive &amp; SysID '
         'metrics, and slow-motion telemetry video.</p></div>'
         '<span class="subpage-cta">Open Optical Performance &rarr;</span></a>\n'
+        f"{pyrwfs_card}"
         '<a class="subpage-card" href="runtime.html">'
-        '<div><h3>3. Runtime Performance</h3>'
+        f'<div><h3>{rt_num}. Runtime Performance</h3>'
         '<p>Phase-by-phase CPU/GPU/VRAM breakdown, per-process <code>PROCESSINFO</code> '
         'latency, SHM stream bandwidth, and optimization notes.</p></div>'
         '<span class="subpage-cta">'
         f'{"Open Runtime Performance &rarr;" if has_compute_report else "Runtime Summary &rarr;"}'
         "</span></a>\n"
         '<a class="subpage-card" href="how_to_run.html">'
-        '<div><h3>4. How to Run It</h3>'
+        f'<div><h3>{htr_num}. How to Run It</h3>'
         '<p>Interactive CLI customizer, launching <code>cacaosim</code>, full CACAO compute '
         'unit catalog, and step-by-step deployment checklist.</p></div>'
         '<span class="subpage-cta">Open How-to-Run Guide &rarr;</span></a>\n'
@@ -158,8 +173,19 @@ def build_sim_overview_html(
     previews: list[str] = []
     for fname, href, lbl in (
         ("cacaosim_gui_schematic.png", "config.html", "Optical Bench Schematic (Configuration)"),
+        ("perturb_summary_2x2.png", "optical.html", "Realistic Perturbations: Wind, Vib & Petaling"),
         ("psf_comparison_2x3.png", "optical.html", "Long-Exposure PSFs (Optical Performance)"),
         ("coro_before_after_psf.png", "optical.html", "Lyot Coronagraph (Optical Performance)"),
+        (
+            "pyrwfs_flux_strehl_2x2.png",
+            "pyrwfs.html",
+            "Pyramid WFS Flux Budget & Strehl Proxy (Pyramid WFS)",
+        ),
+        (
+            "pyrwfs_pupil_maps_2x4.png",
+            "pyrwfs.html",
+            "Pyramid WFS 2D Zone & Scintillation Maps (Pyramid WFS)",
+        ),
         (
             "eof_pf_matrix_3d.png",
             "optical.html#eof-3d-predictive-matrix",
@@ -197,6 +223,13 @@ def build_sim_overview_html(
         "<!-- TECH_REPORT_BACKLINKS_END -->"
     )
 
+    turb_card_html = render_sim_turbulence_card(
+        turb_profile,
+        rel_root="..",
+        compact=False,
+        has_perturb_fig=(out_slug_dir / "perturb_summary_2x2.png").is_file(),
+    )
+
     body = "\n\n".join(
         part
         for part in (
@@ -204,6 +237,7 @@ def build_sim_overview_html(
             f'<div class="badge-row">{badge_pills}</div>' if badge_pills else "",
             kpi_html,
             preamble_html,
+            turb_card_html,
             '<h2 id="simulation-report-sections">Simulation Report Sections</h2>',
             sub_cards,
             backlinks_html,
@@ -221,6 +255,7 @@ def build_sim_overview_html(
         hierarchy=hierarchy,
         active_tab="overview",
         has_compute_report=has_compute_report,
+        has_pyrwfs_report=has_pyrwfs_report,
         body_html=body,
         toc_items=toc_items,
         has_mermaid=True,

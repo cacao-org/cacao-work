@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import math
 import os
@@ -16,7 +17,7 @@ from astropy.io import fits
 import numpy as np
 
 # Exact Stage-1 Subaru AO3k ALPAO 64x64 Plate DM + 160x160 J-band PyWFS (1,000.0 Hz fixed WFS,
-# 1.0 ms exposure, 4 kHz / 250 us physical ticks -> crystal-locked 1,000.00 Hz, zero timer overrun).
+# 1.0 ms exposure, 8 kHz / 125 us physical ticks, navg = 8).
 AO3K_PLATE64_BENCH = """\
 [bench]
 name          = "ao3k_plate64_3drm"
@@ -31,7 +32,7 @@ tel_diam_m    = 7.95
 star_mag      = 4.0
 star_teff     = 9600.0
 tput_tel      = 0.20
-master_hz     = 4000.0
+master_hz     = 8000.0
 oversample    = 1
 in_wf         = "outarraypha"
 in_pup        = "csim_pup"
@@ -72,7 +73,7 @@ lambda_um     = 1.22
 bw_frac       = 0.20
 qe            = 0.80
 use_beam_flux = 1
-navg          = 4
+navg          = 8
 mod_rad       = 3.0
 mod_npts      = 16
 ron_e         = 0.0
@@ -364,6 +365,15 @@ def run_live_64x64_acquisition(
     env["CACAOSIM_WORKDIR"] = str(csim_dir)
     python_bin = env.get("PYTHON_BIN") or shutil.which("python3") or "python3"
 
+    wall_pacing_hz = 2000.0
+    wall_wfs_hz = wall_pacing_hz / 8.0
+
+    # Tighten kernel hrtimer slack to 1 us so child csim_htsim & measdynresp timers lock tightly
+    try:
+        ctypes.CDLL("libc.so.6").prctl(29, 1000, 0, 0, 0)  # PR_SET_TIMERSLACK = 29
+    except Exception:
+        pass
+
     script = f"""
 set -euo pipefail
 source "{repo_root}/env.sh"
@@ -372,18 +382,22 @@ export MILK_PROC_DIR="{proc_dir}"
 export CACAOSIM_WORKDIR="{csim_dir}"
 
 cleanup() {{
-    milk-fps-rm -f -q mdr_z4 mdr_z4pp mlr_z4 mdr_m28 >/dev/null 2>&1 || true
+    milk-fps-rm -f -q mdr_z4 mdr_z4pp mlr_z4 mdr_m28 fdr_p1_16 >/dev/null 2>&1 || true
     cacaosim-bench teardown --workdir "{csim_dir}" --no-view >/dev/null 2>&1 || true
 }}
 trap cleanup EXIT
 
-echo "[dm64-dyn-rm] Deploying live ALPAO 64x64 plate DM + 160x160 J-band PyWFS (4 kHz / 1 kHz WFS)..."
+echo "[dm64-dyn-rm] Deploying live ALPAO 64x64 plate DM + 160x160 J-band PyWFS (8 kHz phys / 1 kHz WFS, 2 kHz paced)..."
 cacaosim-bench deploy \\
     --workdir "{csim_dir}" \\
     --config "{bench_path}" \\
     --mode fused --no-view >/dev/null
 
+# Pace wall-clock cleanly at 2,000 Hz (4x slow-motion -> 250.0 Hz wall WFS = 1,000.0 Hz physical WFS)
+# so every 125 us physical GPU tick has >350 us headroom and zero timer/tick-boundary slips.
+milk-fps-set -q csim_htsim.frame_rate={wall_pacing_hz:.1f}
 milk-stream-wait -q -t 20 csim_wfs_nir:160x160 dm01disp:64x64
+sleep 0.4
 
 # Run inside raw_dir so all FPS FITS filenames stay well under milk's 63-char limit
 cd "{raw_dir}"
@@ -400,8 +414,8 @@ fits.writeto("wfsmask.fits", mask, overwrite=True)
 print(f"[dm64-dyn-rm] PyWFS active pixel mask: {{int(mask.sum())}} / {{mask.size}} pixels")
 PY
 
-# 1. Zonal 4-actuator wall-clock stroboscopic 3D RM (pokemode=0: 0->+a->0->-a->0, NBsubfr=4 -> 250 us)
-echo "[dm64-dyn-rm] Pass 1/4: Wall-clock stroboscopic 3D RM on 4 radial actuators (pokemode=0)..."
+# 1. Zonal 4-actuator wall-clock stroboscopic 3D RM (pokemode=0: 0->+a->0->-a->0, NBsubfr=8 -> 125 us)
+echo "[dm64-dyn-rm] Pass 1/4: Wall-clock stroboscopic 3D RM on 4 radial actuators (pokemode=0, 8 kHz)..."
 milk-fps-init -q mdr_z4 cacao-fpsexec-cacaoac-measdynresp >/dev/null
 milk-fps-set -q \\
     mdr_z4.streamin=dm01disp \\
@@ -411,9 +425,9 @@ milk-fps-set -q \\
     mdr_z4.outmask=wfsmask.fits \\
     mdr_z4.ampl=0.04 \\
     mdr_z4.normalize=OFF \\
-    mdr_z4.timing.WFSfrequ=0.0 \\
+    mdr_z4.timing.WFSfrequ=1000.0 \\
     mdr_z4.timing.frameratewait=0.5 \\
-    mdr_z4.timing.NBsubfr=4 \\
+    mdr_z4.timing.NBsubfr=8 \\
     mdr_z4.timing.NBrespfr=20 \\
     mdr_z4.timing.NBprefr=2 \\
     mdr_z4.timing.NBsettlefr=2 \\
@@ -424,11 +438,11 @@ milk-fps-set -q \\
     mdr_z4.saveALL=ON \\
     mdr_z4.procinfo.loopcntMax=1
 milk-fps-runstart -q mdr_z4
-milk-fps-wait -q -t 60 mdr_z4
+milk-fps-wait -q -t 120 mdr_z4
 milk-fps-rm -f -q mdr_z4
 
 # 2. Repeatability check: pokemode=1 (+a <-> -a) wall-clock on the same 4 actuators
-echo "[dm64-dyn-rm] Pass 2/4: Wall-clock repeatability pass (pokemode=1 push-pull)..."
+echo "[dm64-dyn-rm] Pass 2/4: Wall-clock repeatability pass (pokemode=1 push-pull, 8 kHz)..."
 milk-fps-init -q mdr_z4pp cacao-fpsexec-cacaoac-measdynresp >/dev/null
 milk-fps-set -q \\
     mdr_z4pp.streamin=dm01disp \\
@@ -438,9 +452,9 @@ milk-fps-set -q \\
     mdr_z4pp.outmask=wfsmask.fits \\
     mdr_z4pp.ampl=0.04 \\
     mdr_z4pp.normalize=OFF \\
-    mdr_z4pp.timing.WFSfrequ=0.0 \\
-    mdr_z4pp.timing.frameratewait=0.4 \\
-    mdr_z4pp.timing.NBsubfr=4 \\
+    mdr_z4pp.timing.WFSfrequ=1000.0 \\
+    mdr_z4pp.timing.frameratewait=0.5 \\
+    mdr_z4pp.timing.NBsubfr=8 \\
     mdr_z4pp.timing.NBrespfr=20 \\
     mdr_z4pp.timing.NBprefr=2 \\
     mdr_z4pp.timing.NBsettlefr=2 \\
@@ -451,7 +465,7 @@ milk-fps-set -q \\
     mdr_z4pp.saveALL=OFF \\
     mdr_z4pp.procinfo.loopcntMax=1
 milk-fps-runstart -q mdr_z4pp
-milk-fps-wait -q -t 60 mdr_z4pp
+milk-fps-wait -q -t 120 mdr_z4pp
 milk-fps-rm -f -q mdr_z4pp
 
 # 3. Standard static 2D RM via cacaoac-measlinresp (NBexcl=26 so plate settles <0.5%)
@@ -463,18 +477,18 @@ milk-fps-set -q \\
     mlr_z4.inmodes=poke_zonal4.fits \\
     mlr_z4.outmodes=zonal4_measlinresp.fits \\
     mlr_z4.ampl=0.04 \\
-    mlr_z4.timing.WFSfrequ=1000.0 \\
+    mlr_z4.timing.WFSfrequ={wall_wfs_hz:.1f} \\
     mlr_z4.timing.hardwlatfr=1.5 \\
     mlr_z4.timing.NBave=4 \\
     mlr_z4.timing.NBexcl=26 \\
     mlr_z4.timing.NBinnerCycle=1 \\
     mlr_z4.procinfo.loopcntMax=1
 milk-fps-runstart -q mlr_z4
-milk-fps-wait -q -t 60 mlr_z4
+milk-fps-wait -q -t 90 mlr_z4
 milk-fps-rm -f -q mlr_z4
 
-# 4. 28-mode Zernike (Z2..Z29) wall-clock stroboscopic 3D RM (NBsubfr=4 -> 250 us)
-echo "[dm64-dyn-rm] Pass 4/4: Wall-clock 28-mode Zernike 3D RM (Z2..Z29, 4 kHz effective)..."
+# 4. 28-mode Zernike (Z2..Z29) wall-clock stroboscopic 3D RM (NBsubfr=8 -> 125 us)
+echo "[dm64-dyn-rm] Pass 4/4: Wall-clock 28-mode Zernike 3D RM (Z2..Z29, 8 kHz effective)..."
 milk-fps-init -q mdr_m28 cacao-fpsexec-cacaoac-measdynresp >/dev/null
 milk-fps-set -q \\
     mdr_m28.streamin=dm01disp \\
@@ -484,9 +498,9 @@ milk-fps-set -q \\
     mdr_m28.outmask=wfsmask.fits \\
     mdr_m28.ampl=0.015 \\
     mdr_m28.normalize=OFF \\
-    mdr_m28.timing.WFSfrequ=0.0 \\
-    mdr_m28.timing.frameratewait=0.4 \\
-    mdr_m28.timing.NBsubfr=4 \\
+    mdr_m28.timing.WFSfrequ=1000.0 \\
+    mdr_m28.timing.frameratewait=0.5 \\
+    mdr_m28.timing.NBsubfr=8 \\
     mdr_m28.timing.NBrespfr=18 \\
     mdr_m28.timing.NBprefr=2 \\
     mdr_m28.timing.NBsettlefr=2 \\
@@ -497,8 +511,22 @@ milk-fps-set -q \\
     mdr_m28.saveALL=ON \\
     mdr_m28.procinfo.loopcntMax=1
 milk-fps-runstart -q mdr_m28
-milk-fps-wait -q -t 120 mdr_m28
+milk-fps-wait -q -t 240 mdr_m28
 milk-fps-rm -f -q mdr_m28
+
+# Factor 8 kHz modal28 cube into Pass-1 WFS-rate MIMO/diag kernels (used by dynpsol/modalog tests)
+mkdir -p fdr_p1
+milk-fps-init -q fdr_p1_16 cacao-fpsexec-cacaoac-factordynrm >/dev/null
+milk-fps-set -q \\
+    fdr_p1_16.resp3d=modal28_resp3D.fits \\
+    fdr_p1_16.outmimo=fdr_p1/H_mimo16.fits \\
+    fdr_p1_16.outdiag=fdr_p1/H_diag16.fits \\
+    fdr_p1_16.n_taps=16 \\
+    fdr_p1_16.phase_fr=0.0 \\
+    fdr_p1_16.procinfo.loopcntMax=1
+milk-fps-runstart -q fdr_p1_16
+milk-fps-wait -q -t 60 fdr_p1_16
+milk-fps-rm -f -q fdr_p1_16
 
 milk-fpsexec-iofits-saveFITS --no-procinfo -n snapdm exec dm01disp "!dm_end.fits" >/dev/null
 cacaosim-bench teardown --workdir "{csim_dir}" --no-view >/dev/null
@@ -508,7 +536,7 @@ cacaosim-bench teardown --workdir "{csim_dir}" --no-view >/dev/null
             ["bash", "-c", script],
             cwd=repo_root,
             env=env,
-            timeout=240,
+            timeout=420,
             check=False,
         )
         if res.returncode != 0:
@@ -612,6 +640,10 @@ cacaosim-bench teardown --workdir "{csim_dir}" --no-view >/dev/null
         "n_active_wfs_pix": int(mask_2d.sum()),
         "wfs_shape": [int(mask_2d.shape[0]), int(mask_2d.shape[1])],
         "dm_end_max_abs": dm_end_max,
+        "phys_master_hz": 8000.0,
+        "wall_pacing_hz": wall_pacing_hz,
+        "wall_wfs_hz": wall_wfs_hz,
+        "slowdown_factor": 8000.0 / wall_pacing_hz,
         "zonal_4seg": {
             "wfsfreq_hz": float(hdr_z4["WFSFREQ"]),
             "dt_us": float(hdr_z4["DT_SEC"]) * 1.0e6,

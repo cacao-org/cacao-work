@@ -370,8 +370,9 @@ source env.sh
             "500 Hz Astrogrid Vibration Cancellation",
         ],
         "referenced_simulations": [
-            "ao3k_scexao_lowfs_closed",
-            "ao3k_scexao_predictive_eof128_p8",
+            "ao3k_scexao_unmod12_mh8_opt",
+            "ao3k_scexao_s08_realistic_mod3",
+            "ao3k_stg1_opt_unmod_v2",
         ],
         "nav_label": "DM Pre-Shaper Demo",
         "button_label": "View DM Pre-Shaper Demo & Videos",

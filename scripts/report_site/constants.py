@@ -40,9 +40,18 @@ COMPUTE_IMAGES = {
     "compute_shm_and_calib_2x2.png",
 }
 
+PYRWFS_IMAGES = {
+    "pyrwfs_flux_strehl_2x2.png",
+    "pyrwfs_align_jitter_2x2.png",
+    "pyrwfs_pupil_maps_2x4.png",
+}
+
 FRIENDLY_FIG_LABELS: dict[str, str] = {
     "wfs_psf_short_evolution.mp4": (
-        "Short-Timescale Polychromatic PyWFS & Speckle PSF Evolution (Video)"
+        "Short-Timescale Incoming WF, PSOL, Diff, DM Shapes, PyWFS & Speckle PSF Evolution (Video)"
+    ),
+    "wfs_psf_full_evolution.mp4": (
+        "Full-Duration Real-Time Incoming WF, PSOL, Diff, DM Shapes, PyWFS & PSF Evolution (Video)"
     ),
     "cacaosim_gui_schematic.png": (
         "cacaosim-CTRL 2D Optical Bench Schematic & 32-Bin Polychromatic Spectra (F3:SCHEMATIC)"
@@ -72,6 +81,10 @@ FRIENDLY_FIG_LABELS: dict[str, str] = {
     ),
     "wf_strehl_timeseries_4x1.png": (
         "RMS Wavefront Error & Strehl Ratio Time Series with Sampled Instants (4x1)"
+    ),
+    "perturb_summary_2x2.png": (
+        "Realistic Non-Linear Perturbations: Wind Meandering, Gust Bursts, "
+        "Vibration PSD & Subaru Thermal Petaling (2x2)"
     ),
     "psf_inst_vis_5x3.png": (
         "Instantaneous Visible 0.75 um (15% BW, 3ch) PSFs at Sampled Instants (5x3)"
@@ -160,6 +173,16 @@ FRIENDLY_FIG_LABELS: dict[str, str] = {
     "compute_timeline_4x1.png": "Compute & Power Timeline (4x1)",
     "compute_process_breakdown_2x2.png": "Per-Process CPU & Latency Breakdown (2x2)",
     "compute_shm_and_calib_2x2.png": "SHM Bandwidth & Calibration Breakdown (2x2)",
+    "pyrwfs_flux_strehl_2x2.png": (
+        "Pyramid WFS Zone Flux Partitioning, Defocus-Invariant Strehl Proxy & Nonlinearity (2x2)"
+    ),
+    "pyrwfs_align_jitter_2x2.png": (
+        "Pyramid WFS 6-DOF Pupil Registration, Quad-Cell Jitter, Scintillation & Spider LWE (2x2)"
+    ),
+    "pyrwfs_pupil_maps_2x4.png": (
+        "Pyramid WFS 2D Diagnostic Maps: Zone Geometry, Registered 4-Pupil Sum, "
+        "Scintillation & Local Variance (2x4)"
+    ),
 }
 
 DEFAULT_REPOS: list[dict[str, str]] = [
@@ -235,7 +258,7 @@ DEFAULT_REPOS: list[dict[str, str]] = [
 ]
 
 DEFAULT_RUN_COMMAND = (
-    "./scripts/run-ao3k-scexao.sh --seeing 0.60 --phys-time 10.0 --oversample 4 "
+    "./scripts/run-ao3k-scexao.sh --seeing 0.80 --phys-time 10.0 --oversample 4 "
     "--bench-mode fused --save-rm _work/ao3k_scexao_rm --save-telemetry speckle"
 )
 

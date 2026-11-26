@@ -172,16 +172,31 @@ def build_site_hierarchy(
                     crossref_sims.append(run_by_slug[rs])
 
         if did == "coronagraphy-lowfs":
-            # Also showcase top predictive/coronagraphic runs as cross-references when available.
+            # Showcase top coronagraphic runs as cross-references (prefer LLOWFS-closed runs).
+            coro_cands: list[dict[str, object]] = []
             for rm in run_metas:
                 rs = str(rm.get("slug", ""))
                 cmp_d = rm.get("comparison") if isinstance(rm.get("comparison"), dict) else {}
-                if (
-                    rs not in primary_slugs
-                    and rs not in cross_seen
-                    and bool(cmp_d.get("has_coro"))
-                    and rs in ("ao3k_scexao_predictive_ar16", "ao3k_scexao_predictive_eof128_p8")
-                ):
+                if rs not in primary_slugs and rs not in cross_seen and bool(cmp_d.get("has_coro")):
+                    coro_cands.append(rm)
+            legacy_favs = {"ao3k_scexao_predictive_ar16", "ao3k_scexao_predictive_eof128_p8"}
+            fav_cands = [rm for rm in coro_cands if str(rm.get("slug", "")) in legacy_favs]
+            picked_coro = fav_cands if fav_cands else sorted(
+                coro_cands,
+                key=lambda rm: (
+                    0
+                    if bool(
+                        (rm.get("comparison") or {}).get("llowfs_closed", False)
+                        if isinstance(rm.get("comparison"), dict)
+                        else False
+                    )
+                    else 1,
+                    meta_sort_key(rm),
+                ),
+            )[:4]
+            for rm in picked_coro:
+                rs = str(rm.get("slug", ""))
+                if rs not in cross_seen:
                     cross_seen.add(rs)
                     crossref_sims.append(rm)
 

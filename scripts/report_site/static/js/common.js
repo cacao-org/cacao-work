@@ -47,6 +47,7 @@
   function parseCellVal(text) {
     var s = (text || "").replace(/,/g, "").trim();
     if (!s || s === "\u2014" || s === "-") return null;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return null;
     var m = s.match(/^([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/);
     if (m) return parseFloat(m[1]);
     return null;
@@ -84,8 +85,17 @@
               pairs.push({ row: r, detail: det });
             }
             pairs.sort(function(a, b) {
-              var ca = a.row.children[colIdx] ? a.row.children[colIdx].innerText : "";
-              var cb = b.row.children[colIdx] ? b.row.children[colIdx].innerText : "";
+              var tda = a.row.children[colIdx];
+              var tdb = b.row.children[colIdx];
+              var sa = tda ? tda.getAttribute("data-sort-val") : null;
+              var sb = tdb ? tdb.getAttribute("data-sort-val") : null;
+              var ca = (sa !== null ? sa : (tda ? tda.innerText : "")).trim();
+              var cb = (sb !== null ? sb : (tdb ? tdb.innerText : "")).trim();
+              var ea = !ca || ca === "\u2014" || ca === "-";
+              var eb = !cb || cb === "\u2014" || cb === "-";
+              if (ea && eb) return 0;
+              if (ea) return 1;
+              if (eb) return -1;
               var na = parseCellVal(ca);
               var nb = parseCellVal(cb);
               if (na !== null && nb !== null) {

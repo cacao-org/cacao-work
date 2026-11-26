@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-SEEING="0.6"
+SEEING="0.8"
 STAR_MAG=""
 PHYS_TIME="10.0"
 WALL_RATE=""
@@ -36,6 +36,10 @@ GAIN3="0.20"
 MULT1="0.98"
 MULT2="0.98"
 MULT3="0.99"
+MULT_TT=""
+MMULT_FLOOR=""
+MMULT_ALPHA="1.0"
+DMMASK_RMAX=""
 MGAIN_ALPHA="0.8"
 MGAIN_FLOOR="0.10"
 MGAIN_TT="1.0"
@@ -43,22 +47,31 @@ SVDLIM1="0.004"
 SVDLIM2="0.004"
 SVDLIM3="0.02"
 ENABLE_LOWFS="1"
+PSOL_OG1=""
 ZPO_OG=""
 PREDICTIVE="0"
 PF_MODE="ar"
 PF_BLOCKSIZE="128"
 PF_MIX="0.90"
 PF_MIX2="0.90"
+PF_MIX_TT=""
+PF_LO_NMODE="2"
 PF_ORDER="8"
 PF_REG="0.005"
 PF_REG2=""
 PF_MAXNORM2=""
+PF_DIFF_NMODE="0"
+PF_DIFF_ORDER="0"
+PF_DIFF_REG="0.05"
+PF_DIFF_MAXNORM2="4.0"
+PF_DIFF_MAXDCGAIN="0.9995"
 PF_NBTRAIN1=""
 PF_NBTRAIN2=""
 PF_MINSAMPLES1=""
 PF_MINSAMPLES2=""
 PF_WARMUP_SEC="0"
 PF_MGAIN_EXP="0.50"
+PF_MGAIN_EXP2=""
 NBLOOP="1"
 RUN_SELFRM="1"
 SELFRM_MODES="256"
@@ -98,7 +111,29 @@ PF_N_PRIOR="1024"
 PF_WL_SWITCH_DECAY="0.20"
 WIND_SWITCH_SEC="0"
 WIND_SWITCH_DEG="60.0"
+WIND_VAR="1"
+WIND_VAR_SCALE="1.0"
+WIND_BURST="1"
+WIND_BURST_SCALE="1.0"
+VIB_ENABLE="1"
+VIB_RMS_NM="45.0"
+PETAL_ENABLE="1"
+PETAL_RMS_NM="1000.0"
+PETAL_TAU_S="3.0"
 RUN_MODALWHITE="0"
+SELFLEARN="0"
+SELFLEARN_MODES="128"
+SELFLEARN_KMAX="16"
+PYRWFS_TLM="1"
+PYRWFS_STRIDE=""
+PETAL_CTRL="0"
+PETAL_USE_SIGN="auto"
+PETAL_ALPHA="0.0008"
+PETAL_WARMUP="1500"
+PETAL_TH_EVEN="0.58"
+PETAL_TH_SIGN="0.35"
+PETAL_ENABLE_AT="warmup"
+PETAL_TEST_INJECT=""
 
 usage() {
     cat <<EOF
@@ -138,6 +173,7 @@ Options:
   --svdlim2 <float>   Stage-2 SVD truncation threshold (default: ${SVDLIM2})
   --svdlim3 <float>   Stage-3 LLOWFS SVD truncation threshold (default: ${SVDLIM3})
   --no-lowfs          Keep Stage-3 LLOWFS loop open during science integration
+  --psol-og1 <float>  Stage-1 on-sky optical-gain scale for PSOL WFSfact (def: testOL)
   --zpo-og <float>    Stage-2 optical-gain scale for ZPO & PSOL (default: unset = 1.0)
   --predictive        Enable PSOL predictive control on Stage 1 (AO3k) & Stage 2 (SCExAO)
   --pf-mode <ar|eof>  Predictive filter type: ar (diag) or eof (block cross-mode, def: ${PF_MODE})
@@ -154,7 +190,8 @@ Options:
   --pf-minsamples1 <n> Optional Stage-1 min samples before EOF/AR activates
   --pf-minsamples2 <n> Optional Stage-2 min samples before EOF/AR activates
   --pf-warmup-sec <s> Extra closed-loop warmup [s] before science integration (def: ${PF_WARMUP_SEC})
-  --pf-mgain-exp <f>  Modal PF mix rolloff exponent on mgainfact (default: ${PF_MGAIN_EXP})
+  --pf-mgain-exp <f>  Stage-1/default modal PF mix rolloff exponent on mgainfact (def: ${PF_MGAIN_EXP})
+  --pf-mgain-exp2 <f> Optional Stage-2 modal PF mix rolloff exponent (default: --pf-mgain-exp)
   --nbloop <int>      Hadamard RM averaging cycles per stage (default: ${NBLOOP})
   --selfrm-modes <n>  Max modes probed in selfRM (default: ${SELFRM_MODES})
   --selfrm-iter <n>   On-sky selfRM averaging iterations (default: ${SELFRM_ONSKY_ITER})
@@ -185,6 +222,17 @@ Options:
   --windlayers1       Enable live Stage-1 mlt-windlayers profiler & EOF physics prior
   --pf-zoh-ridge <v>  Stage-1 mkEOFPF ZOH-centered ridge regularization (ON|OFF)
   --pf-zoh-ridge2 <v> Stage-2 mkEOFPF ZOH-centered ridge regularization (ON|OFF)
+  --mult-tt <float>   Stage-1 low-order (0..lo-1) leak multiplier override (def: --mult1)
+  --mmult-floor <f>   Stage-1 highest-mode leak multiplier floor (unset = flat --mult1)
+  --mmult-alpha <f>   Stage-1 per-mode leak rolloff exponent (def: ${MMULT_ALPHA})
+  --dmmask-rmax <f>   Stage-1 active DM mask outer radius [act] for rim slaving (unset = auto)
+  --pf-mix-tt <float> Stage-1 low-order (0..lo-1) predictive mix override [0..1]
+  --pf-lo-nmode <n>   Leading Stage-1 modes receiving --pf-mix-tt / --mult-tt (def: ${PF_LO_NMODE})
+  --pf-diff-nmode <n> Stage-1 leading modes solved in difference-space EOF (0=off)
+  --pf-diff-order <n> Difference-space EOF lookback order (0=diagorder, 2..64)
+  --pf-diff-reg <f>   Difference-space EOF relative Tikhonov lambda (def: ${PF_DIFF_REG})
+  --pf-diff-maxnorm2 <f> Difference-space ||W_m||_2^2 cap (def: ${PF_DIFF_MAXNORM2})
+  --pf-diff-maxdcgain <f> Difference-space exact self-DC gain (def: ${PF_DIFF_MAXDCGAIN})
   --pf-gram-halflife <n> Extended-memory chunk-Gram exponential half-life [frames]
   --pf-regime-kmax <n> Regime-weighted Gram library max anchor count K (0=off)
   --pf-fx1 <fits>     Stage-1 Pass-2 Filtered-X EOF DM kernel FITS
@@ -194,7 +242,29 @@ Options:
   --pf-wl-switch-decay <f> Empirical Gram decay factor on wind-switch trigger
   --wind-switch-sec <s> Physical time [s] to apply live phase-continuous wind rotation
   --wind-switch-deg <d> Wind velocity rotation angle [deg] at --wind-switch-sec
+  --no-wind-var       Disable smooth wind speed & direction meandering (default: ON)
+  --wind-var-scale <f> Wind meandering amplitude multiplier (default: ${WIND_VAR_SCALE})
+  --no-wind-burst     Disable non-stationary atmospheric wind bursts & Cn2 surges (default: ON)
+  --wind-burst-scale <f> Wind burst strength multiplier (default: ${WIND_BURST_SCALE})
+  --no-vib            Disable stochastic telescope & bench vibrations (default: ON)
+  --vib-rms-nm <f>    Total telescope & bench vibration OPD RMS [nm] (default: ${VIB_RMS_NM})
+  --no-petal          Disable thermally induced slow-varying petaling / LWE (default: ON)
+  --petal-rms-nm <f>  Total thermal petaling (LWE) OPD RMS [nm] (default: ${PETAL_RMS_NM})
+  --petal-tau-s <f>   Thermal petaling correlation timescale [s] (default: ${PETAL_TAU_S})
+  --no-perturb        Disable all realistic perturbations (stationary pure frozen-flow)
   --modalwhite        Run closed-loop whiteness monitor (modalwhite) on Stages 1 & 2
+  --selflearn         Cascade online Global + Clustered (libgric) self-learning on Block-EOF
+  --selflearn-modes <n> Max controlled modes tweaked by selflearn (default: ${SELFLEARN_MODES})
+  --selflearn-kmax <n>  Max libgric cluster anchors for selflearn (default: ${SELFLEARN_KMAX})
+  --no-pyrwfs-tlm     Disable live Pyramid WFS telemetry monitoring (default: ON)
+  --pyrwfs-stride <n> Override Stage-1 PyWFS telemetry frame decimation stride (default: auto ~200 Hz)
+  --petal-ctrl        Enable Stage-1 passive petal-unwrap JIT controller (petal-1 -> dm01disp06)
+  --petal-use-sign <m> Petal sign mode: auto (from chrom_sep), 1 (fused-silica), 0 (achrom trial)
+  --petal-alpha <f>   Petal EMA smoothing factor per WFS1 frame (default: ${PETAL_ALPHA})
+  --petal-warmup <n>  Petal averaging warmup frames before jump trigger (default: ${PETAL_WARMUP})
+  --petal-th-even <f> Petal Even detection threshold in waves (default: ${PETAL_TH_EVEN})
+  --petal-th-sign <f> Petal Odd chromatic sign confirmation threshold (default: ${PETAL_TH_SIGN})
+  --petal-enable-at <p> When to enable petal jumps: warmup (default) or science (t_phys=0)
   -h, --help          Show this help message
 EOF
 }
@@ -233,6 +303,7 @@ while (( $# > 0 )); do
         --svdlim2)         SVDLIM2="$2"; shift 2 ;;
         --svdlim3)         SVDLIM3="$2"; shift 2 ;;
         --no-lowfs)        ENABLE_LOWFS="0"; shift ;;
+        --psol-og1)        PSOL_OG1="$2"; shift 2 ;;
         --zpo-og)          ZPO_OG="$2"; shift 2 ;;
         --predictive)      PREDICTIVE="1"; shift ;;
         --pf-mode)         PF_MODE="$2"; shift 2 ;;
@@ -250,6 +321,7 @@ while (( $# > 0 )); do
         --pf-minsamples2)  PF_MINSAMPLES2="$2"; shift 2 ;;
         --pf-warmup-sec)   PF_WARMUP_SEC="$2"; shift 2 ;;
         --pf-mgain-exp)    PF_MGAIN_EXP="$2"; shift 2 ;;
+        --pf-mgain-exp2)   PF_MGAIN_EXP2="$2"; shift 2 ;;
         --nbloop)          NBLOOP="$2"; shift 2 ;;
         --selfrm-modes)    SELFRM_MODES="$2"; shift 2 ;;
         --selfrm-iter)     SELFRM_ONSKY_ITER="$2"; shift 2 ;;
@@ -286,6 +358,17 @@ while (( $# > 0 )); do
         --windlayers1)        WINDLAYERS1="1"; shift ;;
         --pf-zoh-ridge)       PF_ZOH_RIDGE="$2"; shift 2 ;;
         --pf-zoh-ridge2)      PF_ZOH_RIDGE2="$2"; shift 2 ;;
+        --mult-tt)            MULT_TT="$2"; shift 2 ;;
+        --mmult-floor)        MMULT_FLOOR="$2"; shift 2 ;;
+        --mmult-alpha)        MMULT_ALPHA="$2"; shift 2 ;;
+        --dmmask-rmax)        DMMASK_RMAX="$2"; shift 2 ;;
+        --pf-mix-tt)          PF_MIX_TT="$2"; shift 2 ;;
+        --pf-lo-nmode)        PF_LO_NMODE="$2"; shift 2 ;;
+        --pf-diff-nmode)      PF_DIFF_NMODE="$2"; shift 2 ;;
+        --pf-diff-order)      PF_DIFF_ORDER="$2"; shift 2 ;;
+        --pf-diff-reg)        PF_DIFF_REG="$2"; shift 2 ;;
+        --pf-diff-maxnorm2)   PF_DIFF_MAXNORM2="$2"; shift 2 ;;
+        --pf-diff-maxdcgain)  PF_DIFF_MAXDCGAIN="$2"; shift 2 ;;
         --pf-gram-halflife)   PF_GRAM_HALFLIFE="$2"; shift 2 ;;
         --pf-regime-kmax)     PF_REGIME_KMAX="$2"; shift 2 ;;
         --pf-fx1)             PF_FX1="$2"; shift 2 ;;
@@ -295,7 +378,31 @@ while (( $# > 0 )); do
         --pf-wl-switch-decay) PF_WL_SWITCH_DECAY="$2"; shift 2 ;;
         --wind-switch-sec)    WIND_SWITCH_SEC="$2"; shift 2 ;;
         --wind-switch-deg)    WIND_SWITCH_DEG="$2"; shift 2 ;;
+        --no-wind-var)        WIND_VAR="0"; shift ;;
+        --wind-var-scale)     WIND_VAR_SCALE="$2"; shift 2 ;;
+        --no-wind-burst)      WIND_BURST="0"; shift ;;
+        --wind-burst-scale)   WIND_BURST_SCALE="$2"; shift 2 ;;
+        --no-vib)             VIB_ENABLE="0"; shift ;;
+        --vib-rms-nm)         VIB_RMS_NM="$2"; shift 2 ;;
+        --no-petal)           PETAL_ENABLE="0"; shift ;;
+        --petal-rms-nm)       PETAL_RMS_NM="$2"; shift 2 ;;
+        --petal-tau-s)        PETAL_TAU_S="$2"; shift 2 ;;
+        --no-perturb)
+            WIND_VAR="0"; WIND_BURST="0"; VIB_ENABLE="0"; PETAL_ENABLE="0"; shift ;;
         --modalwhite)         RUN_MODALWHITE="1"; shift ;;
+        --selflearn)          SELFLEARN="1"; shift ;;
+        --selflearn-modes)    SELFLEARN_MODES="$2"; shift 2 ;;
+        --selflearn-kmax)     SELFLEARN_KMAX="$2"; shift 2 ;;
+        --no-pyrwfs-tlm)      PYRWFS_TLM="0"; shift ;;
+        --pyrwfs-stride)      PYRWFS_STRIDE="$2"; shift 2 ;;
+        --petal-ctrl)         PETAL_CTRL="1"; shift ;;
+        --petal-use-sign)     PETAL_USE_SIGN="$2"; shift 2 ;;
+        --petal-alpha)        PETAL_ALPHA="$2"; shift 2 ;;
+        --petal-warmup)       PETAL_WARMUP="$2"; shift 2 ;;
+        --petal-th-even)      PETAL_TH_EVEN="$2"; shift 2 ;;
+        --petal-th-sign)      PETAL_TH_SIGN="$2"; shift 2 ;;
+        --petal-enable-at)    PETAL_ENABLE_AT="$2"; shift 2 ;;
+        --petal-test-inject)  PETAL_TEST_INJECT="$2"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "[ao3k-scexao] Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -469,6 +576,11 @@ LOOP_CTRL="${CACAO_WORK_ROOT}/benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk"
 WFSTAT_LINK="/tmp/.wfstat_$$"
 WFSTAT_CPU_LINK="/tmp/.wfstat_cpu_$$"
 TLM_LINK="/tmp/.tlm_$$"
+PYRTLM_LINK="/tmp/.pyrtlm_$$"
+PYRWFS_TLM_ACTIVE="0"
+PETAL_CALC_LINK="/tmp/.petal_$$.calc"
+PETAL_CTRL_ACTIVE="0"
+PETAL_USE_SIGN_EFF="1"
 declare -a TLM_UNITS=()
 declare -a TLM_SAVED_STREAMS=()
 
@@ -553,6 +665,12 @@ start_tlm_loggers() {
             )
         fi
     fi
+    if (( PETAL_CTRL_ACTIVE )); then
+        specs+=(
+            "aol1_petal_raw:${n_s1}:-1"
+            "aol1_petal_ema:${n_s1}:-1"
+        )
+    fi
     if [[ "${SAVE_TELEMETRY}" == "truth" ]]; then
         specs+=(
             "b_pup:${n_s2}:0"
@@ -602,9 +720,10 @@ start_tlm_loggers() {
 cleanup_sim() {
     sysmon.stop >/dev/null 2>&1 || true
     cleanup_tlm_loggers
-    milk-fps-runstop -q mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat >/dev/null 2>&1 || true
-    milk-fps-rm -f -q --ignore-missing mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
-        >/dev/null 2>&1 || true
+    milk-fps-runstop -q petal-1 mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
+        pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
+    milk-fps-rm -f -q --ignore-missing petal-1 mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
+        pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 teardown \
         >/dev/null 2>&1 || true
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 teardown --purge-dm \
@@ -613,9 +732,18 @@ cleanup_sim() {
         >/dev/null 2>&1 || true
     cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
     milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 dm01shaped \
-        wl1_layers wl1_vmapk wl1_vmapi wl1_vmapx >/dev/null 2>&1 || true
-    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" \
-        "/tmp/.p15_ps_${$}.fits" "/tmp/.p15_ogk_${$}.fits" >/dev/null 2>&1 || true
+        aol1_petalM aol1_petalDM aol1_petal_raw aol1_petal_ema \
+        aol1_modevalPF_eof aol1_outPFstat_eof aol1_selflearn_tweak \
+        aol2_modevalPF_eof aol2_outPFstat_eof aol2_selflearn_tweak \
+        wl1_layers wl1_vmapk wl1_vmapi wl1_vmapx \
+        aol1_pyr_ref aol1_pyr_tlm aol1_pyr_pupgeom aol1_pyr_pupdof \
+        aol1_pyr_isum aol1_pyr_isum_avg aol1_pyr_sx aol1_pyr_sy \
+        aol1_pyr_scint aol1_pyr_lvar aol1_pyr_zones \
+        aol2_pyr_ref aol2_pyr_tlm aol2_pyr_pupgeom aol2_pyr_pupdof \
+        aol2_pyr_isum aol2_pyr_isum_avg aol2_pyr_sx aol2_pyr_sy \
+        aol2_pyr_scint aol2_pyr_lvar aol2_pyr_zones >/dev/null 2>&1 || true
+    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" "${PYRTLM_LINK}" \
+        "${PETAL_CALC_LINK}" "/tmp/.p15_ps_${$}.fits" "/tmp/.p15_ogk_${$}.fits" >/dev/null 2>&1 || true
 }
 @defer --exit cleanup_sim
 
@@ -643,6 +771,7 @@ else
     echo "   Calib Pacing: ${CAL_RATE} Hz master (RM acquisition / load)"
 fi
 PF_REG2="${PF_REG2:-${PF_REG}}"
+PF_MGAIN_EXP2="${PF_MGAIN_EXP2:-${PF_MGAIN_EXP}}"
 export CACAO_PF_MODE="${PF_MODE}"
 STG1_TBUFF_SIZE=256
 STG1_PF_UPD=4
@@ -691,6 +820,14 @@ if (( CALIB_2WFS1DM )); then
     echo "   2-WFS/1-DM  : Enabled (milk-mlt-calib2wfs1dm, modes=${SYSID_MODES}," \
          "W(z)=AR(${SYSID_WHITEN_ORDER}))"
 fi
+echo "   Perturb.    : wind_var=${WIND_VAR}(x${WIND_VAR_SCALE}) |" \
+     "wind_burst=${WIND_BURST}(x${WIND_BURST_SCALE}) |" \
+     "vib=${VIB_ENABLE}(${VIB_RMS_NM}nm) |" \
+     "petal=${PETAL_ENABLE}(${PETAL_RMS_NM}nm,tau=${PETAL_TAU_S}s)"
+if (( PETAL_CTRL )); then
+    echo "   Petal Ctrl  : Stage-1 passive JIT (petal-1 -> dm01disp06, sign=${PETAL_USE_SIGN}," \
+         "alpha=${PETAL_ALPHA}, warmup=${PETAL_WARMUP}fr, th=${PETAL_TH_EVEN}/${PETAL_TH_SIGN}, at=${PETAL_ENABLE_AT})"
+fi
 echo "================================================================================"
 
 sysmon.start "${OUT_DIR}" .rate=5.0
@@ -720,6 +857,8 @@ milk-fps-runstop -q "${MASTER_UNIT}" csim_atmturb
 milk-fps-wait -q -t 10 "${MASTER_UNIT}" >/dev/null 2>&1 || true
 milk-fps-set -q \
     "${MASTER_UNIT}.turb_gain=0.0" \
+    "${MASTER_UNIT}.vib_enable=OFF" \
+    "${MASTER_UNIT}.petal_enable=OFF" \
     "${MASTER_UNIT}.frame_rate=${CAL_MASTER_RATE}" \
     "${MASTER_UNIT}.procinfo.triggermode=0"
 if [[ "${BENCH_MODE}" == "fused" ]]; then
@@ -754,6 +893,19 @@ fpspipe.savefits "csim_wfs_lowfs" "${OUT_DIR}/det_wfs_lowfs_dl.fits"
 for cam in vis_raw nir_raw vis_stg1 nir_stg1 vis_final nir_final nir_coro; do
     fpspipe.savefits "psf_${cam}" "${OUT_DIR}/det_${cam}_dl.fits"
 done
+if (( PYRWFS_TLM )) && command -v cacao-fpsexec-pyrwfstlm >/dev/null 2>&1; then
+    @calc "@S:aol1_pyr_ref = s.csim_wfs_nir"
+    @calc "@S:aol2_pyr_ref = s.csim_wfs_vis"
+    for _pi in $(seq 2 16); do
+        milk-stream-wait -q -t 10 "csim_wfs_vis+2"
+        @calc "s.aol1_pyr_ref = s.aol1_pyr_ref + s.csim_wfs_nir"
+        @calc "s.aol2_pyr_ref = s.aol2_pyr_ref + s.csim_wfs_vis"
+    done
+    @calc "s.aol1_pyr_ref = s.aol1_pyr_ref / 16.0"
+    @calc "s.aol2_pyr_ref = s.aol2_pyr_ref / 16.0"
+    fpspipe.savefits "aol1_pyr_ref" "${OUT_DIR}/pyrwfs_ref_stg1.fits"
+    fpspipe.savefits "aol2_pyr_ref" "${OUT_DIR}/pyrwfs_ref_stg2.fits"
+fi
 if [[ "${BENCH_MODE}" == "fused" ]]; then
     @set "f.csim_htsim.enable_fpcam=OFF"
 fi
@@ -771,17 +923,30 @@ fi
 export CACAO_WFS_DARKSUB="${WFS_DARKSUB_EFF}"
 export CACAO_WFS_DARK_ADU="${WFS_DARK_ADU_EFF}"
 export CACAO_WFS_NORMFLOOR="${WFS_NORMFLOOR_EFF}"
+export CACAO_SELFLEARN_ENABLE="${SELFLEARN}"
+export CACAO_SELFLEARN_MODES="${SELFLEARN_MODES}"
+export CACAO_SELFLEARN_KMAX="${SELFLEARN_KMAX}"
 
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
 CACAO_WFSFRATE="${CAL_WFS1_RATE}" \
 CACAO_TBUFF_SIZE="${STG1_TBUFF_SIZE}" \
 CACAO_LOOPGAIN="${GAIN1}" \
 CACAO_LOOPMULT="${MULT1}" \
+CACAO_LOOPMULT_TT="${MULT_TT}" \
+CACAO_MMULT_FLOOR="${MMULT_FLOOR}" \
+CACAO_MMULT_ALPHA="${MMULT_ALPHA}" \
+CACAO_DMMASK_RMAX="${DMMASK_RMAX}" \
+CACAO_PF_LO_NMODE="${PF_LO_NMODE}" \
 CACAO_PF_MODE="${PF_MODE}" \
 CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
 CACAO_PF_ORDER="${PF_ORDER}" \
 CACAO_PF_REG="${PF_REG}" \
 CACAO_PF_MAXNORM2="${PF_MAXNORM2}" \
+CACAO_PF_DIFF_NMODE="${PF_DIFF_NMODE}" \
+CACAO_PF_DIFF_ORDER="${PF_DIFF_ORDER}" \
+CACAO_PF_DIFF_REG="${PF_DIFF_REG}" \
+CACAO_PF_DIFF_MAXNORM2="${PF_DIFF_MAXNORM2}" \
+CACAO_PF_DIFF_MAXDCGAIN="${PF_DIFF_MAXDCGAIN}" \
 CACAO_PF_NBTRAIN="${PF_NBTRAIN1}" \
 CACAO_PF_MINSAMPLES="${PF_MINSAMPLES1}" \
 CACAO_PF_DIAGMINSAMPLES="${STG1_PF_DIAGMIN}" \
@@ -818,7 +983,7 @@ CACAO_PF_REG="${PF_REG2}" \
 CACAO_PF_MAXNORM2="${PF_MAXNORM2}" \
 CACAO_PF_NBTRAIN="${PF_NBTRAIN2}" \
 CACAO_PF_MINSAMPLES="${PF_MINSAMPLES2}" \
-CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
+CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP2}" \
     "${LOOP_CTRL}" --stage 2 deploy
 
 CACAO_LOOPROOTDIR="${STG3_ROOT}" \
@@ -866,10 +1031,24 @@ fi
 export CACAO_WFS_DARKSUB="${WFS_DARKSUB_EFF}"
 export CACAO_WFS_DARK_ADU="${WFS_DARK_ADU_EFF}"
 export CACAO_WFS_NORMFLOOR="${WFS_NORMFLOOR_EFF}"
+export CACAO_SELFLEARN_ENABLE="${SELFLEARN}"
+export CACAO_SELFLEARN_MODES="${SELFLEARN_MODES}"
+export CACAO_SELFLEARN_KMAX="${SELFLEARN_KMAX}"
+
+USE_FAST_CALIB1="${USE_FAST_CALIB}"
+if [[ -n "${DM1_PRESHAPER}" ]]; then
+    USE_FAST_CALIB1=0
+fi
 
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
 CACAO_WFSFRATE="${CAL_WFS1_RATE}" \
-CACAO_FAST_CALIB="${USE_FAST_CALIB}" \
+CACAO_FAST_CALIB="${USE_FAST_CALIB1}" \
+CACAO_LOOPMULT="${MULT1}" \
+CACAO_LOOPMULT_TT="${MULT_TT}" \
+CACAO_MMULT_FLOOR="${MMULT_FLOOR}" \
+CACAO_MMULT_ALPHA="${MMULT_ALPHA}" \
+CACAO_DMMASK_RMAX="${DMMASK_RMAX}" \
+CACAO_PF_LO_NMODE="${PF_LO_NMODE}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
@@ -878,6 +1057,36 @@ CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
 milk-stream-wait -q -t 20 "csim_wfs_vis+20"
 t_cal1_1="$(date +%s)"
 echo "[ao3k-scexao]      Stage-1 calibration done in $(( t_cal1_1 - t_cal1_0 )) s."
+
+if (( PETAL_CTRL )); then
+    PETAL_CAL_DIR="${OUT_DIR}/petal_ctrl"
+    mkdir -p "${PETAL_CAL_DIR}"
+    echo "[ao3k-scexao]   -> Calibrating Stage-1 passive petal-unwrap filter (calib_petal_ctrl.py)..."
+    PETAL_CM_ARG=()
+    if [[ -f "${STG1_ROOT}/conf/CMmodesWFS.fits" ]]; then
+        PETAL_CM_ARG=(--cm-wfs "${STG1_ROOT}/conf/CMmodesWFS.fits")
+    fi
+    "${PYTHON_BIN:-python3}" "${CACAO_WORK_ROOT}/benches/ao3k_scexao/calib_petal_ctrl.py" \
+        --bench "${ACTIVE_BENCH}" \
+        --pup "${OUT_DIR}/csim_pup.fits" \
+        --wfsref "${STG1_ROOT}/conf/wfsref.fits" \
+        --wfsmask "${STG1_ROOT}/conf/wfsmask.fits" \
+        "${PETAL_CM_ARG[@]}" \
+        --outdir "${PETAL_CAL_DIR}"
+    if [[ "${PETAL_USE_SIGN}" == "auto" ]]; then
+        PETAL_USE_SIGN_EFF="$("${PYTHON_BIN:-python3}" -c \
+            "import json; print(json.load(open('${PETAL_CAL_DIR}/petal_ctrl_meta.json'))['use_sign_recommended'])")"
+    else
+        PETAL_USE_SIGN_EFF="${PETAL_USE_SIGN}"
+    fi
+    fpspipe.loadfits aol1_petalM "${PETAL_CAL_DIR}/petal_wfs_M.fits"
+    fpspipe.loadfits aol1_petalDM "${PETAL_CAL_DIR}/petal_dm_modes.fits"
+    @calc "@S:aol1_petal_raw = zeros(7); @S:aol1_petal_ema = zeros(7)"
+    if @exists "s.dm01disp06"; then
+        @calc "s.dm01disp06 = s.dm01disp06 * 0.0"
+    fi
+    echo "[ao3k-scexao]      Petal filter loaded to SHM (aol1_petalM, aol1_petalDM; use_sign=${PETAL_USE_SIGN_EFF})"
+fi
 
 sysmon.mark "calib_stage2" "Stage-2 (50x50) RM/CM calibration or load + ZPO MVM arm"
 t_cal2_0="$(date +%s)"
@@ -1137,14 +1346,25 @@ fi
 if [[ "${BENCH_MODE}" == "fused" ]]; then
     milk-fps-set -q "csim_htsim.enable_fpcam=ON"
 fi
+VIB_STR="OFF"; (( VIB_ENABLE )) && VIB_STR="ON"
+PETAL_STR="OFF"; (( PETAL_ENABLE )) && PETAL_STR="ON"
 milk-fps-set -q \
     "csim_atmturb.seeing=${SEEING}" \
     "csim_atmturb.time_step=${ATM_STEP_S}" \
+    "csim_atmturb.wind_var=${WIND_VAR}" \
+    "csim_atmturb.wind_var_scale=${WIND_VAR_SCALE}" \
+    "csim_atmturb.wind_burst=${WIND_BURST}" \
+    "csim_atmturb.wind_burst_scale=${WIND_BURST_SCALE}" \
     "csim_atmturb.procinfo.triggermode=3" \
     "csim_atmturb.procinfo.triggersname=${ATM_LOCK_STREAM}" \
     "csim_atmturb.procinfo.triggerdelay=${ATM_TRIG_DT}" \
     "csim_atmturb.procinfo.triggertimeout=0.2" \
     "${MASTER_UNIT}.turb_gain=0.10" \
+    "${MASTER_UNIT}.vib_enable=${VIB_STR}" \
+    "${MASTER_UNIT}.vib_rms_nm=${VIB_RMS_NM}" \
+    "${MASTER_UNIT}.petal_enable=${PETAL_STR}" \
+    "${MASTER_UNIT}.petal_rms_nm=${PETAL_RMS_NM}" \
+    "${MASTER_UNIT}.petal_tau_s=${PETAL_TAU_S}" \
     "${MASTER_UNIT}.frame_rate=0.0" \
     "${MASTER_UNIT}.procinfo.triggermode=3" \
     "${MASTER_UNIT}.procinfo.triggersname=outarraypha"
@@ -1162,6 +1382,10 @@ for _tg in 0.25 0.40 0.55 0.70 0.85 1.0; do
     milk-stream-wait -q -t 30 "csim_wfs_vis+120"
 done
 milk-stream-wait -q -t 30 "csim_wfs_vis+200"
+if [[ -n "${PSOL_OG1}" ]]; then
+    echo "[ao3k-scexao]   -> Scaling Stage-1 PSOL WFSfact for on-sky optical gain g_opt=${PSOL_OG1}"
+    CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 setog "${PSOL_OG1}"
+fi
 if (( ENABLE_STAGE2 )); then
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
     milk-stream-wait -q -t 30 "csim_wfs_vis+200"
@@ -1172,6 +1396,21 @@ if (( ENABLE_STAGE2 )); then
 fi
 if (( ENABLE_LOWFS )) && (( ENABLE_STAGE2 )); then
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 close "${GAIN3}"
+fi
+
+# Optional Stage-1 Passive Petal-Unwrap JIT Compute Unit (petal-1 -> dm01disp06)
+if (( PETAL_CTRL )) && @exists "s.aol1_petalM" && @exists "s.aol1_petalDM" && @exists "s.dm01disp06"; then
+    @calc "s.dm01disp06 = s.dm01disp06 * 0.0; s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
+    ln -sfn "${CACAO_WORK_ROOT}/benches/ao3k_scexao/petal_unwrap.calc" "${PETAL_CALC_LINK}"
+    PETAL_INIT_EN=1
+    [[ "${PETAL_ENABLE_AT}" == "science" ]] && PETAL_INIT_EN=0
+    PETAL_PARAMS="enable:int=${PETAL_INIT_EN} use_sign:int=${PETAL_USE_SIGN_EFF} alpha:float=${PETAL_ALPHA} min_warmup:int=${PETAL_WARMUP} settle_fr:int=20 th_even:float=${PETAL_TH_EVEN} th_sign:float=${PETAL_TH_SIGN} th_abort:float=1.90 abort_win:int=400 verify_win:int=800 max_waves:int=4 step_scale:float=1.0 age_fr:int=0 n_jumps:int=0 n_aborts:int=0 n_rollbacks:int=0 last_petal:int=-1 last_dir:int=0 trial_p:int=-1 trial_dir:int=0 trial_ev0:float=0 ev_sn:float=0 ev_ew:float=0 ev_adj:float=0 sg_e:float=0 sg_n:float=0 sg_w:float=0 sg_s:float=0 w_e:float=0 w_n:float=0 w_w:float=0 w_s:float=0"
+    milk-fps-rm -f -q --ignore-missing petal-1 >/dev/null 2>&1 || true
+    milk-fpsexec-milk-calc -n petal-1 -t aol1_imWFS2 -p "${PETAL_PARAMS}" -f "${PETAL_CALC_LINK}" fpsinit >/dev/null
+    milk-fpsexec-milk-calc -n petal-1 runstart >/dev/null
+    PETAL_CTRL_ACTIVE="1"
+    echo "[ao3k-scexao]   -> Stage-1 Passive Petal Unwrapper ARMED (petal-1 -> dm01disp06," \
+         "enable=${PETAL_INIT_EN}, use_sign=${PETAL_USE_SIGN_EFF}, warmup=${PETAL_WARMUP}fr, alpha=${PETAL_ALPHA})"
 fi
 
 # Optional Phase 3: Stage-1 live online optical gain via closed-loop DM pokes (modalog-1)
@@ -1229,7 +1468,7 @@ if (( WINDLAYERS1 )); then
         "wl-1.pha=aol1_dmC" \
         "wl-1.outname=wl1" \
         "wl-1.wfsmode=0" \
-        "wl-1.frate=1000.0" \
+        "wl-1.frate=${WFS1_RATE}.0" \
         "wl-1.tbin=2" \
         "wl-1.diam=7.95" \
         "wl-1.diampix=75.0" \
@@ -1280,13 +1519,27 @@ fi
 export CACAO_WFS_DARKSUB="${WFS_DARKSUB_EFF}"
 export CACAO_WFS_DARK_ADU="${WFS_DARK_ADU_EFF}"
 export CACAO_WFS_NORMFLOOR="${WFS_NORMFLOOR_EFF}"
+export CACAO_SELFLEARN_ENABLE="${SELFLEARN}"
+export CACAO_SELFLEARN_MODES="${SELFLEARN_MODES}"
+export CACAO_SELFLEARN_KMAX="${SELFLEARN_KMAX}"
 
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
+    CACAO_LOOPMULT="${MULT1}" \
+    CACAO_LOOPMULT_TT="${MULT_TT}" \
+    CACAO_MMULT_FLOOR="${MMULT_FLOOR}" \
+    CACAO_MMULT_ALPHA="${MMULT_ALPHA}" \
     CACAO_PF_MODE="${PF_MODE}" \
     CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
     CACAO_PF_ORDER="${PF_ORDER}" \
     CACAO_PF_REG="${PF_REG}" \
     CACAO_PF_MAXNORM2="${PF_MAXNORM2}" \
+    CACAO_PF_MIX_TT="${PF_MIX_TT}" \
+    CACAO_PF_LO_NMODE="${PF_LO_NMODE}" \
+    CACAO_PF_DIFF_NMODE="${PF_DIFF_NMODE}" \
+    CACAO_PF_DIFF_ORDER="${PF_DIFF_ORDER}" \
+    CACAO_PF_DIFF_REG="${PF_DIFF_REG}" \
+    CACAO_PF_DIFF_MAXNORM2="${PF_DIFF_MAXNORM2}" \
+    CACAO_PF_DIFF_MAXDCGAIN="${PF_DIFF_MAXDCGAIN}" \
     CACAO_PF_NBTRAIN="${PF_NBTRAIN1}" \
     CACAO_PF_MINSAMPLES="${PF_MINSAMPLES1}" \
     CACAO_PF_DIAGMINSAMPLES="${STG1_PF_DIAGMIN}" \
@@ -1309,7 +1562,7 @@ CACAO_LOOPROOTDIR="${STG1_ROOT}" \
     CACAO_PF_MR_VEL_REG_MULT="${MR_VEL_REG_MULT}" \
     CACAO_PF_MR_PACER_OUT="${PF1_MR_PO}" \
         "${LOOP_CTRL}" --stage 1 pf-on "${PF_MIX}"
-    milk-stream-wait -q -t 60 "aol1_${PF_MAT_SFX}+1"
+    milk-stream-wait -q -t 180 "aol1_${PF_MAT_SFX}+1"
 fi
 
 # Optional Phase 4: Live mid-run 2WFS1DM (ivdiff) -> live Stage-2 mWFSfact + WFSzpogain
@@ -1322,7 +1575,7 @@ if (( LIVE_2WFS_TICKS > 0 )) && command -v milk-mlt-calib2wfs1dm >/dev/null 2>&1
     L2_OUT="${OUT_DIR}/live_2wfs1dm"
     mkdir -p "${L2_DIR}" "${L2_OUT}"
     ln -sfn "${L2_DIR}" "/tmp/.l2tlm_$$"
-    l2_n1=$(( LIVE_2WFS_TICKS / 2 + 64 ))
+    l2_n1=$(( LIVE_2WFS_TICKS / WFS1_DECIM + 64 ))
     l2_n2=$(( LIVE_2WFS_TICKS + 128 ))
     for _pair in "l2_a:aol1_modevalWFS:${l2_n1}" "l2_b:aol2_modevalWFS:${l2_n2}" \
                  "l2_d:aol2_modevalDM:${l2_n2}"; do
@@ -1344,7 +1597,7 @@ if (( LIVE_2WFS_TICKS > 0 )) && command -v milk-mlt-calib2wfs1dm >/dev/null 2>&1
     milk-fps-rm -f -q --ignore-missing l2_a l2_b l2_d >/dev/null 2>&1 || true
     rm -f "/tmp/.l2tlm_$$"
     cat > "${L2_DIR}/telemetry_manifest.env" <<EOF
-TLM_FS1="1000.0"
+TLM_FS1="${WFS1_RATE}.0"
 TLM_FS2="2000.0"
 EOF
     L2_KARG=""
@@ -1385,7 +1638,7 @@ if (( PREDICTIVE )); then
         CACAO_PF_MAXNORM2="${PF_MAXNORM2}" \
         CACAO_PF_NBTRAIN="${PF_NBTRAIN2}" \
         CACAO_PF_MINSAMPLES="${PF_MINSAMPLES2}" \
-        CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
+        CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP2}" \
         CACAO_PF_ZOH_RIDGE="${PF_ZOH_RIDGE2_EFF}" \
         CACAO_PF_GRAM_HALFLIFE="${PF_GRAM_HALFLIFE}" \
         CACAO_PF_REGIME_KMAX="${PF_REGIME_KMAX}" \
@@ -1393,7 +1646,7 @@ if (( PREDICTIVE )); then
         CACAO_PF_FRATE_HZ="2000.0" \
         CACAO_PF_N_PRIOR="0.0" \
             "${LOOP_CTRL}" --stage 2 pf-on "${PF_MIX2}"
-        milk-stream-wait -q -t 60 "aol2_${PF_MAT_SFX}+2"
+        milk-stream-wait -q -t 180 "aol2_${PF_MAT_SFX}+2"
     fi
     milk-stream-wait -q -t 30 "csim_wfs_vis+160"
 
@@ -1405,7 +1658,7 @@ if (( PREDICTIVE )); then
         w_done=0
         while (( w_rem > 0 )); do
             w_step=$(( w_rem < 4000 ? w_rem : 4000 ))
-            milk-stream-wait -q -t 60 "csim_wfs_vis+${w_step}"
+            milk-stream-wait -q -t 180 "csim_wfs_vis+${w_step}"
             w_rem=$(( w_rem - w_step ))
             w_done=$(( w_done + w_step ))
             w_sec="$(awk -v d="${w_done}" 'BEGIN { printf "%.1f", d / 2000.0 }')"
@@ -1449,21 +1702,52 @@ WFSTAT_CPU_DIR="${OUT_DIR}"
 milk-fps-set -q "csim_atmturb.procinfo.triggerdelay=0.05"
 sleep 0.08
 rm -f "${OUT_DIR}/wf_stats.json"
+WFSTAT_CLIP_START=0
+WFSTAT_CLIP_LEN=0
+WFSTAT_FULL_FPS="0"
+if [[ "${SAVE_TELEMETRY}" != "none" ]]; then
+    WFSTAT_CLIP_LEN=460
+    WFSTAT_FULL_FPS="30"
+    if (( MASTER_TICKS >= 10500 )); then
+        WFSTAT_CLIP_START=9970
+    elif (( MASTER_TICKS > WFSTAT_CLIP_LEN )); then
+        WFSTAT_CLIP_START=$(( (MASTER_TICKS - WFSTAT_CLIP_LEN) / 2 + 1 ))
+    else
+        WFSTAT_CLIP_START=1
+        WFSTAT_CLIP_LEN="${MASTER_TICKS}"
+    fi
+fi
 if [[ "${BENCH_MODE}" == "fused" ]]; then
     ln -sfn "${OUT_DIR}" "${WFSTAT_LINK}"
+    declare -a WFSTAT_CM_ARGS=("csim_htsim.wfstat_cm1=aol1_CMmodesDM")
+    (( ENABLE_STAGE2 )) && WFSTAT_CM_ARGS+=("csim_htsim.wfstat_cm2=aol2_CMmodesDM")
     milk-fps-set -q \
         "csim_htsim.wfstat_outdir=${WFSTAT_LINK}" \
         "csim_htsim.wfstat_ticks=${MASTER_TICKS}" \
-        "csim_htsim.wfstat_extra=ON"
+        "csim_htsim.wfstat_extra=ON" \
+        "csim_htsim.wfstat_clip_start=${WFSTAT_CLIP_START}" \
+        "csim_htsim.wfstat_clip_len=${WFSTAT_CLIP_LEN}" \
+        "csim_htsim.wfstat_full_fps=${WFSTAT_FULL_FPS}" \
+        "${WFSTAT_CM_ARGS[@]}"
     @set "f.csim_htsim.wfstat_enable=ON"
     (( CPU_WFSTAT )) && WFSTAT_CPU_DIR="${OUT_DIR}/wfstat_cpu"
 fi
 if (( CPU_WFSTAT )); then
     CPU_WF_TICKS="${MASTER_TICKS}"
     CPU_WF_DT="0.0005"
+    CPU_CLIP_START="${WFSTAT_CLIP_START}"
+    CPU_CLIP_LEN="${WFSTAT_CLIP_LEN}"
+    CPU_FULL_FPS="${WFSTAT_FULL_FPS}"
     if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
         CPU_WF_TICKS=$(( MASTER_TICKS * EFF_OV ))
         CPU_WF_DT="$(awk -v k="${EFF_OV}" 'BEGIN { printf "%.8f", 0.0005 / k }')"
+        CPU_CLIP_START=$(( WFSTAT_CLIP_START * EFF_OV ))
+        CPU_CLIP_LEN=$(( WFSTAT_CLIP_LEN * EFF_OV ))
+    fi
+    if [[ "${BENCH_MODE}" == "fused" ]]; then
+        CPU_CLIP_START=0
+        CPU_CLIP_LEN=0
+        CPU_FULL_FPS="0"
     fi
     mkdir -p "${WFSTAT_CPU_DIR}"
     rm -f "${WFSTAT_CPU_DIR}/wf_stats.json"
@@ -1479,6 +1763,9 @@ if (( CPU_WFSTAT )); then
         "csim_wfstat.target_ticks=${CPU_WF_TICKS}" \
         "csim_wfstat.dt_phys=${CPU_WF_DT}" \
         "csim_wfstat.snap_extra=ON" \
+        "csim_wfstat.clip_start=${CPU_CLIP_START}" \
+        "csim_wfstat.clip_len=${CPU_CLIP_LEN}" \
+        "csim_wfstat.full_fps=${CPU_FULL_FPS}" \
         "csim_wfstat.procinfo.loopcntMax=${CPU_WF_TICKS}" \
         "csim_wfstat.procinfo.triggermode=3" \
         "csim_wfstat.procinfo.triggersname=b_post_stg2"
@@ -1487,10 +1774,89 @@ fi
 
 start_tlm_loggers
 
+if (( PYRWFS_TLM )) && command -v cacao-fpsexec-pyrwfstlm >/dev/null 2>&1 && \
+   @exists "s.aol1_pyr_ref" && @exists "s.aol2_pyr_ref"; then
+    ln -sfn "${OUT_DIR}" "${PYRTLM_LINK}"
+    if [[ -n "${PYRWFS_STRIDE}" ]]; then
+        PYR_STRIDE1="${PYRWFS_STRIDE}"
+    else
+        PYR_STRIDE1=$(( (WFS1_RATE + 100) / 200 ))
+    fi
+    (( PYR_STRIDE1 < 1 )) && PYR_STRIDE1=1
+    PYR_STRIDE2=$(( PYR_STRIDE1 * 2000 / WFS1_RATE ))
+    (( PYR_STRIDE2 < 1 )) && PYR_STRIDE2=1
+    PYR_REG_STRIDE=20
+    PYR_DT1="$(awk -v r="${WFS1_RATE}" 'BEGIN { printf "%.8f", 1.0 / r }')"
+    PYR_DT2="0.0005"
+    PYR_BIAS_ADU="${WFS_DARK_ADU:-100.0}"
+
+    milk-fps-rm -f -q --ignore-missing pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
+    milk-fps-init -q pyrwfstlm-1 cacao-fpsexec-pyrwfstlm >/dev/null
+    milk-fps-set -q \
+        "pyrwfstlm-1.AOloopindex=1" \
+        "pyrwfstlm-1.inwfs=csim_wfs_nir" \
+        "pyrwfstlm-1.inref=aol1_pyr_ref" \
+        "pyrwfstlm-1.outprefix=aol1_pyr" \
+        "pyrwfstlm-1.outcsv=${PYRTLM_LINK}/pyrwfs_tlm_stg1.csv" \
+        "pyrwfstlm-1.dt_phys=${PYR_DT1}" \
+        "pyrwfstlm-1.stride=${PYR_STRIDE1}" \
+        "pyrwfstlm-1.reg_stride=${PYR_REG_STRIDE}" \
+        "pyrwfstlm-1.sub_bg=OFF" \
+        "pyrwfstlm-1.bg_const=${PYR_BIAS_ADU}" \
+        "pyrwfstlm-1.a_reg=0.04" \
+        "pyrwfstlm-1.pub_maps=ON" \
+        "pyrwfstlm-1.sp_ang=51.75" \
+        "pyrwfstlm-1.sp_hw=2.0" \
+        "pyrwfstlm-1.procinfo.triggermode=3" \
+        "pyrwfstlm-1.procinfo.triggersname=csim_wfs_nir" \
+        "pyrwfstlm-1.procinfo.triggertimeout=0.5" \
+        "pyrwfstlm-1.procinfo.loopcntMax=-1"
+
+    milk-fps-init -q pyrwfstlm-2 cacao-fpsexec-pyrwfstlm >/dev/null
+    milk-fps-set -q \
+        "pyrwfstlm-2.AOloopindex=2" \
+        "pyrwfstlm-2.inwfs=csim_wfs_vis" \
+        "pyrwfstlm-2.inref=aol2_pyr_ref" \
+        "pyrwfstlm-2.outprefix=aol2_pyr" \
+        "pyrwfstlm-2.outcsv=${PYRTLM_LINK}/pyrwfs_tlm_stg2.csv" \
+        "pyrwfstlm-2.dt_phys=${PYR_DT2}" \
+        "pyrwfstlm-2.stride=${PYR_STRIDE2}" \
+        "pyrwfstlm-2.reg_stride=${PYR_REG_STRIDE}" \
+        "pyrwfstlm-2.sub_bg=OFF" \
+        "pyrwfstlm-2.bg_const=${PYR_BIAS_ADU}" \
+        "pyrwfstlm-2.a_reg=0.04" \
+        "pyrwfstlm-2.pub_maps=ON" \
+        "pyrwfstlm-2.sp_ang=51.75" \
+        "pyrwfstlm-2.sp_hw=2.0" \
+        "pyrwfstlm-2.procinfo.triggermode=3" \
+        "pyrwfstlm-2.procinfo.triggersname=csim_wfs_vis" \
+        "pyrwfstlm-2.procinfo.triggertimeout=0.5" \
+        "pyrwfstlm-2.procinfo.loopcntMax=-1"
+
+    milk-fps-runstart -q pyrwfstlm-1 pyrwfstlm-2
+    milk-stream-wait -q -t 10 aol1_pyr_zones aol2_pyr_zones >/dev/null 2>&1 || true
+    PYRWFS_TLM_ACTIVE="1"
+    echo "[ao3k-scexao]      Armed live Pyramid WFS monitors (pyrwfstlm-1 stride=${PYR_STRIDE1}, pyrwfstlm-2 stride=${PYR_STRIDE2})"
+fi
+
 cnt_pha_0=0 cnt_wfs1_0=0 cnt_wfs2_0=0 cnt_wfs3_0=0 cnt_long_0=0
 @get cnt_pha_0="s.outarraypha.cnt0" cnt_wfs1_0="s.csim_wfs_nir.cnt0" \
      cnt_wfs2_0="s.csim_wfs_vis.cnt0" cnt_wfs3_0="s.csim_wfs_lowfs.cnt0" \
      cnt_long_0="s.psf_vis_final_long.cnt0"
+
+if [[ -n "${PETAL_TEST_INJECT}" ]] && @exists "s.aol1_petalDM" && @exists "s.dm01disp07"; then
+    _pinj_p="${PETAL_TEST_INJECT%%:*}"
+    _pinj_w="${PETAL_TEST_INJECT#*:}"
+    _pinj_c="$(awk -v w="${_pinj_w}" 'BEGIN { printf "%.6f", -w }')"
+    # wf_stg1 = wf_raw - 2*dm_cmd -> writing (-w)*aol1_petalDM[:,:,p] to dm01disp07 injects +w lambda_J wrap!
+    @calc "s.dm01disp07 = (${_pinj_c}) * s.aol1_petalDM[:, :, ${_pinj_p}]"
+    echo "[ao3k-scexao]      Injected deterministic ${_pinj_w} lambda_J test petal wrap on petal ${_pinj_p} via dm01disp07"
+fi
+if (( PETAL_CTRL_ACTIVE )) && [[ "${PETAL_ENABLE_AT}" == "science" ]]; then
+    @calc "s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
+    milk-fps-set -q "petal-1.age_fr=0" "petal-1.enable=1"
+    echo "[ao3k-scexao]      Enabled petal-1 passive unwrapper at t_phys = 0.00 s"
+fi
 
 cacaosim.reset_long
 sysmon.mark "closed_loop_10s" "10s closed-loop science + coro + wavefront telemetry (${BENCH_MODE})"
@@ -1504,7 +1870,7 @@ chunk=$(( (2000 + EFF_PSF_NAVG - 1) / EFF_PSF_NAVG ))
 (( chunk < 1 )) && chunk=1
 while (( rem > 0 )); do
     step=$(( rem < chunk ? rem : chunk ))
-    milk-stream-wait -q -t 60 "psf_vis_final_long+${step}"
+    milk-stream-wait -q -t 180 "psf_vis_final_long+${step}"
     rem=$(( rem - step ))
     done_rd=$(( done_rd + step ))
     phys_done="$(awk -v d="${done_rd}" -v nv="${EFF_PSF_NAVG}" \
@@ -1528,6 +1894,14 @@ while (( rem > 0 )); do
     fl_pct="$(awk -v x="${fl:-0}" 'BEGIN { printf "%.1f%%", x * 100.0 }')"
     sr_live="$(printf 'NIR=%.3f Vis=%.3f Coro=%.2e LOWFS_Light=%s' \
         "${s2:-0}" "${sv:-0}" "${sc:-0}" "${fl_pct}")"
+    if (( PETAL_CTRL_ACTIVE )); then
+        _pj=0 _pwe=0 _pwn=0 _pww=0 _pws=0 _pev=0 _psg=0
+        @get _pj="f.petal-1.n_jumps" _pwe="f.petal-1.w_e" _pwn="f.petal-1.w_n" \
+             _pww="f.petal-1.w_w" _pws="f.petal-1.w_s" _pev="f.petal-1.ev_sn" \
+             _psg="f.petal-1.sg_s" 2>/dev/null || true
+        sr_live="${sr_live} $(printf 'Petal[j=%d w=(%.0f,%.0f,%.0f,%.0f) evSN=%+.2f sgS=%+.2f]' \
+            "${_pj:-0}" "${_pwe:-0}" "${_pwn:-0}" "${_pww:-0}" "${_pws:-0}" "${_pev:-0}" "${_psg:-0}")"
+    fi
     echo "[ao3k-scexao]      t_phys = ${phys_done} / ${PHYS_TIME} s  (${sr_live})"
 done
 
@@ -1566,6 +1940,112 @@ fi
 if (( CPU_WFSTAT )); then
     milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
     milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
+fi
+if (( PETAL_CTRL_ACTIVE )); then
+    @set "f.petal-1.enable=0" >/dev/null 2>&1 || true
+    milk-fps-runstop -q petal-1 >/dev/null 2>&1 || true
+    milk-fps-wait -q -t 15 petal-1 >/dev/null 2>&1 || true
+    p_nj=0 p_na=0 p_nr=0 p_lp=-1 p_ld=0 p_age=0 p_tp=-1 p_td=0
+    p_evsn=0 p_evew=0 p_evad=0 p_sge=0 p_sgn=0 p_sgw=0 p_sgs=0
+    p_we=0 p_wn=0 p_ww=0 p_ws=0 p_err=""
+    @get p_nj="f.petal-1.n_jumps" p_na="f.petal-1.n_aborts" p_nr="f.petal-1.n_rollbacks" \
+         p_lp="f.petal-1.last_petal" p_ld="f.petal-1.last_dir" \
+         p_age="f.petal-1.age_fr" p_tp="f.petal-1.trial_p" p_td="f.petal-1.trial_dir" \
+         p_evsn="f.petal-1.ev_sn" p_evew="f.petal-1.ev_ew" p_evad="f.petal-1.ev_adj" \
+         p_sge="f.petal-1.sg_e" p_sgn="f.petal-1.sg_n" p_sgw="f.petal-1.sg_w" p_sgs="f.petal-1.sg_s" \
+         p_we="f.petal-1.w_e" p_wn="f.petal-1.w_n" p_ww="f.petal-1.w_w" p_ws="f.petal-1.w_s" \
+         p_err="f.petal-1.unit.error" 2>/dev/null || true
+    if @exists "s.dm01disp06"; then
+        fpspipe.savefits "dm01disp06" "${OUT_DIR}/dm01disp06.fits"
+    fi
+    if @exists "s.aol1_petal_ema"; then
+        fpspipe.savefits "aol1_petal_ema" "${OUT_DIR}/aol1_petal_ema.fits"
+    fi
+    cat > "${OUT_DIR}/petal_stats.json" <<EOF
+{
+  "enabled": true,
+  "use_sign": ${PETAL_USE_SIGN_EFF:-1},
+  "alpha": ${PETAL_ALPHA},
+  "min_warmup": ${PETAL_WARMUP},
+  "th_even": ${PETAL_TH_EVEN},
+  "th_sign": ${PETAL_TH_SIGN},
+  "enable_at": "${PETAL_ENABLE_AT}",
+  "n_jumps": ${p_nj:-0},
+  "n_aborts": ${p_na:-0},
+  "n_rollbacks": ${p_nr:-0},
+  "last_petal": ${p_lp:--1},
+  "last_dir": ${p_ld:-0},
+  "age_fr": ${p_age:-0},
+  "trial_p": ${p_tp:--1},
+  "trial_dir": ${p_td:-0},
+  "waves_enws": [${p_we:-0}, ${p_wn:-0}, ${p_ww:-0}, ${p_ws:-0}],
+  "final_ema": {
+    "ev_sn": ${p_evsn:-0},
+    "ev_ew": ${p_evew:-0},
+    "ev_adj": ${p_evad:-0},
+    "sg_e": ${p_sge:-0},
+    "sg_n": ${p_sgn:-0},
+    "sg_w": ${p_sgw:-0},
+    "sg_s": ${p_sgs:-0}
+  },
+  "unit_error": "${p_err}"
+}
+EOF
+    echo "[ao3k-scexao]      Petal Ctrl final: n_jumps=${p_nj} (aborts=${p_na}, rollbacks=${p_nr}) waves(E,N,W,S)=(${p_we},${p_wn},${p_ww},${p_ws}) evSN=${p_evsn} sgS=${p_sgs} err='${p_err}'"
+fi
+if (( PYRWFS_TLM_ACTIVE )); then
+    milk-fps-runstop -q pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
+    milk-fps-wait -q -t 15 pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
+    pyr1_fp0=0 pyr1_nf=0 pyr1_nt=0 pyr2_fp0=0 pyr2_nf=0 pyr2_nt=0
+    @get pyr1_fp0="f.pyrwfstlm-1.flux.pup0" pyr1_nf="f.pyrwfstlm-1.health.nframes" \
+         pyr1_nt="f.pyrwfstlm-1.health.ntorn" \
+         pyr2_fp0="f.pyrwfstlm-2.flux.pup0" pyr2_nf="f.pyrwfstlm-2.health.nframes" \
+         pyr2_nt="f.pyrwfstlm-2.health.ntorn" 2>/dev/null || true
+    for _sn in 1 2; do
+        for _mp in "isum_avg:isum" "scint:scint" "lvar:lvar" "zones:zones" "pupgeom:pupgeom"; do
+            _ss="${_mp%%:*}"
+            _fo="${_mp#*:}"
+            if @exists "s.aol${_sn}_pyr_${_ss}"; then
+                fpspipe.savefits "aol${_sn}_pyr_${_ss}" "${OUT_DIR}/pyrwfs_${_fo}_stg${_sn}.fits"
+            fi
+        done
+    done
+    cat > "${OUT_DIR}/pyrwfs_tlm_meta.json" <<EOF
+{
+  "schema_version": 1,
+  "spider_angle_deg": 51.75,
+  "spider_halfwidth_pix": 2.0,
+  "reg_stride": ${PYR_REG_STRIDE:-20},
+  "bg_const_adu": ${PYR_BIAS_ADU:-100.0},
+  "stage1": {
+    "stream": "csim_wfs_nir",
+    "loop_closed": true,
+    "rate_hz": ${WFS1_RATE}.0,
+    "stride": ${PYR_STRIDE1:-5},
+    "dt_phys_s": ${PYR_DT1:-0.001},
+    "mod_rad_override": "${WFS1_MOD_RAD}",
+    "f_pup0": ${pyr1_fp0:-0},
+    "nframes": ${pyr1_nf:-0},
+    "ntorn": ${pyr1_nt:-0},
+    "csv": "pyrwfs_tlm_stg1.csv"
+  },
+  "stage2": {
+    "stream": "csim_wfs_vis",
+    "loop_closed": $( (( ENABLE_STAGE2 )) && echo "true" || echo "false" ),
+    "rate_hz": 2000.0,
+    "stride": ${PYR_STRIDE2:-10},
+    "dt_phys_s": ${PYR_DT2:-0.0005},
+    "mod_rad_override": "${WFS2_MOD_RAD}",
+    "f_pup0": ${pyr2_fp0:-0},
+    "nframes": ${pyr2_nf:-0},
+    "ntorn": ${pyr2_nt:-0},
+    "csv": "pyrwfs_tlm_stg2.csv"
+  }
+}
+EOF
+    milk-fps-rm -f -q --ignore-missing pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
+    rm -f "${PYRTLM_LINK}" >/dev/null 2>&1 || true
+    echo "[ao3k-scexao]      Saved Pyramid WFS telemetry (Stg1 N=${pyr1_nf}, f_pup0=${pyr1_fp0}; Stg2 N=${pyr2_nf}, f_pup0=${pyr2_fp0})"
 fi
 if [[ "${SAVE_TELEMETRY}" != "none" ]]; then
     echo "[ao3k-scexao]      Flushing ${#TLM_UNITS[@]} telemetry cubes to ${TELEM_DIR}..."
@@ -1659,6 +2139,16 @@ for _ in $(seq 1 100); do
     [[ -s "${OUT_DIR}/wf_stats.json" && -s "${WFSTAT_CPU_DIR}/wf_stats.json" ]] && break
     sleep 0.1
 done
+if [[ "${SAVE_TELEMETRY}" != "none" ]]; then
+    for _cf in wf_clip_raw.fits wf_clip_final.fits dm_clip_opd_stg1.fits \
+               dm_clip_opd_stg2.fits wf_clip_meta.json \
+               wf_full_raw.fits wf_full_final.fits dm_full_opd_stg1.fits \
+               dm_full_opd_stg2.fits wf_full_meta.json; do
+        if [[ -f "${OUT_DIR}/${_cf}" ]]; then
+            mv -f "${OUT_DIR}/${_cf}" "${TELEM_DIR}/${_cf}"
+        fi
+    done
+fi
 if (( CPU_WFSTAT )); then
     milk-fps-rm -f -q --ignore-missing csim_wfstat >/dev/null 2>&1 || true
 fi
@@ -1863,6 +2353,56 @@ EOF
 }
 EOF
     echo "[ao3k-scexao]      Multi-rate/Pre-shaper: WFS1=${WFS1_RATE}Hz, MR=${MR_DM1} (K=${MR_SUBSTEPS}, pacer in=${mp1_in} out=${mp1_out} pk_ramp=${mp1_pk}, vel_rms=${pf1_vr_mr}) | preshaper in=${ps1_in} out=${ps1_out} pk_corr=${ps1_pk} clip=${ps1_cl}"
+    if (( SELFLEARN )); then
+        sl1_fr=0 sl1_up=0 sl1_gr=0 sl1_nc=0 sl1_a0=0 sl1_a1=0 sl1_v0=0 sl1_vt=0 sl1_tr=0 sl1_l1=0
+        sl2_fr=0 sl2_up=0 sl2_gr=0 sl2_nc=0 sl2_a0=0 sl2_a1=0 sl2_v0=0 sl2_vt=0 sl2_tr=0 sl2_l1=0
+        if @exists "f.selflearn-1"; then
+            @get sl1_fr="f.selflearn-1.out.frames" sl1_up="f.selflearn-1.out.updates" \
+                 sl1_gr="f.selflearn-1.out.gric_active" sl1_nc="f.selflearn-1.out.n_clusters" \
+                 sl1_a0="f.selflearn-1.out.alpha_l0" sl1_a1="f.selflearn-1.out.alpha_l1" \
+                 sl1_v0="f.selflearn-1.out.oos_vr_l0_pct" sl1_vt="f.selflearn-1.out.oos_vr_tot_pct" \
+                 sl1_tr="f.selflearn-1.out.tweak_rms" sl1_l1="f.selflearn-1.out.l1_rms" 2>/dev/null || true
+        fi
+        if @exists "f.selflearn-2"; then
+            @get sl2_fr="f.selflearn-2.out.frames" sl2_up="f.selflearn-2.out.updates" \
+                 sl2_gr="f.selflearn-2.out.gric_active" sl2_nc="f.selflearn-2.out.n_clusters" \
+                 sl2_a0="f.selflearn-2.out.alpha_l0" sl2_a1="f.selflearn-2.out.alpha_l1" \
+                 sl2_v0="f.selflearn-2.out.oos_vr_l0_pct" sl2_vt="f.selflearn-2.out.oos_vr_tot_pct" \
+                 sl2_tr="f.selflearn-2.out.tweak_rms" sl2_l1="f.selflearn-2.out.l1_rms" 2>/dev/null || true
+        fi
+        cat > "${OUT_DIR}/selflearn_stats.json" <<EOF
+{
+  "enabled": true,
+  "nbmodemax": ${SELFLEARN_MODES},
+  "kmax": ${SELFLEARN_KMAX},
+  "stage1": {
+    "frames": ${sl1_fr:-0},
+    "updates": ${sl1_up:-0},
+    "gric_active": ${sl1_gr:-0},
+    "n_clusters": ${sl1_nc:-0},
+    "alpha_l0": ${sl1_a0:-0},
+    "alpha_l1": ${sl1_a1:-0},
+    "oos_vr_l0_pct": ${sl1_v0:-0},
+    "oos_vr_tot_pct": ${sl1_vt:-0},
+    "tweak_rms": ${sl1_tr:-0},
+    "l1_rms": ${sl1_l1:-0}
+  },
+  "stage2": {
+    "frames": ${sl2_fr:-0},
+    "updates": ${sl2_up:-0},
+    "gric_active": ${sl2_gr:-0},
+    "n_clusters": ${sl2_nc:-0},
+    "alpha_l0": ${sl2_a0:-0},
+    "alpha_l1": ${sl2_a1:-0},
+    "oos_vr_l0_pct": ${sl2_v0:-0},
+    "oos_vr_tot_pct": ${sl2_vt:-0},
+    "tweak_rms": ${sl2_tr:-0},
+    "l1_rms": ${sl2_l1:-0}
+  }
+}
+EOF
+        echo "[ao3k-scexao]      Cascaded Self-Learning (libgric): Stg1[K=${sl1_nc}, a0=${sl1_a0}, a1=${sl1_a1}, vr=${sl1_vt}%] | Stg2[K=${sl2_nc}, a0=${sl2_a0}, a1=${sl2_a1}, vr=${sl2_vt}%]"
+    fi
 fi
 
 if (( ! PREDICTIVE )); then
@@ -1969,6 +2509,9 @@ fi
 export CACAO_WFS_DARKSUB="${WFS_DARKSUB_EFF}"
 export CACAO_WFS_DARK_ADU="${WFS_DARK_ADU_EFF}"
 export CACAO_WFS_NORMFLOOR="${WFS_NORMFLOOR_EFF}"
+export CACAO_SELFLEARN_ENABLE="${SELFLEARN}"
+export CACAO_SELFLEARN_MODES="${SELFLEARN_MODES}"
+export CACAO_SELFLEARN_KMAX="${SELFLEARN_KMAX}"
 
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
         CACAO_PF_MODE="${PF_MODE}" \
@@ -1980,16 +2523,18 @@ CACAO_LOOPROOTDIR="${STG1_ROOT}" \
         CACAO_PF_MINSAMPLES="${PF_MINSAMPLES1}" \
         CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
             "${LOOP_CTRL}" --stage 1 pf-on "${PF_MIX}"
-        CACAO_LOOPROOTDIR="${STG2_ROOT}" \
-        CACAO_PF_MODE="${PF_MODE}" \
-        CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
-        CACAO_PF_ORDER="${PF_ORDER}" \
-        CACAO_PF_REG="${PF_REG2}" \
-        CACAO_PF_MAXNORM2="${PF_MAXNORM2}" \
-        CACAO_PF_NBTRAIN="${PF_NBTRAIN2}" \
-        CACAO_PF_MINSAMPLES="${PF_MINSAMPLES2}" \
-        CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP}" \
-            "${LOOP_CTRL}" --stage 2 pf-on "${PF_MIX2}"
+        if (( ENABLE_STAGE2 )); then
+            CACAO_LOOPROOTDIR="${STG2_ROOT}" \
+            CACAO_PF_MODE="${PF_MODE}" \
+            CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
+            CACAO_PF_ORDER="${PF_ORDER}" \
+            CACAO_PF_REG="${PF_REG2}" \
+            CACAO_PF_MAXNORM2="${PF_MAXNORM2}" \
+            CACAO_PF_NBTRAIN="${PF_NBTRAIN2}" \
+            CACAO_PF_MINSAMPLES="${PF_MINSAMPLES2}" \
+            CACAO_PF_MGAIN_EXP="${PF_MGAIN_EXP2}" \
+                "${LOOP_CTRL}" --stage 2 pf-on "${PF_MIX2}"
+        fi
     fi
     milk-fps-runstop -q csim_atmturb
     if [[ "${BENCH_MODE}" == "fused" ]]; then
@@ -2078,6 +2623,10 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "mult1=${MULT1}" \
     "mult2=${MULT2}" \
     "mult3=${MULT3}" \
+    "mult_tt=${MULT_TT}" \
+    "mmult_floor=${MMULT_FLOOR}" \
+    "mmult_alpha=${MMULT_ALPHA}" \
+    "dmmask_rmax=${DMMASK_RMAX}" \
     "mgain_alpha=${MGAIN_ALPHA}" \
     "mgain_floor=${MGAIN_FLOOR}" \
     "mgain_tt=${MGAIN_TT}" \
@@ -2085,21 +2634,30 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "svdlim2=${SVDLIM2}" \
     "svdlim3=${SVDLIM3}" \
     "enable_lowfs=${ENABLE_LOWFS}" \
+    "psol_og1=${PSOL_OG1}" \
     "predictive=${PREDICTIVE}" \
     "pf_mode=${PF_MODE}" \
     "pf_blocksize=${PF_BLOCKSIZE}" \
     "pf_mix=${PF_MIX}" \
     "pf_mix2=${PF_MIX2}" \
+    "pf_mix_tt=${PF_MIX_TT}" \
+    "pf_lo_nmode=${PF_LO_NMODE}" \
     "pf_order=${PF_ORDER}" \
     "pf_reg=${PF_REG}" \
     "pf_reg2=${PF_REG2}" \
     "pf_maxnorm2=${PF_MAXNORM2}" \
+    "pf_diff_nmode=${PF_DIFF_NMODE}" \
+    "pf_diff_order=${PF_DIFF_ORDER}" \
+    "pf_diff_reg=${PF_DIFF_REG}" \
+    "pf_diff_maxnorm2=${PF_DIFF_MAXNORM2}" \
+    "pf_diff_maxdcgain=${PF_DIFF_MAXDCGAIN}" \
     "pf_nbtrain1=${PF_NBTRAIN1}" \
     "pf_nbtrain2=${PF_NBTRAIN2}" \
     "pf_minsamples1=${PF_MINSAMPLES1}" \
     "pf_minsamples2=${PF_MINSAMPLES2}" \
     "pf_warmup_sec=${PF_WARMUP_SEC}" \
     "pf_mgain_exp=${PF_MGAIN_EXP}" \
+    "pf_mgain_exp2=${PF_MGAIN_EXP2}" \
     "nbloop=${NBLOOP}" \
     "run_selfrm=${RUN_SELFRM}" \
     "selfrm_modes=${SELFRM_MODES}" \
@@ -2111,7 +2669,35 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "calib_2wfs1dm=${CALIB_2WFS1DM}" \
     "sysid_modes=${SYSID_MODES}" \
     "sysid_whiten_order=${SYSID_WHITEN_ORDER}" \
-    "skip_microbench=${SKIP_MICROBENCH}" <<'PY'
+    "skip_microbench=${SKIP_MICROBENCH}" \
+    "selflearn=${SELFLEARN}" \
+    "selflearn_modes=${SELFLEARN_MODES}" \
+    "selflearn_kmax=${SELFLEARN_KMAX}" \
+    "online_og1=${ONLINE_OG1}" \
+    "live_2wfs1dm_sec=${LIVE_2WFS1DM_SEC}" \
+    "windlayers1=${WINDLAYERS1}" \
+    "wind_var=${WIND_VAR}" \
+    "wind_var_scale=${WIND_VAR_SCALE}" \
+    "wind_burst=${WIND_BURST}" \
+    "wind_burst_scale=${WIND_BURST_SCALE}" \
+    "wind_switch_sec=${WIND_SWITCH_SEC}" \
+    "wind_switch_deg=${WIND_SWITCH_DEG}" \
+    "vib_enable=${VIB_ENABLE}" \
+    "vib_rms_nm=${VIB_RMS_NM}" \
+    "petal_enable=${PETAL_ENABLE}" \
+    "petal_rms_nm=${PETAL_RMS_NM}" \
+    "petal_tau_s=${PETAL_TAU_S}" \
+    "wfs_dark_adu=${WFS_DARK_ADU}" \
+    "pyrwfs_tlm=${PYRWFS_TLM}" \
+    "pyrwfs_stride=${PYRWFS_STRIDE}" \
+    "petal_ctrl=${PETAL_CTRL}" \
+    "petal_use_sign=${PETAL_USE_SIGN_EFF}" \
+    "petal_alpha=${PETAL_ALPHA}" \
+    "petal_warmup=${PETAL_WARMUP}" \
+    "petal_th_even=${PETAL_TH_EVEN}" \
+    "petal_th_sign=${PETAL_TH_SIGN}" \
+    "petal_enable_at=${PETAL_ENABLE_AT}" <<'PY'
+from datetime import datetime, timezone
 import json, pathlib, sys
 
 out_path = pathlib.Path(sys.argv[1])
@@ -2125,7 +2711,12 @@ for item in sys.argv[2:]:
             opts[k] = int(v) if v.isdigit() else float(v)
         except ValueError:
             opts[k] = v
-payload = {"schema_version": 1, "runner": "sim-ao3k-scexao.milk", "options": opts}
+payload = {
+    "schema_version": 1,
+    "runner": "sim-ao3k-scexao.milk",
+    "simulation_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "options": opts,
+}
 out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
 if command -v cacaosim-gui-screenshot >/dev/null 2>&1; then

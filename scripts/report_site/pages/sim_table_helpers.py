@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import html
+import re
 
 from ..extractors.params import TRACKED_PARAMS
 from .fragments import render_domain_badge
@@ -106,6 +107,7 @@ def build_sim_table_headers(cols: dict[str, bool]) -> list[str]:
     hdr_cells = [
         '<th data-nosort="1" style="text-align: center;">Cmp</th>',
         '<th style="text-align: left;">Simulation &amp; Sub-Pages</th>',
+        '<th class="sort-desc" style="text-align: left;">Sim Date (UTC)</th>',
         '<th style="text-align: left;">Domain</th>',
         '<th style="text-align: left;">Changed Parameters</th>',
     ]
@@ -131,48 +133,78 @@ def build_sim_table_headers(cols: dict[str, bool]) -> list[str]:
     return hdr_cells
 
 
+def _render_turb_pill(
+    turb_profile: object,
+    base: str,
+) -> str:
+    """Format a clickable Turbulence & Perturbation Model status pill for a simulation row."""
+    if not isinstance(turb_profile, dict) or not turb_profile:
+        return ""
+    is_def = bool(turb_profile.get("matches_default"))
+    badge = str(turb_profile.get("compact_badge") or "Default model")
+    summary = str(turb_profile.get("summary_label") or badge)
+    cls = "param-pill" if is_def else "param-pill param-pill-diff"
+    b_esc = html.escape(badge, quote=False)
+    t_esc = html.escape(f"Turbulence & Perturbation Model: {summary}", quote=True)
+    v_html = f"<code>{b_esc}</code>" if is_def else f"<strong><code>{b_esc}</code></strong>"
+    return (
+        f'<a class="{cls}" href="{base}/turbulence/index.html" title="{t_esc}">'
+        f"Turb: {v_html}</a>"
+    )
+
+
 def _render_param_cell(
-    row_idx: int,
+    is_baseline: bool,
     n_runs: int,
     pd: dict[str, str],
     c: dict[str, object],
     changed_specs: list[tuple[str, str]],
     ref_vals: dict[str, str],
     compact_diff_only: bool,
+    *,
+    turb_profile: object = None,
+    base: str = "..",
 ) -> str:
     """Format the Changed Parameters cell HTML for one simulation row."""
+    turb_pill = _render_turb_pill(turb_profile, base)
     if n_runs == 1:
         pills_out = [
             format_param_pill(k, lbl, pd[k], False, c)
             for k, lbl in TRACKED_PARAMS[:5]
             if k in pd
         ]
+        if turb_pill:
+            pills_out.append(turb_pill)
         return (
             f'<div class="param-list">{"".join(pills_out)}</div>'
             if pills_out
             else '<span class="muted">&mdash;</span>'
         )
     if not changed_specs:
+        if turb_pill:
+            return f'<div class="param-list">{turb_pill}</div>'
         return '<span class="muted">Identical parameters</span>'
 
     pills_out = []
-    if compact_diff_only and row_idx == 0:
+    if compact_diff_only and is_baseline:
         pills_out.append('<span class="param-pill param-pill-base">Baseline</span>')
     for pkey, plabel in changed_specs:
         if pkey not in pd:
             continue
         val = pd[pkey]
         is_diff = val != ref_vals.get(pkey)
-        if compact_diff_only and row_idx > 0 and not is_diff:
+        if compact_diff_only and not is_baseline and not is_diff:
             continue
         pills_out.append(format_param_pill(pkey, plabel, val, is_diff, c))
     if not pills_out:
         pills_out.append('<span class="param-pill param-pill-base">Same as baseline</span>')
+    if turb_pill:
+        pills_out.append(turb_pill)
     return f'<div class="param-list">{"".join(pills_out)}</div>'
 
 
 def build_sim_table_row(
-    row_idx: int,
+    is_baseline: bool,
     n_runs: int,
     m: dict[str, object],
     pd: dict[str, str],
@@ -206,19 +238,45 @@ def build_sim_table_row(
     if mslug in cross_set:
         badge_line += '<span class="metric-pill">Cross-ref</span> '
     rt_lbl = "Runtime" if has_cmp else "Runtime (N/A)"
+    pyrwfs_link = (
+        f'<a href="{base}/{mslug_esc}/pyrwfs.html">PyWFS</a>'
+        if m.get("has_pyrwfs_report")
+        else ""
+    )
     sub_links = (
         '<div class="sublinks-row">'
         f'<a href="{base}/{mslug_esc}/index.html">Overview</a>'
         f'<a href="{base}/{mslug_esc}/config.html">Config</a>'
         f'<a href="{base}/{mslug_esc}/optical.html">Optical</a>'
+        f"{pyrwfs_link}"
         f'<a href="{base}/{mslug_esc}/runtime.html">{rt_lbl}</a>'
         f'<a href="{base}/{mslug_esc}/how_to_run.html">How to Run</a>'
         "</div>"
     )
     param_cell_html = _render_param_cell(
-        row_idx, n_runs, pd, c, changed_specs, ref_vals, compact_diff_only
+        is_baseline,
+        n_runs,
+        pd,
+        c,
+        changed_specs,
+        ref_vals,
+        compact_diff_only,
+        turb_profile=m.get("turbulence_profile"),
+        base=base,
     )
     f_attrs = sim_filter_attrs(m, pd, rdom)
+
+    sim_utc = str(m.get("simulation_utc") or "")
+    sim_iso = str(m.get("simulation_iso") or "")
+    sim_sort = sim_iso or sim_utc
+    sim_disp = sim_utc[:-4] if sim_utc.endswith(" UTC") else sim_utc
+    date_cell = (
+        f'<td data-sort-val="{html.escape(sim_sort, quote=True)}" '
+        f'title="{html.escape(sim_sort, quote=True)}">'
+        f'<code>{html.escape(sim_disp, quote=False)}</code></td>'
+        if sim_disp
+        else '<td data-sort-val=""><span class="muted">&mdash;</span></td>'
+    )
 
     row_cells = [
         f'<td style="text-align:center;">'
@@ -226,6 +284,7 @@ def build_sim_table_row(
         f'aria-label="Compare {mslug_esc}"></td>',
         f'<td>{badge_line}<a href="{base}/{mslug_esc}/index.html">'
         f'<strong><code>{mslug_lbl}</code></strong></a>{sub_links}</td>',
+        date_cell,
         f"<td>{render_domain_badge(rdom, domain_map, rel_root=base)}</td>",
         f'<td class="param-cell">{param_cell_html}</td>',
     ]
@@ -327,8 +386,29 @@ def render_filter_panel(
     ctrl_counts: dict[str, int],
     llowfs_counts: dict[str, int],
     c2d_counts: dict[str, int],
+    run_slugs: list[str] | None = None,
 ) -> str:
     """Render the interactive multi-facet simulation filter & comparison bar."""
+    slugs_list = run_slugs or []
+    ar_matches = sum(
+        1 for s in slugs_list if re.search(r"(_lowfs_closed|_predictive_ar(4|8|16|32|64))$", s)
+    )
+    eof_matches = sum(
+        1 for s in slugs_list if re.search(r"(ar16_w14s|ar16_matched_w14s|eof64_p8|eof128_p8)$", s)
+    )
+    preset_btns = ['<button type="button" class="btn-sm" data-cmp-preset="all">Compare All</button>']
+    if ar_matches >= 2:
+        preset_btns.append(
+            '<button type="button" class="btn-sm" data-cmp-preset="ar-sweep">AR Sweep</button>'
+        )
+    if eof_matches >= 2:
+        preset_btns.append(
+            '<button type="button" class="btn-sm" data-cmp-preset="eof-vs-ar">EOF vs AR</button>'
+        )
+    preset_btns.append(
+        '<button type="button" class="btn-sm" data-cmp-preset="clear">Clear Selection</button>'
+    )
+    preset_btns_html = "".join(preset_btns)
     domain_box = ""
     if show_domain_filter:
         dom_btns = "".join(
@@ -386,9 +466,7 @@ def render_filter_panel(
         '<div class="filter-actions-row">\n'
         '<div class="toolbar-group">'
         '<span class="filter-inline-label">Compare:</span>'
-        '<button type="button" class="btn-sm" data-cmp-preset="ar-sweep">AR Sweep</button>'
-        '<button type="button" class="btn-sm" data-cmp-preset="eof-vs-ar">EOF vs AR</button>'
-        '<button type="button" class="btn-sm" data-cmp-preset="clear">Clear Selection</button>'
+        f"{preset_btns_html}"
         "</div>\n"
         '<div class="toolbar-group">'
         '<input type="search" id="sim-search" class="search-input" '

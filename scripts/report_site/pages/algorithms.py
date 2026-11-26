@@ -1549,6 +1549,7 @@ def build_algorithms_index_html(
         + "</div>\n"
         '<div class="hero-actions">'
         '<a class="btn" href="#algorithm-summary">1&ndash;2 Page Options Summary &amp; Rationale</a>'
+        '<a class="btn btn-secondary" href="../predictive-control/index.html">Predictive Control Guide</a>'
         '<a class="btn btn-secondary" href="#dependency-graph">Interactive Options Map</a>'
         '<a class="btn btn-secondary" href="#architecture-synthesis">Rules &amp; Benchmarks</a>'
         '<a class="btn btn-secondary" href="#algorithms-root">Full Catalog &amp; 2D Matrix</a>'
@@ -1784,6 +1785,11 @@ def build_algorithm_detail_html(
         else '<span class="metric-pill">PLANNED</span>'
     )
 
+    pc_guide_btn = (
+        '<a class="btn" href="../../predictive-control/index.html">Predictive Control Guide &rarr;</a>'
+        if code in ("PF/AR", "EOF", "SELFLEARN", "PSOL", "WHITE", "MRDM", "WIND")
+        else ""
+    )
     hero_html = (
         f'<section class="algo-hero cat-{role}">\n'
         '<div class="algo-hero-meta">'
@@ -1796,6 +1802,7 @@ def build_algorithm_detail_html(
         f"<h1>{html.escape(name, quote=False)}</h1>\n"
         f"<p>{html.escape(summary, quote=False)}</p>\n"
         '<div class="hero-actions">'
+        f"{pc_guide_btn}"
         '<a class="btn btn-secondary" href="../index.html">&larr; All Algorithms Table</a>'
         '<a class="btn btn-secondary" href="../index.html#matrix">2D Dependency Matrix</a>'
         '<a class="btn btn-secondary" href="../../reference/index.html">Options Reference</a>'
@@ -1803,7 +1810,11 @@ def build_algorithm_detail_html(
         "</section>"
     )
 
-    detail_paras = "".join(f"<p>{html.escape(p, quote=False)}</p>" for p in details)
+    def _fmt_inline_code(text: str) -> str:
+        esc = html.escape(text, quote=False)
+        return re.sub(r"`([^`]+)`", r"<code>\1</code>", esc)
+
+    detail_paras = "".join(f"<p>{_fmt_inline_code(p)}</p>" for p in details)
     unit_pills = "".join(
         f'<span class="param-pill"><code>{html.escape(u, quote=False)}</code></span>'
         for u in units

@@ -199,6 +199,7 @@ def build_telemetry_files_section(staged_files: list[Path]) -> str:
         "report_meta.json",
         "study_meta.json",
         "wfs_psf_short_evolution_meta.json",
+        "wfs_psf_full_evolution_meta.json",
     }
     data_files = [
         p

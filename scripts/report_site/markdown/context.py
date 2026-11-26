@@ -16,11 +16,13 @@ class RenderContext:
         out_slug_dir: Path,
         has_compute_report: bool,
         *,
+        has_pyrwfs_report: bool = False,
         is_simulation: bool = True,
         known_siblings: set[str] | None = None,
     ) -> None:
         self.out_slug_dir = out_slug_dir.resolve()
         self.has_compute_report = has_compute_report
+        self.has_pyrwfs_report = has_pyrwfs_report
         self.is_simulation = is_simulation
         self.known_siblings = known_siblings or set()
         self.referenced_images: set[str] = set()
@@ -44,6 +46,7 @@ class RenderContext:
             "index.html",
             "config.html",
             "optical.html",
+            "pyrwfs.html",
             "runtime.html",
             "how_to_run.html",
             "compute_report.html",
@@ -52,6 +55,8 @@ class RenderContext:
         if mapped in sim_pages:
             if mapped in ("runtime.html", "compute_report.html", "compute.html"):
                 return final_url, False, self.has_compute_report
+            if mapped == "pyrwfs.html":
+                return final_url, False, self.has_pyrwfs_report
             if not self.is_simulation and mapped != "index.html":
                 return final_url, False, False
             return final_url, False, True

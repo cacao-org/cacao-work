@@ -198,6 +198,7 @@ def _render_bench_tab(
 def _render_fps_tab(fps_units: list[dict[str, object]]) -> str:
     n_csim = sum(1 for u in fps_units if u.get("package") == "cacaosim")
     n_atm = sum(1 for u in fps_units if u.get("package") == "milkatmturb")
+    n_cacao = sum(1 for u in fps_units if u.get("package") == "cacao")
     unit_opts = ['<option value="all">All Units</option>']
     unit_chips: list[str] = []
     rows: list[str] = []
@@ -214,7 +215,11 @@ def _render_fps_tab(fps_units: list[dict[str, object]]) -> str:
             f'<option value="{html.escape(ukey, quote=True)}">'
             f"{html.escape(ukey, quote=False)} ({len(params)})</option>"
         )
-        pkg_cls = "cat-simulation" if pkg == "cacaosim" else "cat-analysis"
+        pkg_cls = (
+            "cat-simulation"
+            if pkg == "cacaosim"
+            else ("cat-loop_operation" if pkg == "cacao" else "cat-analysis")
+        )
         unit_chips.append(
             f'<button type="button" class="chip-btn ref-unit-chip {pkg_cls}" '
             f'id="{html.escape(uanchor, quote=True)}" '
@@ -275,7 +280,12 @@ def _render_fps_tab(fps_units: list[dict[str, object]]) -> str:
         f"cacaosim ({n_csim})</button>"
         '<button type="button" class="chip-btn" data-ref-pkg="milkatmturb">'
         f"milkatmturb ({n_atm})</button>"
-        '<span class="filter-inline-label">Access:</span>'
+        + (
+            f'<button type="button" class="chip-btn" data-ref-pkg="cacao">cacao ({n_cacao})</button>'
+            if n_cacao
+            else ""
+        )
+        + '<span class="filter-inline-label">Access:</span>'
         '<button type="button" class="chip-btn active" data-ref-acc="all">All</button>'
         '<button type="button" class="chip-btn" data-ref-acc="live">Live (WRITERUN)</button>'
         '<button type="button" class="chip-btn" data-ref-acc="init">Init</button>'
@@ -423,20 +433,23 @@ def build_options_reference_html(
     n_fps_p = int(counts.get("fps_params", 0))
     n_csim_u = int(counts.get("cacaosim_units", 0))
     n_atm_u = int(counts.get("atmturb_units", 0))
+    n_cacao_u = int(counts.get("cacao_units", 0))
     n_cli_all = len(runner_cli) + len(env_vars) + len(cacaosim_cli)
+    unit_breakdown = f"{n_csim_u}+{n_atm_u}+{n_cacao_u}" if n_cacao_u else f"{n_csim_u}+{n_atm_u}"
 
     hero_html = (
         '<section class="hero-banner">\n'
-        "<h1>Simulator Options &amp; Parameter Reference</h1>\n"
+        "<h1>Simulator &amp; CACAO Options Reference</h1>\n"
         "<p>Authoritative, schema-generated reference covering every declarative "
-        "<code>.bench</code> optical bench key, all compiled <code>cacaosim</code> &amp; "
-        "<code>milkatmturb</code> FPS compute unit parameters, and all <code>cacao-work</code> "
-        "simulation runner CLI flags and <code>CACAO_*</code> environment variables.</p>\n"
+        "<code>.bench</code> optical bench key, all compiled <code>cacaosim</code>, "
+        "<code>milkatmturb</code>, and <code>cacao</code> predictive-control FPS compute unit "
+        "parameters, and all <code>cacao-work</code> simulation runner CLI flags and "
+        "<code>CACAO_*</code> environment variables.</p>\n"
         '<div class="kpi-grid">'
         + kpi_card(".bench DSL Keys", str(n_bench), "From compiled C schema")
         + kpi_card(
             "FPS Compute Units",
-            f"{n_fps_u} ({n_csim_u}+{n_atm_u})",
+            f"{n_fps_u} ({unit_breakdown})",
             f"{n_fps_p} introspected FPS params",
         )
         + kpi_card(

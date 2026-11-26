@@ -1,0 +1,246 @@
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# Stage-1 Passive Petal-Unwrap Compute Unit (milk-fpsexec-milk-calc, triggered on aol1_imWFS2)
+#
+# Streams read:
+#   aol1_imWFS2   (160x160 f32) : Stage-1 normalized ref-subtracted WFS frame (trigger)
+#   aol1_petalM   (7x25600 f32) : [ev_sn, ev_ew, ev_adj, sg_e, sg_n, sg_w, sg_s] matched filter
+#   aol1_petalDM  (64x64x4 f32) : zero-mean Voronoi DM1 petal modes [E, N, W, S] (+1 lambda_J OPD)
+#
+# Streams written:
+#   aol1_petal_raw (7 f32)      : instantaneous matched-filter projection per frame
+#   aol1_petal_ema (7 f32)      : unbiased startup/post-reset causal EMA
+#   dm01disp06     (64x64 f32)  : free DM1 offset channel (atomic integer-wave jumps only!)
+#
+# Closed-loop 2-stage post-jump verifier (active in BOTH signed & achromatic modes):
+#   After any normal +-1 wave jump on petal p (recording pre-jump ev0):
+#     1) At eff_n >= abort_win (~0.40s): if ev_after > th_abort (~1.90, i.e. +-2w explosion)
+#        -> immediately snap -2*verify_dir straight to 0 lambda_J!
+#     2) At eff_n >= verify_win (~0.80s): if ev_after > verify_ev0 + 0.35 (jumping made Even
+#        significantly worse -> false alarm on phased petal) -> immediately roll back -1*verify_dir
+#        and enter cooldown! Otherwise clear verify_p (verified unwrap success!).
+
+# 1. Matched-filter projection (7 x 25600 BLAS GEMV -> ~3 us per frame)
+aol1_petal_raw = aol1_petalM @ vec(aol1_imWFS2)
+
+# 2. Unbiased causal EMA with post-jump hardware/WFS latency blanking (settle_fr)
+age_fr = age_fr + 1
+if age_fr <= settle_fr {
+    aol1_petal_ema = aol1_petal_ema * 0.0
+} else {
+    local eff_age = age_fr - settle_fr
+    local a_eff = alpha
+    if eff_age * alpha < 1.0 {
+        a_eff = 1.0 / eff_age
+    }
+    aol1_petal_ema = (1.0 - a_eff) * aol1_petal_ema + a_eff * aol1_petal_raw
+}
+
+# 3. Extract scalar telemetry readbacks into FPS params
+ev_sn  = aol1_petal_ema[0]
+ev_ew  = aol1_petal_ema[1]
+ev_adj = aol1_petal_ema[2]
+sg_e   = aol1_petal_ema[3]
+sg_n   = aol1_petal_ema[4]
+sg_w   = aol1_petal_ema[5]
+sg_s   = aol1_petal_ema[6]
+
+# 4. State machine (only applies jumps when enable != 0)
+if enable != 0 {
+    local eff_n = age_fr - settle_fr
+    local jpet = -1
+    local jdir = 0
+    local next_verify_p = -1
+    local next_verify_dir = 0
+    local next_verify_ev0 = 0.0
+    local post_cooldown = 0
+
+    # Priority 1: Universal 2-stage post-jump verification (works in BOTH signed & achromatic modes!)
+    if trial_p >= 0 {
+        if eff_n >= abort_win {
+            local ev_chk = 0.0
+            if trial_p == 3 {
+                ev_chk = ev_sn
+            } elif trial_p == 1 {
+                ev_chk = -ev_sn
+            } elif trial_p == 0 {
+                ev_chk = ev_ew
+            } elif trial_p == 2 {
+                ev_chk = -ev_ew
+            }
+            if ev_chk > th_abort {
+                # Wrong-way jump pushed petal to +-2 lambda_J (Even ~3.8-4.8x) -> snap -2*trial_dir!
+                jpet = trial_p
+                jdir = -2 * trial_dir
+                trial_p = -1
+                trial_dir = 0
+                trial_ev0 = 0.0
+                n_aborts = n_aborts + 1
+            } elif eff_n >= verify_win {
+                if ev_chk > trial_ev0 + 0.35 {
+                    # False-alarm jump on phased petal made Even significantly worse -> roll back -1*trial_dir!
+                    jpet = trial_p
+                    jdir = -trial_dir
+                    trial_p = -1
+                    trial_dir = 0
+                    trial_ev0 = 0.0
+                    n_rollbacks = n_rollbacks + 1
+                    post_cooldown = 1
+                } else {
+                    # Verified unwrap success (Even dropped or stayed low)! Clear verifier lock.
+                    trial_p = -1
+                    trial_dir = 0
+                    trial_ev0 = 0.0
+                }
+            }
+        }
+    }
+
+    # Priority 2: Normal passive unwrap trigger after warmup window
+    if jpet < 0 {
+        if trial_p < 0 {
+            if eff_n >= min_warmup {
+                local a_sn  = abs(ev_sn)
+                local a_ew  = abs(ev_ew)
+                local a_adj = abs(ev_adj)
+
+                local cand_p = -1
+                local cand_ev = 0.0
+                local cand_sg = 0.0
+                local is_adj = 0
+
+                if a_sn >= a_ew {
+                    if a_sn >= a_adj {
+                        if a_sn > th_even {
+                            cand_ev = a_sn
+                            if ev_sn > 0.0 {
+                                cand_p = 3
+                                cand_sg = sg_s
+                            } else {
+                                cand_p = 1
+                                cand_sg = sg_n
+                            }
+                        }
+                    } else {
+                        if a_adj > th_even {
+                            is_adj = 1
+                            cand_p = 3
+                            cand_ev = a_adj
+                            if ev_adj > 0.0 {
+                                cand_sg = 0.5 * ((sg_s + sg_e) - (sg_n + sg_w))
+                            } else {
+                                cand_sg = 0.5 * ((sg_s + sg_w) - (sg_n + sg_e))
+                            }
+                        }
+                    }
+                } else {
+                    if a_ew >= a_adj {
+                        if a_ew > th_even {
+                            cand_ev = a_ew
+                            if ev_ew > 0.0 {
+                                cand_p = 0
+                                cand_sg = sg_e
+                            } else {
+                                cand_p = 2
+                                cand_sg = sg_w
+                            }
+                        }
+                    } else {
+                        if a_adj > th_even {
+                            is_adj = 1
+                            cand_p = 3
+                            cand_ev = a_adj
+                            if ev_adj > 0.0 {
+                                cand_sg = 0.5 * ((sg_s + sg_e) - (sg_n + sg_w))
+                            } else {
+                                cand_sg = 0.5 * ((sg_s + sg_w) - (sg_n + sg_e))
+                            }
+                        }
+                    }
+                }
+
+                if cand_p >= 0 {
+                    if use_sign != 0 {
+                        # Fused-silica direct sign mode: require |cand_sg| > th_sign;
+                        # if Even is unmistakably huge (> 1.05, impossible when phased),
+                        # use sign(cand_sg) and let the 2-stage verifier guard against wrong-way!
+                        if cand_sg > th_sign {
+                            jpet = cand_p
+                            jdir = 1
+                        } elif cand_sg < -th_sign {
+                            jpet = cand_p
+                            jdir = -1
+                        } elif cand_ev > 1.05 {
+                            jpet = cand_p
+                            if cand_sg >= 0.0 {
+                                jdir = 1
+                            } else {
+                                jdir = -1
+                            }
+                        }
+                    } else {
+                        # Achromatic fallback: trial +1 wave jump
+                        jpet = cand_p
+                        jdir = 1
+                    }
+                    if jpet >= 0 {
+                        if is_adj == 0 {
+                            # Always arm universal post-jump verifier for single-petal jumps
+                            next_verify_p = jpet
+                            next_verify_dir = jdir
+                            next_verify_ev0 = cand_ev
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # 5. Stroke safety clamp & atomic DM1 offset jump on free channel dm01disp06
+    if jpet >= 0 {
+        local cur_w = 0.0
+        if jpet == 0 {
+            cur_w = w_e
+        } elif jpet == 1 {
+            cur_w = w_n
+        } elif jpet == 2 {
+            cur_w = w_w
+        } else {
+            cur_w = w_s
+        }
+
+        if abs(cur_w + jdir) <= max_waves {
+            local amp = jdir * step_scale
+            if jpet == 0 {
+                dm01disp06 = dm01disp06 + amp * aol1_petalDM[:, :, 0]
+                w_e = w_e + jdir
+            } elif jpet == 1 {
+                dm01disp06 = dm01disp06 + amp * aol1_petalDM[:, :, 1]
+                w_n = w_n + jdir
+            } elif jpet == 2 {
+                dm01disp06 = dm01disp06 + amp * aol1_petalDM[:, :, 2]
+                w_w = w_w + jdir
+            } else {
+                dm01disp06 = dm01disp06 + amp * aol1_petalDM[:, :, 3]
+                w_s = w_s + jdir
+            }
+            n_jumps = n_jumps + 1
+            last_petal = jpet
+            last_dir = jdir
+            trial_p = next_verify_p
+            trial_dir = next_verify_dir
+            trial_ev0 = next_verify_ev0
+            if post_cooldown != 0 {
+                age_fr = -1000
+            } else {
+                age_fr = 0
+            }
+            aol1_petal_ema = aol1_petal_ema * 0.0
+        } else {
+            trial_p = -1
+            trial_dir = 0
+            trial_ev0 = 0.0
+        }
+    }
+}

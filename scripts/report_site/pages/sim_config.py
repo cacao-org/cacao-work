@@ -20,6 +20,7 @@ from ..markdown.parser import convert_markdown_to_html
 from ..markdown.sim_split import extract_toc_html, extract_toc_items
 from .fragments import render_section_badges
 from .sim_shell import render_sim_page_shell
+from .turbulence import render_sim_turbulence_card
 
 
 def build_sim_config_html(
@@ -36,8 +37,10 @@ def build_sim_config_html(
     out_slug_dir: Path,
     ctx: RenderContext,
     has_compute_report: bool,
+    has_pyrwfs_report: bool = False,
     updated_utc: str,
     bench_opt_lookup: dict[tuple[str, str], dict[str, object]] | None = None,
+    turb_profile: dict[str, object] | None = None,
 ) -> str:
     """Build the simulation Configuration sub-page (config.html)."""
     heading_seen: dict[str, int] = {}
@@ -75,11 +78,21 @@ def build_sim_config_html(
                     ),
                 ]
             )
-        trs = "".join(
-            f"<tr><td><strong>{html.escape(k, quote=False)}</strong></td>"
-            f"<td><code>{html.escape(str(v), quote=False)}</code></td></tr>"
-            for k, v in t_rows
-        )
+        trs_list: list[str] = []
+        for k, v in t_rows:
+            val_esc = html.escape(str(v), quote=False)
+            if k == "Atmosphere Profile":
+                val_td = (
+                    f'<a class="opt-ref-link" href="../turbulence/index.html">'
+                    f"<code>{val_esc}</code> (Default Model Spec &rarr;)</a>"
+                )
+            else:
+                val_td = f"<code>{val_esc}</code>"
+            trs_list.append(
+                f"<tr><td><strong>{html.escape(k, quote=False)}</strong></td>"
+                f"<td>{val_td}</td></tr>"
+            )
+        trs = "".join(trs_list)
         summary_blocks.append(
             '<h2 id="system-summary">System &amp; Atmosphere Parameters '
             f'{render_section_badges(["simulation"])}</h2>'
@@ -87,6 +100,16 @@ def build_sim_config_html(
             "<tr><th>Parameter</th><th>Value</th></tr></thead>"
             f"<tbody>{trs}</tbody></table></div>"
         )
+
+    turb_cfg_html = render_sim_turbulence_card(
+        turb_profile,
+        rel_root="..",
+        compact=False,
+        detailed_table=True,
+        has_perturb_fig=(out_slug_dir / "perturb_summary_2x2.png").is_file(),
+    )
+    if turb_cfg_html:
+        summary_blocks.append(turb_cfg_html)
 
     if isinstance(loops, dict) and loops:
         l_rows: list[str] = []
@@ -352,6 +375,7 @@ def build_sim_config_html(
         hierarchy=hierarchy,
         active_tab="config",
         has_compute_report=has_compute_report,
+        has_pyrwfs_report=has_pyrwfs_report,
         body_html=raw_body,
         toc_items=toc_items,
         page_scripts=("config_page.js",),

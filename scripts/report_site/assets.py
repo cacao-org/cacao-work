@@ -46,6 +46,20 @@ def stage_site_assets(public_dir: Path) -> None:
             shutil.copy2(src, js_dst / src.name)
 
 
+def stage_turbulence_visuals(public_dir: Path) -> list[Path]:
+    """Copy pre-rendered Default Turbulence & Perturbation Model PNGs into public/turbulence/."""
+    src_dir = STATIC_DIR / "img" / "turbulence"
+    dst_dir = public_dir / "turbulence"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    staged: list[Path] = []
+    if src_dir.is_dir():
+        for src in sorted(src_dir.glob("*.png")):
+            dest = dst_dir / src.name
+            shutil.copy2(src, dest)
+            staged.append(dest)
+    return staged
+
+
 def write_search_index_js(
     public_dir: Path,
     hierarchy: dict[str, object],
@@ -68,6 +82,99 @@ def write_search_index_js(
             "kind": "Catalog",
             "domain": "All Domains",
             "summary": "Filterable and comparable simulation matrix across all runs",
+        },
+        {
+            "title": "CACAO Predictive Control Guide (AR, Block-EOF & Self-Learning)",
+            "path": "predictive-control/index.html",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": (
+                "Practical human-readable guide to setting up and tuning CACAO predictive "
+                "control: PSOL prerequisites, Diagonal AR(P), Cross-Mode Block-EOF (+ ZOH, "
+                "difference-space, wind prior, regime Gram, FX, multi-rate), and Cascaded "
+                "Self-Learning (Global RLS + Clustered libgric + causal Stein gates)"
+            ),
+        },
+        {
+            "title": "Predictive Control — PSOL Observer Prerequisite & Blending",
+            "path": "predictive-control/index.html#psol-prerequisite",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": "Physical motivation, PSOL reconstruction, optical gain, dark sub, and modalfilter mixing",
+        },
+        {
+            "title": "Predictive Control — Diagonal AR(P) Tuning (mkARPF / applyARPF)",
+            "path": "predictive-control/index.html#diagonal-ar",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": "Cauchy-Schwarz phase lead vs noise gain, why AR(16) wins, and mkARPF FPS parameter guide",
+        },
+        {
+            "title": "Predictive Control — Cross-Mode Block-EOF & Extensions (mkEOFPF)",
+            "path": "predictive-control/index.html#block-eof",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": "Frozen-flow quadrature coupling, AR(16) cold-start bootstrap, ZOH ridge, diff_nmode, wind prior, regime Gram, FX & multi-rate",
+        },
+        {
+            "title": "Predictive Control — Cascaded Online Self-Learning (cacaopc-selflearn)",
+            "path": "predictive-control/index.html#self-learning",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": "Global RLS + libgric clustered state-dependent residual refiner, key_mode, nl_mode, Stein gates & white-noise safety",
+        },
+        {
+            "title": "Predictive Control — Step-by-Step Setup & Regime Presets",
+            "path": "predictive-control/index.html#setup-workflow",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": "6-step commissioning checklist, shadow mode verification, CLI recipes, and observing-regime presets",
+        },
+        {
+            "title": "Predictive Control — Diagnostics & Troubleshooting Cookbook",
+            "path": "predictive-control/index.html#troubleshooting",
+            "kind": "Guide",
+            "domain": "Wavefront Control & Prediction",
+            "summary": "Diagnosing overfitting, ringing, petal slips, ZPO fightback, Stein gates, RT timeouts & modalwhite alerts",
+        },
+        {
+            "title": "Default Atmospheric Turbulence & Perturbation Model",
+            "path": "turbulence/index.html",
+            "kind": "Model Spec",
+            "domain": "Simulation Model",
+            "summary": (
+                "7-layer Maunakea von Karman turbulence (0.80\" seeing, r0=10.7 cm), "
+                "Matern-3/2 wind meandering & gust bursts, 45 nm 5-line vibrations, "
+                "and 500 nm Subaru V-spider thermal petaling (LWE) with visuals"
+            ),
+        },
+        {
+            "title": "Atmospheric Profile & Seeing Statistics (7-Layer Maunakea)",
+            "path": "turbulence/index.html#atmosphere-profile",
+            "kind": "Model Spec",
+            "domain": "Simulation Model",
+            "summary": "Cn2 vertical profile, L0=25/100 m von Karman r0/tau0/fG/theta0 stats",
+        },
+        {
+            "title": "Wind Statistics, Meandering & Gust Bursts (atmturb_dynwind)",
+            "path": "turbulence/index.html#wind-dynamics",
+            "kind": "Model Spec",
+            "domain": "Simulation Model",
+            "summary": "Matern-3/2 BL/FA wind speed & heading meandering and C1 gust bursts",
+        },
+        {
+            "title": "Telescope & Optical-Bench Vibrations (5-Line AR(2), 45 nm)",
+            "path": "turbulence/index.html#vibrations-model",
+            "kind": "Model Spec",
+            "domain": "Simulation Model",
+            "summary": "14.5, 31.0, 49.5, 99.0, 138.0 Hz AR(2) resonators on orthonormal Z2-Z6",
+        },
+        {
+            "title": "Thermally Induced Petaling / Low-Wind Effect (LWE, 500 nm)",
+            "path": "turbulence/index.html#petaling-model",
+            "kind": "Model Spec",
+            "domain": "Simulation Model",
+            "summary": "Subaru V-spider 4-island BFS segmentation, 75% piston / 25% tip-tilt, tau=3 s",
         },
         {
             "title": "AO Algorithms, Calibration & Options Dependency Matrix",
@@ -152,12 +259,19 @@ def write_search_index_js(
                 "summary": summary or str(rm.get("title") or ""),
             }
         )
-        for sub_file, sub_lbl in (
+        sub_pages = [
             ("config.html", "Configuration"),
             ("optical.html", "Optical Performance"),
-            ("runtime.html", "Runtime Performance"),
-            ("how_to_run.html", "How to Run It"),
-        ):
+        ]
+        if rm.get("has_pyrwfs_report"):
+            sub_pages.append(("pyrwfs.html", "Pyramid WFS"))
+        sub_pages.extend(
+            [
+                ("runtime.html", "Runtime Performance"),
+                ("how_to_run.html", "How to Run It"),
+            ]
+        )
+        for sub_file, sub_lbl in sub_pages:
             entries.append(
                 {
                     "title": f"{slug} — {sub_lbl}",

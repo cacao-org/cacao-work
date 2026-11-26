@@ -6,13 +6,18 @@
   var panel = document.getElementById("eof-pf-panel");
   if (!data || !panel || !Array.isArray(data.stages) || !data.stages.length) return;
 
+  var visGrid = document.getElementById("eof-pf-vis-grid");
   var mainCanvas = document.getElementById("eof-pf-main-canvas");
+  var sliceCanvas = document.getElementById("eof-pf-slice-canvas");
   var kernCanvas = document.getElementById("eof-pf-kernel-canvas");
   var tip = document.getElementById("eof-pf-tooltip");
+  var sliceTip = document.getElementById("eof-pf-slice-tooltip");
   var stageBtnsWrap = document.getElementById("eof-pf-stage-btns");
   var blkSel = document.getElementById("eof-pf-block-sel");
   var viewBtns = Array.from(document.querySelectorAll("[data-pf-view]"));
   var lagSlider = document.getElementById("eof-pf-lag-slider");
+  var lagPrevBtn = document.getElementById("eof-pf-lag-prev");
+  var lagNextBtn = document.getElementById("eof-pf-lag-next");
   var lagReadout = document.getElementById("eof-pf-lag-readout");
   var playBtn = document.getElementById("eof-pf-play-btn");
   var zoomSel = document.getElementById("eof-pf-zoom-sel");
@@ -21,6 +26,10 @@
   var threshSlider = document.getElementById("eof-pf-thresh-slider");
   var threshValEl = document.getElementById("eof-pf-thresh-val");
   var resetBtn = document.getElementById("eof-pf-reset-btn");
+  var slicePillEl = document.getElementById("eof-pf-slice-pill");
+  var sliceTitleEl = document.getElementById("eof-pf-slice-title");
+  var sliceMetaEl = document.getElementById("eof-pf-slice-meta");
+  var sliceAutoCb = document.getElementById("eof-pf-slice-autoscale");
   var pairTitleEl = document.getElementById("eof-pf-pair-title");
   var statsEl = document.getElementById("eof-pf-stats");
   var pairsEl = document.getElementById("eof-pf-pairs");
@@ -35,7 +44,8 @@
     zoomN: 0,
     cmap: "rdbu",
     hideDiag: false,
-    thresh: 0.015,
+    sliceAutoScale: sliceAutoCb ? Boolean(sliceAutoCb.checked) : true,
+    threshStep: threshSlider ? (parseInt(threshSlider.value, 10) || 6) : 6,
     azim: -53 * Math.PI / 180,
     elev: 23 * Math.PI / 180,
     selOut: 0,
@@ -43,7 +53,10 @@
     playing: false,
     playTimer: null,
     drag: null,
-    last2D: null
+    last2D: null,
+    lastSlice2D: null,
+    lastKern: null,
+    cubeCache: null
   };
 
   function isDark() {
@@ -54,23 +67,53 @@
       window.matchMedia("(prefers-color-scheme: dark)").matches);
   }
 
+  function fmtScaleVal(v) {
+    var av = Math.abs(v);
+    if (av === 0) return "0";
+    if (av >= 0.1) return v.toFixed(2);
+    if (av >= 0.01) return v.toFixed(3);
+    if (av >= 0.001) return v.toFixed(4);
+    return v.toExponential(1);
+  }
+
   function decodeBlock(st, blk) {
     if (blk._tensor) return blk;
     var bin = atob(blk.data_b64 || "");
     var n = bin.length;
     var arr = new Float32Array(n);
     var vmax = blk.vmax || 1.0;
+    var histAll = new Int32Array(128);
+    var histOff = new Int32Array(128);
+    var b = blk.b;
+    var P = st.order;
     for (var idx = 0; idx < n; idx++) {
       var u = bin.charCodeAt(idx);
       var q = u > 127 ? u - 256 : u;
+      var aq = Math.min(127, Math.abs(q));
+      histAll[aq] += 1;
+      var oi0 = Math.floor(idx / (P * b));
+      var ij0 = idx % b;
+      if (oi0 !== ij0) histOff[aq] += 1;
       if (q !== 0) {
         var f = q / 127.0;
         arr[idx] = (q > 0 ? 1 : -1) * f * f * vmax;
       }
     }
+    function pct99FromHist(hist, total) {
+      var target = Math.max(1, Math.floor(total * 0.01));
+      var acc = 0;
+      for (var qv = 127; qv >= 0; qv--) {
+        acc += hist[qv];
+        if (acc >= target) {
+          var fr = qv / 127.0;
+          return Math.max(fr * fr * vmax, 1e-4);
+        }
+      }
+      return Math.max(vmax * 0.05, 1e-4);
+    }
     blk._tensor = arr;
-    var b = blk.b;
-    var P = st.order;
+    blk._v3dRef = pct99FromHist(histAll, n);
+    blk._v3dOffRef = pct99FromHist(histOff, Math.max(1, n - b * P));
     var l2 = new Float32Array(b * b);
     var l2max = 0;
     var l2offMax = 0;
@@ -105,25 +148,65 @@
     ];
   }
 
-  var RDBU_POS = [[247, 247, 247], [244, 165, 130], [202, 0, 32], [103, 0, 31]];
-  var RDBU_NEG = [[247, 247, 247], [146, 197, 222], [5, 113, 176], [5, 48, 97]];
+  var RDBU_LIGHT_POS = [[248, 250, 252], [248, 113, 113], [202, 0, 32], [103, 0, 31]];
+  var RDBU_LIGHT_NEG = [[248, 250, 252], [96, 165, 250], [5, 113, 176], [5, 48, 97]];
+  var RDBU_DARK_POS = [[18, 25, 42], [185, 28, 28], [248, 113, 113], [254, 226, 202]];
+  var RDBU_DARK_NEG = [[18, 25, 42], [29, 78, 216], [56, 189, 248], [224, 242, 254]];
+  var RDBU_3D_DARK_POS = [[220, 38, 38], [244, 63, 94], [255, 138, 128]];
+  var RDBU_3D_DARK_NEG = [[37, 99, 235], [14, 165, 233], [125, 211, 252]];
+  var RDBU_3D_LIGHT_POS = [[239, 68, 68], [185, 28, 28], [103, 0, 31]];
+  var RDBU_3D_LIGHT_NEG = [[59, 130, 246], [29, 78, 216], [15, 42, 97]];
   var MAGMA = [
     [6, 4, 16], [59, 15, 112], [140, 41, 129],
     [222, 73, 104], [254, 159, 109], [252, 253, 191]
   ];
+  var MAGMA_3D = [
+    [168, 48, 128], [234, 88, 108], [254, 168, 102], [252, 253, 191]
+  ];
 
-  function colorSignedSymLog(v, vmax) {
-    var lt = 0.015;
-    var denom = Math.log10(1.0 + Math.max(vmax, lt) / lt);
-    var t = Math.log10(1.0 + Math.abs(v) / lt) / denom;
-    return interpStops(v >= 0 ? RDBU_POS : RDBU_NEG, t);
+  function colorSignedSymLog(v, vmax, dark) {
+    var safeMax = Math.max(vmax, 1e-5);
+    var lt = Math.min(0.008, Math.max(safeMax * 0.05, 1e-5));
+    var denom = Math.log10(1.0 + safeMax / lt);
+    var t = Math.log10(1.0 + Math.abs(v) / lt) / Math.max(denom, 1e-6);
+    if (dark) {
+      return interpStops(v >= 0 ? RDBU_DARK_POS : RDBU_DARK_NEG, t);
+    }
+    return interpStops(v >= 0 ? RDBU_LIGHT_POS : RDBU_LIGHT_NEG, t);
   }
 
-  function colorLogMagma(val, vmin, vmax) {
+  function color3DSigned(v, refMax, dark) {
+    var safeMax = Math.max(refMax, 1e-5);
+    var lt = Math.max(safeMax * 0.15, 1e-5);
+    var denom = Math.log10(1.0 + safeMax / lt);
+    var t = Math.log10(1.0 + Math.abs(v) / lt) / Math.max(denom, 1e-6);
+    if (dark) {
+      return interpStops(v >= 0 ? RDBU_3D_DARK_POS : RDBU_3D_DARK_NEG, t);
+    }
+    return interpStops(v >= 0 ? RDBU_3D_LIGHT_POS : RDBU_3D_LIGHT_NEG, t);
+  }
+
+  function colorLogMagma(val, vmin, vmax, for3D) {
     var lo = Math.log10(Math.max(vmin, 1e-6));
     var hi = Math.log10(Math.max(vmax, vmin * 1.5));
     var t = (Math.log10(Math.max(val, vmin)) - lo) / Math.max(hi - lo, 1e-6);
-    return interpStops(MAGMA, t);
+    return interpStops(for3D ? MAGMA_3D : MAGMA, t);
+  }
+
+  function get3DScaleAndCut(blk) {
+    var ref = state.hideDiag ? blk._v3dOffRef : blk._v3dRef;
+    ref = Math.max(ref || blk.vmax || 0.05, 1e-4);
+    var thr = (state.threshStep * 0.06) * ref;
+    return { ref: ref, thr: thr };
+  }
+
+  function getSliceScale(blk, slStats) {
+    if (state.sliceAutoScale) {
+      var vmax = Math.max(slStats.absMax, 1e-4);
+      var vmin = Math.min(vmax * 0.4, Math.max(vmax * 5e-3, 1e-5));
+      return { vmax: vmax, vmin: vmin };
+    }
+    return { vmax: Math.max(blk.vmax || 0.1, 0.05), vmin: 2e-3 };
   }
 
   function curStage() {
@@ -155,7 +238,32 @@
     }
   }
 
-  function makeSliceCanvas(st, blk, lagIdx, n, for3D) {
+  function computeSliceStats(st, blk, lagIdx, n) {
+    var P = st.order;
+    var b = blk.b;
+    var absMax = 0;
+    var totSq = 0;
+    var offSq = 0;
+    for (var oi = 0; oi < n; oi++) {
+      var rowOff = (oi * P + lagIdx) * b;
+      for (var ij = 0; ij < n; ij++) {
+        var v = (state.hideDiag && oi === ij) ? 0 : blk._tensor[rowOff + ij];
+        var av = Math.abs(v);
+        if (av > absMax) absMax = av;
+        var v2 = v * v;
+        totSq += v2;
+        if (oi !== ij) offSq += v2;
+      }
+    }
+    var offPct = totSq > 1e-30 ? (offSq / totSq) * 100.0 : 0.0;
+    return {
+      absMax: absMax,
+      rms: Math.sqrt(totSq / Math.max(n * n, 1)),
+      offPct: offPct
+    };
+  }
+
+  function makeSliceCanvas(st, blk, lagIdx, n, for3D, customVmax, customVmin, dark) {
     var off = document.createElement("canvas");
     off.width = n;
     off.height = n;
@@ -164,25 +272,38 @@
     var px = img.data;
     var P = st.order;
     var b = blk.b;
-    var vmax = Math.max(blk.vmax || 0.1, 0.05);
-    var thr = for3D ? state.thresh : 0;
+    var isDarkMode = dark !== undefined ? dark : isDark();
+    var sc3d = for3D ? get3DScaleAndCut(blk) : null;
+    var vmax = for3D
+      ? sc3d.ref
+      : (customVmax !== undefined
+        ? Math.max(customVmax, 1e-5)
+        : Math.max(blk.vmax || 0.1, 0.05));
+    var vmin = for3D
+      ? Math.max(sc3d.thr, vmax * 0.05, 1e-5)
+      : (customVmin !== undefined ? Math.max(customVmin, 1e-6) : 2e-3);
+    var thr = for3D ? sc3d.thr : 0;
     for (var oi = 0; oi < n; oi++) {
       var py = n - 1 - oi;
       var rowOff = (oi * P + lagIdx) * b;
       for (var ij = 0; ij < n; ij++) {
         var v = (state.hideDiag && oi === ij) ? 0 : blk._tensor[rowOff + ij];
-        var rgb = state.cmap === "magma"
-          ? colorLogMagma(Math.abs(v), 2e-3, vmax)
-          : colorSignedSymLog(v, vmax);
         var a = 255;
+        var rgb;
         if (for3D) {
           var av = Math.abs(v);
-          if (av < thr) {
-            a = 0;
-          } else {
-            var frac = Math.min(1, (av - thr) / Math.max(vmax * 0.4, 0.05));
-            a = Math.round(70 + 185 * Math.sqrt(frac));
+          if (av <= 0 || av < thr) {
+            continue;
           }
+          rgb = state.cmap === "magma"
+            ? colorLogMagma(av, vmin, vmax, true)
+            : color3DSigned(v, vmax, isDarkMode);
+          var frac = Math.min(1, (av - thr) / Math.max(vmax - thr, 1e-5));
+          a = Math.round(105 + 145 * Math.sqrt(frac));
+        } else {
+          rgb = state.cmap === "magma"
+            ? colorLogMagma(Math.abs(v), vmin, vmax, false)
+            : colorSignedSymLog(v, vmax, isDarkMode);
         }
         var p = (py * n + ij) * 4;
         px[p] = rgb[0];
@@ -193,6 +314,21 @@
     }
     octx.putImageData(img, 0, 0);
     return off;
+  }
+
+  function getCachedCubeSlices(st, blk, n, dark) {
+    var key = state.stgIdx + ":" + state.blkIdx + ":" + n + ":" + state.cmap + ":" +
+      (state.hideDiag ? 1 : 0) + ":" + state.threshStep + ":" + (dark ? 1 : 0);
+    if (state.cubeCache && state.cubeCache.key === key) {
+      return state.cubeCache.slices;
+    }
+    var P = st.order;
+    var slices = [];
+    for (var kk = 0; kk < P; kk++) {
+      slices.push(makeSliceCanvas(st, blk, kk, n, true, undefined, undefined, dark));
+    }
+    state.cubeCache = { key: key, slices: slices };
+    return slices;
   }
 
   function makeL2Canvas(blk, n) {
@@ -219,7 +355,7 @@
     return off;
   }
 
-  function makeModeLagCanvas(st, blk, n, inJ) {
+  function makeModeLagCanvas(st, blk, n, inJ, dark) {
     var P = st.order;
     var off = document.createElement("canvas");
     off.width = P;
@@ -228,6 +364,7 @@
     var img = octx.createImageData(P, n);
     var px = img.data;
     var vmax = Math.max(blk.vmax || 0.1, 0.05);
+    var isDarkMode = dark !== undefined ? dark : isDark();
     for (var oi = 0; oi < n; oi++) {
       var py = n - 1 - oi;
       for (var kk = 0; kk < P; kk++) {
@@ -235,8 +372,8 @@
           ? 0
           : blk._tensor[(oi * P + kk) * blk.b + inJ];
         var rgb = state.cmap === "magma"
-          ? colorLogMagma(Math.abs(v), 2e-3, vmax)
-          : colorSignedSymLog(v, vmax);
+          ? colorLogMagma(Math.abs(v), 2e-3, vmax, false)
+          : colorSignedSymLog(v, vmax, isDarkMode);
         var p = (py * P + kk) * 4;
         px[p] = rgb[0];
         px[p + 1] = rgb[1];
@@ -263,16 +400,17 @@
     };
   }
 
-  function drawColorbar(ctx, x, y, w, h, vmin, vmax, isSigned, label, textCol, borderCol) {
+  function drawColorbar(ctx, x, y, w, h, vmin, vmax, isSigned, label, textCol, borderCol, dark) {
+    var isDarkMode = dark !== undefined ? dark : isDark();
     for (var row = 0; row < h; row++) {
       var frac = 1.0 - row / Math.max(h - 1, 1);
       var rgb;
       if (isSigned) {
         var v = (frac * 2 - 1) * vmax;
-        rgb = colorSignedSymLog(v, vmax);
+        rgb = colorSignedSymLog(v, vmax, isDarkMode);
       } else {
         var lv = Math.log10(vmin) + frac * (Math.log10(vmax) - Math.log10(vmin));
-        rgb = colorLogMagma(Math.pow(10, lv), vmin, vmax);
+        rgb = colorLogMagma(Math.pow(10, lv), vmin, vmax, false);
       }
       ctx.fillStyle = "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")";
       ctx.fillRect(x, y + row, w, 1);
@@ -284,31 +422,32 @@
     ctx.font = "11px sans-serif";
     ctx.textAlign = "left";
     if (isSigned) {
-      ctx.fillText("+" + vmax.toFixed(2), x + w + 5, y + 9);
+      ctx.fillText("+" + fmtScaleVal(vmax), x + w + 5, y + 9);
       ctx.fillText("0", x + w + 5, y + h / 2 + 4);
-      ctx.fillText("-" + vmax.toFixed(2), x + w + 5, y + h);
+      ctx.fillText("-" + fmtScaleVal(vmax), x + w + 5, y + h);
     } else {
-      ctx.fillText(vmax.toFixed(2), x + w + 5, y + 9);
-      ctx.fillText(vmin.toExponential(0), x + w + 5, y + h);
+      ctx.fillText(fmtScaleVal(vmax), x + w + 5, y + 9);
+      ctx.fillText(fmtScaleVal(Math.sqrt(vmin * vmax)), x + w + 5, y + h / 2 + 4);
+      ctx.fillText(vmin < 1e-3 ? vmin.toExponential(0) : fmtScaleVal(vmin), x + w + 5, y + h);
     }
     ctx.save();
-    ctx.translate(x + w + 46, y + h / 2);
+    ctx.translate(x + w + 50, y + h / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = "center";
     ctx.fillText(label, 0, 0);
     ctx.restore();
   }
 
-  function renderCube3D(ctx, w, h, st, blk, n) {
+  function renderCube3D(ctx, w, h, st, blk, n, activeSliceCanvas) {
     var dark = isDark();
     var textCol = dark ? "#cbd5e1" : "#334155";
-    var gridCol = dark ? "rgba(148, 163, 184, 0.25)" : "rgba(100, 116, 139, 0.25)";
-    var wallCol = dark ? "rgba(30, 41, 59, 0.55)" : "rgba(241, 245, 249, 0.72)";
+    var gridCol = dark ? "rgba(148, 163, 184, 0.18)" : "rgba(100, 116, 139, 0.22)";
+    var wallCol = dark ? "rgba(24, 34, 52, 0.62)" : "rgba(241, 245, 249, 0.72)";
     var borderCol = dark ? "#475569" : "#94a3b8";
 
     var cx = (w - 64) * 0.50;
     var cy = h * 0.52;
-    var scale = Math.min(w - 140, h - 75) * 0.76;
+    var scale = Math.min(w - 115, h - 62) * 0.84;
     var P = st.order;
 
     var ca = Math.cos(state.azim);
@@ -356,6 +495,8 @@
     var kOrder = [];
     for (var k = 0; k < P; k++) kOrder.push(k);
     if (vz < 0) kOrder.reverse();
+    var cachedSlices = getCachedCubeSlices(st, blk, n, dark);
+    var activeCorner = null;
 
     kOrder.forEach(function(kk) {
       var nz = P > 1 ? (kk / (P - 1) - 0.5) : 0;
@@ -363,7 +504,13 @@
       var p10 = project3D(0.5, 0.5, nz, cx, cy, scale);
       var p01 = project3D(-0.5, -0.5, nz, cx, cy, scale);
       var p11 = project3D(0.5, -0.5, nz, cx, cy, scale);
-      var slCanvas = makeSliceCanvas(st, blk, kk, n, true);
+      var isActive = (kk === state.lag);
+
+      if (isActive) {
+        activeCorner = project3D(bxWall, -byWall, nz, cx, cy, scale);
+      }
+
+      var slCanvas = (isActive && activeSliceCanvas) ? activeSliceCanvas : cachedSlices[kk];
       ctx.save();
       ctx.transform(
         (p10.x - p00.x) / n, (p10.y - p00.y) / n,
@@ -374,16 +521,17 @@
       ctx.drawImage(slCanvas, 0, 0);
       ctx.restore();
 
-      var isActive = (kk === state.lag);
-      ctx.beginPath();
-      ctx.moveTo(p00.x, p00.y);
-      ctx.lineTo(p10.x, p10.y);
-      ctx.lineTo(p11.x, p11.y);
-      ctx.lineTo(p01.x, p01.y);
-      ctx.closePath();
-      ctx.strokeStyle = isActive ? "#f59e0b" : gridCol;
-      ctx.lineWidth = isActive ? 2.1 : 0.7;
-      ctx.stroke();
+      if (isActive || kk === 0 || kk === P - 1 || P <= 12 || kk % 4 === 0) {
+        ctx.beginPath();
+        ctx.moveTo(p00.x, p00.y);
+        ctx.lineTo(p10.x, p10.y);
+        ctx.lineTo(p11.x, p11.y);
+        ctx.lineTo(p01.x, p01.y);
+        ctx.closePath();
+        ctx.strokeStyle = isActive ? "#f59e0b" : gridCol;
+        ctx.lineWidth = isActive ? 2.6 : 0.7;
+        ctx.stroke();
+      }
     });
 
     if (state.selOut < n && state.selIn < n) {
@@ -410,7 +558,6 @@
 
     var fxWall = -bxWall;
     var fyWall = -byWall;
-    var fzWall = -bzWall;
     var pOrigin = project3D(-0.5, -0.5, bzWall, cx, cy, scale);
     var pInEnd = project3D(0.5, fyWall, bzWall, cx, cy, scale);
     var pInMid = project3D(0, fyWall, bzWall, cx, cy, scale);
@@ -434,103 +581,99 @@
     ctx.font = "10.5px sans-serif";
     ctx.fillText("k=0", pZBot.x + (fxWall > 0 ? 18 : -18), pZBot.y + 4);
     ctx.fillText("k=" + (P - 1), pZTop.x + (fxWall > 0 ? 20 : -20), pZTop.y + 4);
+    if (activeCorner) {
+      var onLeft = activeCorner.x < cx;
+      ctx.fillStyle = dark ? "#fbbf24" : "#b45309";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = onLeft ? "right" : "left";
+      ctx.fillText(
+        "k=" + state.lag,
+        activeCorner.x + (onLeft ? -8 : 8),
+        activeCorner.y + 4
+      );
+    }
     if (pOrigin && pInEnd) {
+      ctx.fillStyle = textCol;
+      ctx.font = "bold 11.5px sans-serif";
       ctx.textAlign = "left";
       ctx.fillText(
-        st.label + " | Block " + blk.blk + " | Active k=" + state.lag +
+        "Stage " + st.stage + " (" + (st.rate_hz / 1000).toFixed(1) + " kHz) | Blk " +
+        blk.blk + " | Active k=" + state.lag +
         " (t-" + (state.lag * st.dt_ms).toFixed(2) + " ms)",
         14, 18
       );
     }
 
+    var sc3d = get3DScaleAndCut(blk);
+    var vmin3d = Math.min(sc3d.ref * 0.4, Math.max(sc3d.thr, sc3d.ref * 0.05, 1e-5));
     drawColorbar(
-      ctx, w - 72, 40, 14, h - 84, 2e-3, Math.max(blk.vmax || 0.1, 0.05),
-      state.cmap !== "magma", state.cmap === "magma" ? "|F[i,k,j]|" : "F[i,k,j]",
-      textCol, borderCol
+      ctx, w - 76, 40, 14, h - 84, vmin3d, sc3d.ref,
+      state.cmap !== "magma", state.cmap === "magma" ? "|F| (3D p99)" : "F (3D p99)",
+      textCol, borderCol, dark
     );
     state.last2D = null;
   }
 
-  function renderHeatmap2D(ctx, w, h, st, blk, n) {
+  function drawSquareMatrix2D(ctx, w, h, st, blk, n, off, opts) {
     var dark = isDark();
     var textCol = dark ? "#cbd5e1" : "#334155";
     var borderCol = dark ? "#475569" : "#94a3b8";
-    var pad = { l: 58, r: 86, t: 32, b: 44 };
+    var pad = { l: 54, r: 88, t: 28, b: 42 };
     var availW = Math.max(80, w - pad.l - pad.r);
     var availH = Math.max(80, h - pad.t - pad.b);
     var P = st.order;
-    var isML = (state.view === "modelag");
+    var isML = Boolean(opts.isML);
     var plotW = isML ? availW : Math.min(availW, availH);
     var plotH = isML ? availH : plotW;
     var ox = pad.l + (availW - plotW) * 0.5;
     var oy = pad.t + (availH - plotH) * 0.5;
-
-    var off;
-    var vmax;
-    var isSigned = false;
-    var cbLabel = "";
-    var title = "";
-    if (state.view === "l2norm") {
-      off = makeL2Canvas(blk, n);
-      vmax = state.hideDiag ? blk._l2offMax : blk._l2max;
-      cbLabel = "||F[i, :, j]||_2";
-      title = st.label + " | Block " + blk.blk + " L2 Coupling Norm (origin=lower)";
-    } else if (isML) {
-      var safeIn = Math.min(state.selIn, n - 1);
-      off = makeModeLagCanvas(st, blk, n, safeIn);
-      vmax = Math.max(blk.vmax || 0.1, 0.05);
-      isSigned = state.cmap !== "magma";
-      cbLabel = isSigned ? "F[i, k, j]" : "|F[i, k, j]|";
-      title = st.label + " | Cross-Section for Input Mode j=" + (blk.s0 + safeIn);
-    } else {
-      off = makeSliceCanvas(st, blk, state.lag, n, false);
-      vmax = Math.max(blk.vmax || 0.1, 0.05);
-      isSigned = state.cmap !== "magma";
-      cbLabel = isSigned ? "F[i, k, j]" : "|F[i, k, j]|";
-      title = st.label + " | Block " + blk.blk + " Lag Slice k=" + state.lag +
-        " (t-" + (state.lag * st.dt_ms).toFixed(2) + " ms)";
-    }
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(off, ox, oy, plotW, plotH);
     ctx.restore();
 
-    ctx.strokeStyle = borderCol;
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = opts.frameCol || borderCol;
+    ctx.lineWidth = opts.frameCol ? 1.6 : 1.2;
     ctx.strokeRect(ox, oy, plotW, plotH);
 
     ctx.fillStyle = textCol;
-    ctx.font = "bold 12px sans-serif";
+    ctx.font = "bold 11.5px sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(title, ox, 18);
+    ctx.fillText(opts.title || "", ox, 16);
 
     ctx.font = "11px sans-serif";
     if (isML) {
       ctx.textAlign = "center";
+      var kStep = P > 16 ? 4 : (P > 10 ? 2 : 1);
       for (var kk = 0; kk < P; kk++) {
+        if (kk % kStep !== 0 && kk !== P - 1) continue;
         var tx = ox + ((kk + 0.5) / P) * plotW;
         ctx.fillText("k=" + kk, tx, oy + plotH + 16);
       }
       ctx.fillText("Lookback Lag k [frames]", ox + plotW * 0.5, oy + plotH + 34);
     } else {
       ctx.textAlign = "center";
-      for (var ti = 0; ti <= 4; ti++) {
-        var mIdx = Math.round((n - 1) * (ti / 4));
-        var gx = ox + (ti / 4) * plotW;
+      var nTicks = n > 1 ? 4 : 1;
+      for (var ti = 0; ti <= nTicks; ti++) {
+        var fracT = nTicks > 0 ? ti / nTicks : 0;
+        var mIdx = Math.round((n - 1) * fracT);
+        var gx = ox + fracT * plotW;
         ctx.fillText(String(blk.s0 + mIdx), gx, oy + plotH + 16);
       }
       ctx.fillText("Input Mode j (Past History)", ox + plotW * 0.5, oy + plotH + 34);
     }
 
     ctx.textAlign = "right";
-    for (var yi = 0; yi <= 4; yi++) {
-      var oIdx = Math.round((n - 1) * (yi / 4));
-      var gy = oy + (1 - yi / 4) * plotH;
+    var yTicks = n > 1 ? 4 : 1;
+    for (var yi = 0; yi <= yTicks; yi++) {
+      var fracY = yTicks > 0 ? yi / yTicks : 0;
+      var oIdx = Math.round((n - 1) * fracY);
+      var gy = oy + (1 - fracY) * plotH;
       ctx.fillText(String(blk.s0 + oIdx), ox - 7, gy + 4);
     }
     ctx.save();
-    ctx.translate(15, oy + plotH * 0.5);
+    ctx.translate(14, oy + plotH * 0.5);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = "center";
     ctx.fillText("Predicted Output Mode i", 0, 0);
@@ -538,7 +681,7 @@
 
     if (state.selOut < n && state.selIn < n) {
       ctx.strokeStyle = "#10b981";
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = 1.8;
       if (isML) {
         var cw = plotW / P;
         var ch = plotH / n;
@@ -549,18 +692,89 @@
         var cxCell = ox + ((state.selIn + 0.5) / n) * plotW;
         var cyCell = oy + ((n - 1 - state.selOut + 0.5) / n) * plotH;
         ctx.beginPath();
-        ctx.arc(cxCell, cyCell, Math.max(4, plotW / n * 0.9), 0, Math.PI * 2);
+        ctx.arc(cxCell, cyCell, Math.max(4, (plotW / n) * 0.85), 0, Math.PI * 2);
         ctx.stroke();
       }
     }
 
     drawColorbar(
-      ctx, ox + plotW + 14, oy, 14, plotH, 2e-3, vmax,
-      isSigned, cbLabel, textCol, borderCol
+      ctx, ox + plotW + 12, oy, 14, plotH, opts.vmin, opts.vmax,
+      opts.isSigned, opts.cbLabel, textCol, borderCol, dark
     );
-    state.last2D = {
-      ox: ox, oy: oy, w: plotW, h: plotH, n: n, P: P, isML: isML
-    };
+    return { ox: ox, oy: oy, w: plotW, h: plotH, n: n, P: P, isML: isML };
+  }
+
+  function renderHeatmap2D(ctx, w, h, st, blk, n) {
+    var dark = isDark();
+    var off;
+    var vmax;
+    var vmin = 2e-3;
+    var isSigned = false;
+    var cbLabel = "";
+    var title = "";
+    var isML = (state.view === "modelag");
+
+    if (state.view === "l2norm") {
+      off = makeL2Canvas(blk, n);
+      vmax = state.hideDiag ? blk._l2offMax : blk._l2max;
+      cbLabel = "||F[i, :, j]||_2";
+      title = st.label + " | Block " + blk.blk + " L2 Coupling Norm (origin=lower)";
+    } else {
+      var safeIn = Math.min(state.selIn, n - 1);
+      off = makeModeLagCanvas(st, blk, n, safeIn, dark);
+      vmax = Math.max(blk.vmax || 0.1, 0.05);
+      isSigned = state.cmap !== "magma";
+      cbLabel = isSigned ? "F[i, k, j]" : "|F[i, k, j]|";
+      title = st.label + " | Cross-Section for Input Mode j=" + (blk.s0 + safeIn);
+    }
+
+    state.last2D = drawSquareMatrix2D(ctx, w, h, st, blk, n, off, {
+      isML: isML,
+      vmin: vmin,
+      vmax: vmax,
+      isSigned: isSigned,
+      cbLabel: cbLabel,
+      title: title
+    });
+  }
+
+  function renderSelectedSlice2D(st, blk, n, slStats, slScale, activeSliceCanvas) {
+    if (!sliceCanvas || !sliceCanvas.getContext) return;
+    var dtStr = (state.lag * st.dt_ms).toFixed(2);
+    if (slicePillEl) {
+      slicePillEl.textContent = "k=" + state.lag + " (-" + dtStr + " ms)";
+    }
+    if (sliceTitleEl) {
+      sliceTitleEl.textContent = "Selected Timeslice (2D Image)";
+    }
+    if (sliceMetaEl) {
+      sliceMetaEl.textContent = "max |F|=" + fmtScaleVal(slStats.absMax) +
+        " \u00b7 off-diag " + slStats.offPct.toFixed(1) + "%";
+    }
+
+    var dpr = window.devicePixelRatio || 1;
+    var w = sliceCanvas.clientWidth || 460;
+    var h = state.view === "slice2d" ? 460 : 416;
+    sliceCanvas.width = w * dpr;
+    sliceCanvas.height = h * dpr;
+    var ctx = sliceCanvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var isSigned = state.cmap !== "magma";
+    var title = "Stage " + st.stage + " | Blk " + blk.blk +
+      " (Modes " + blk.s0 + ".." + (blk.s0 + n - 1) + ")" +
+      (state.hideDiag ? " [no diag]" : "");
+
+    state.lastSlice2D = drawSquareMatrix2D(ctx, w, h, st, blk, n, activeSliceCanvas, {
+      isML: false,
+      vmin: slScale.vmin,
+      vmax: slScale.vmax,
+      isSigned: isSigned,
+      cbLabel: isSigned ? "F[i, k, j]" : "|F[i, k, j]|",
+      title: title,
+      frameCol: "#f59e0b"
+    });
   }
 
   function renderKernelChart(st, blk) {
@@ -650,7 +864,9 @@
 
     ctx.fillStyle = textCol;
     ctx.textAlign = "center";
+    var kStep = P > 16 ? 4 : (P > 10 ? 2 : 1);
     for (var tk = 0; tk < P; tk++) {
+      if (tk % kStep !== 0 && tk !== P - 1) continue;
       var tx = pad.l + (P > 1 ? (tk / (P - 1)) * pw : pw * 0.5);
       ctx.fillText(String(tk), tx, pad.t + ph + 14);
     }
@@ -660,6 +876,7 @@
       (oi !== ij ? " vs F[" + (blk.s0 + ij) + ", k, " + (blk.s0 + oi) + "]" : " (self)"),
       pad.l, 13
     );
+    state.lastKern = { pad: pad, pw: pw, P: P };
   }
 
   function renderStatsAndPairs(st, blk) {
@@ -722,37 +939,57 @@
     if (state.selOut >= n) state.selOut = n - 1;
     if (state.selIn >= n) state.selIn = n - 1;
     if (state.lag >= st.order) state.lag = st.order - 1;
+    if (state.lag < 0) state.lag = 0;
 
     if (lagSlider) {
       lagSlider.max = String(Math.max(0, st.order - 1));
       lagSlider.value = String(state.lag);
     }
+    if (lagPrevBtn) lagPrevBtn.disabled = state.lag <= 0;
+    if (lagNextBtn) lagNextBtn.disabled = state.lag >= st.order - 1;
     if (lagReadout) {
       lagReadout.textContent = "k=" + state.lag +
         " (-" + (state.lag * st.dt_ms).toFixed(2) + " ms)";
     }
-    if (threshValEl) threshValEl.textContent = state.thresh.toFixed(3);
+    var dark = isDark();
+    var sc3d = get3DScaleAndCut(blk);
+    var slStats = computeSliceStats(st, blk, state.lag, n);
+    var slScale = getSliceScale(blk, slStats);
+    var activeSliceCanvas = makeSliceCanvas(
+      st, blk, state.lag, n, false, slScale.vmax, slScale.vmin, dark
+    );
+
+    if (threshValEl) threshValEl.textContent = fmtScaleVal(sc3d.thr);
+    if (visGrid) {
+      visGrid.classList.toggle("is-slice-only", state.view === "slice2d");
+    }
     if (hintEl) {
       hintEl.textContent = state.view === "cube3d"
-        ? "Drag 3D cube to orbit; move Lag k slider or switch to 2D Slice / L2 to pick pairs."
+        ? "Drag 3D cube to orbit; selected lag k renders as an opaque 2D image in 3D and at right."
         : "Hover for exact tensor weights; click any cell to inspect its temporal kernel.";
     }
 
-    var dpr = window.devicePixelRatio || 1;
-    var w = mainCanvas.clientWidth || 700;
-    var h = 460;
-    mainCanvas.width = w * dpr;
-    mainCanvas.height = h * dpr;
-    var ctx = mainCanvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    mainCanvas.style.cursor = state.view === "cube3d"
-      ? (state.drag ? "grabbing" : "grab")
-      : "crosshair";
+    if (state.view !== "slice2d") {
+      var dpr = window.devicePixelRatio || 1;
+      var w = mainCanvas.clientWidth || 540;
+      var h = 450;
+      mainCanvas.width = w * dpr;
+      mainCanvas.height = h * dpr;
+      var ctx = mainCanvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      mainCanvas.style.cursor = state.view === "cube3d"
+        ? (state.drag ? "grabbing" : "grab")
+        : "crosshair";
 
-    if (state.view === "cube3d") renderCube3D(ctx, w, h, st, blk, n);
-    else renderHeatmap2D(ctx, w, h, st, blk, n);
+      if (state.view === "cube3d") renderCube3D(ctx, w, h, st, blk, n, activeSliceCanvas);
+      else renderHeatmap2D(ctx, w, h, st, blk, n);
+    } else {
+      state.last2D = null;
+      if (tip) tip.style.display = "none";
+    }
 
+    renderSelectedSlice2D(st, blk, n, slStats, slScale, activeSliceCanvas);
     renderKernelChart(st, blk);
     renderStatsAndPairs(st, blk);
   }
@@ -806,6 +1043,17 @@
       renderAll();
     });
   }
+  if (lagPrevBtn) {
+    lagPrevBtn.addEventListener("click", function() {
+      if (state.lag > 0) { state.lag -= 1; renderAll(); }
+    });
+  }
+  if (lagNextBtn) {
+    lagNextBtn.addEventListener("click", function() {
+      var st = curStage();
+      if (state.lag < st.order - 1) { state.lag += 1; renderAll(); }
+    });
+  }
   if (playBtn) {
     playBtn.addEventListener("click", function() {
       state.playing = !state.playing;
@@ -838,10 +1086,15 @@
       renderAll();
     });
   }
+  if (sliceAutoCb) {
+    sliceAutoCb.addEventListener("change", function() {
+      state.sliceAutoScale = Boolean(sliceAutoCb.checked);
+      renderAll();
+    });
+  }
   if (threshSlider) {
     threshSlider.addEventListener("input", function() {
-      var step = parseInt(threshSlider.value, 10) || 0;
-      state.thresh = step * 0.0075;
+      state.threshStep = parseInt(threshSlider.value, 10) || 0;
       renderAll();
     });
   }
@@ -887,10 +1140,9 @@
     if (state.drag) { state.drag = null; renderAll(); }
   });
 
-  function hit2D(ev) {
-    var box = state.last2D;
-    if (!box) return null;
-    var rect = mainCanvas.getBoundingClientRect();
+  function hitCanvas2D(canvas, box, ev) {
+    if (!canvas || !box) return null;
+    var rect = canvas.getBoundingClientRect();
     var mx = ev.clientX - rect.left;
     var my = ev.clientY - rect.top;
     if (mx < box.ox || mx > box.ox + box.w || my < box.oy || my > box.oy + box.h) return null;
@@ -903,29 +1155,34 @@
     return { oi: oi, col: col, mx: mx, my: my, rect: rect };
   }
 
-  mainCanvas.addEventListener("mousemove", function(ev) {
-    if (state.drag || !tip) return;
-    var hit = hit2D(ev);
-    if (!hit) { tip.style.display = "none"; return; }
+  function show2DTooltip(tipEl, hit, isML) {
     var st = curStage();
     var blk = curBlock(st);
     var gOut = blk.s0 + hit.oi;
-    if (state.last2D.isML) {
+    if (isML) {
       var safeInHit = Math.min(state.selIn, blk.b - 1);
       var gIn = blk.s0 + safeInHit;
       var vml = blk._tensor[(hit.oi * st.order + hit.col) * blk.b + safeInHit];
-      tip.innerHTML = "Out " + gOut + " &larr; In " + gIn + "<br>Lag k=" + hit.col +
+      tipEl.innerHTML = "Out " + gOut + " &larr; In " + gIn + "<br>Lag k=" + hit.col +
         " (-" + (hit.col * st.dt_ms).toFixed(2) + " ms)<br>F = " + vml.toFixed(4);
     } else {
       var gIn2 = blk.s0 + hit.col;
       var v2d = blk._tensor[(hit.oi * st.order + state.lag) * blk.b + hit.col];
       var l2v = blk._l2[hit.oi * blk.b + hit.col];
-      tip.innerHTML = "Out " + gOut + " &larr; In " + gIn2 + "<br>F(k=" + state.lag + ") = " +
-        v2d.toFixed(4) + "<br>||F||_2 = " + l2v.toFixed(4);
+      tipEl.innerHTML = "Out " + gOut + " &larr; In " + gIn2 +
+        "<br>F(k=" + state.lag + ") = " + v2d.toFixed(4) +
+        "<br>||F||_2 = " + l2v.toFixed(4);
     }
-    tip.style.display = "block";
-    tip.style.left = Math.min(hit.rect.width - 170, hit.mx + 14) + "px";
-    tip.style.top = Math.max(8, hit.my - 14) + "px";
+    tipEl.style.display = "block";
+    tipEl.style.left = Math.min(Math.max(8, hit.rect.width - 175), hit.mx + 14) + "px";
+    tipEl.style.top = Math.max(8, hit.my - 14) + "px";
+  }
+
+  mainCanvas.addEventListener("mousemove", function(ev) {
+    if (state.drag || !tip) return;
+    var hit = hitCanvas2D(mainCanvas, state.last2D, ev);
+    if (!hit) { tip.style.display = "none"; return; }
+    show2DTooltip(tip, hit, state.last2D.isML);
   });
 
   mainCanvas.addEventListener("mouseleave", function() {
@@ -933,13 +1190,45 @@
   });
 
   mainCanvas.addEventListener("click", function(ev) {
-    var hit = hit2D(ev);
+    var hit = hitCanvas2D(mainCanvas, state.last2D, ev);
     if (!hit) return;
     state.selOut = hit.oi;
     if (state.last2D.isML) state.lag = hit.col;
     else state.selIn = hit.col;
     renderAll();
   });
+
+  if (sliceCanvas) {
+    sliceCanvas.addEventListener("mousemove", function(ev) {
+      if (!sliceTip) return;
+      var hit = hitCanvas2D(sliceCanvas, state.lastSlice2D, ev);
+      if (!hit) { sliceTip.style.display = "none"; return; }
+      show2DTooltip(sliceTip, hit, false);
+    });
+    sliceCanvas.addEventListener("mouseleave", function() {
+      if (sliceTip) sliceTip.style.display = "none";
+    });
+    sliceCanvas.addEventListener("click", function(ev) {
+      var hit = hitCanvas2D(sliceCanvas, state.lastSlice2D, ev);
+      if (!hit) return;
+      state.selOut = hit.oi;
+      state.selIn = hit.col;
+      renderAll();
+    });
+  }
+
+  if (kernCanvas) {
+    kernCanvas.addEventListener("click", function(ev) {
+      var kbox = state.lastKern;
+      if (!kbox || kbox.P <= 1) return;
+      var rect = kernCanvas.getBoundingClientRect();
+      var mx = ev.clientX - rect.left;
+      if (mx < kbox.pad.l || mx > kbox.pad.l + kbox.pw) return;
+      var frac = (mx - kbox.pad.l) / kbox.pw;
+      state.lag = Math.max(0, Math.min(kbox.P - 1, Math.round(frac * (kbox.P - 1))));
+      renderAll();
+    });
+  }
 
   var tBtn = document.getElementById("theme-toggle");
   if (tBtn) tBtn.addEventListener("click", function() { setTimeout(renderAll, 20); });

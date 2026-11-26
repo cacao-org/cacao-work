@@ -42,8 +42,11 @@ def _build_grouped_sim_switcher(
                 continue
             seen.add(rs)
             sel = " selected" if rs == current_slug else ""
+            opt_page = target_page
+            if opt_page == "pyrwfs.html" and not rm.get("has_pyrwfs_report"):
+                opt_page = "index.html"
             opts.append(
-                f'<option value="../{html.escape(rs, quote=True)}/{target_page}"{sel}>'
+                f'<option value="../{html.escape(rs, quote=True)}/{opt_page}"{sel}>'
                 f"{html.escape(rs, quote=False)}</option>"
             )
         if opts:
@@ -73,6 +76,7 @@ def refresh_cross_links(public_dir: Path, hierarchy: dict[str, object]) -> None:
         "index.html",
         "config.html",
         "optical.html",
+        "pyrwfs.html",
         "runtime.html",
         "how_to_run.html",
         "compute_report.html",
@@ -175,9 +179,28 @@ def refresh_cross_links(public_dir: Path, hierarchy: dict[str, object]) -> None:
                 f'<a href="../{rs_esc}/index.html">Overview</a>'
                 f'<a href="../{rs_esc}/config.html">Config</a>'
                 f'<a href="../{rs_esc}/optical.html">Optical</a>'
-                f'<a href="../{rs_esc}/runtime.html">Runtime</a>'
+                + (f'<a href="../{rs_esc}/pyrwfs.html">PyWFS</a>' if rm.get("has_pyrwfs_report") else "")
+                + f'<a href="../{rs_esc}/runtime.html">Runtime</a>'
                 f'<a href="../{rs_esc}/how_to_run.html">How to Run</a>'
                 "</div></td></tr>"
+            )
+        archived_raw = tm.get("archived_simulations")
+        archived_slugs = (
+            [str(a).strip() for a in archived_raw if str(a).strip()]
+            if isinstance(archived_raw, list)
+            else []
+        )
+        archived_note = ""
+        if archived_slugs:
+            pills = " ".join(
+                f'<span class="param-pill"><code>{html.escape(a, quote=False)}</code></span>'
+                for a in archived_slugs
+            )
+            archived_note = (
+                '<p class="muted" style="margin-top:0.6rem;"><strong>Archived study runs '
+                "(individual simulation pages retired; all plots, tables, and numerical "
+                f"findings preserved below):</strong></p>"
+                f'<div class="param-list" style="margin-top:0.25rem;">{pills}</div>'
             )
         if rows:
             tbl_html = (
@@ -190,7 +213,10 @@ def refresh_cross_links(public_dir: Path, hierarchy: dict[str, object]) -> None:
                 '<th style="text-align:right;">Coro 3-10 l/D</th>'
                 '<th data-nosort="1">Sub-Pages</th>'
                 f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+                f"{archived_note}"
             )
+        elif archived_note:
+            tbl_html = archived_note
         else:
             tbl_html = '<p class="muted">No matching simulation reports staged locally yet.</p>'
         txt = fpath.read_text(encoding="utf-8")

@@ -84,6 +84,23 @@ def build_topic_hub_html(
             "explorer, and runtime profiles below.</p></blockquote>"
         )
 
+    guide_callout = ""
+    if domain_id == "wavefront-control":
+        guide_callout = (
+            '<div class="explorer-panel">'
+            '<div class="turb-card-hdr">'
+            '<div><span class="metric-pill metric-pill-accent">Practical Tuning Manual</span> '
+            "<strong>CACAO Predictive Control Guide: AR(P), Block-EOF &amp; Cascaded Self-Learning</strong></div>"
+            '<a class="btn" href="../../predictive-control/index.html">'
+            "Open Predictive Control Guide &rarr;</a>"
+            "</div>"
+            '<p class="muted" style="margin:0.45rem 0 0;">Human-readable walkthrough of PSOL '
+            "prerequisites, Diagonal AR(P), Cross-Mode Block-EOF extensions, Cascaded Self-Learning "
+            "(Global RLS + libgric + causal Stein gates), commissioning workflow, regime presets, "
+            "and troubleshooting.</p>"
+            "</div>"
+        )
+
     combined_sims = p_sims + c_sims
     sim_sec = render_simulations_section(
         combined_sims,
@@ -140,7 +157,9 @@ def build_topic_hub_html(
             f'</tr></thead><tbody>{"".join(m_rows)}</tbody></table></div>'
         )
 
-    body_html = "\n\n".join(p for p in (hero, tech_sec, sim_sec, bench_matrix_sec) if p)
+    body_html = "\n\n".join(
+        p for p in (hero, guide_callout, tech_sec, sim_sec, bench_matrix_sec) if p
+    )
     toc_items = extract_toc_items(body_html)
     return render_page_shell(
         title=f"{dtitle} · cacao-work AO Topics",

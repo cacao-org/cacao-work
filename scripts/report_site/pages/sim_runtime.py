@@ -33,6 +33,7 @@ def build_sim_runtime_html(
     runtime_data: dict[str, object],
     ctx: RenderContext,
     has_compute_report: bool,
+    has_pyrwfs_report: bool = False,
     updated_utc: str,
 ) -> str:
     """Build the simulation Runtime Performance sub-page (runtime.html)."""
@@ -194,6 +195,7 @@ def build_sim_runtime_html(
         hierarchy=hierarchy,
         active_tab="runtime",
         has_compute_report=has_compute_report,
+        has_pyrwfs_report=has_pyrwfs_report,
         body_html=raw_body,
         toc_items=toc_items,
         page_scripts=("runtime_explorer.js",) if runtime_data else (),

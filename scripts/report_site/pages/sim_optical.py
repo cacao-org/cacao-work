@@ -8,7 +8,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from ..constants import COMPUTE_IMAGES, GUI_CONFIG_IMAGES
+from ..constants import COMPUTE_IMAGES, GUI_CONFIG_IMAGES, PYRWFS_IMAGES
 from ..markdown.context import RenderContext
 from ..markdown.parser import convert_markdown_to_html
 from ..markdown.sim_split import extract_toc_html, extract_toc_items
@@ -18,6 +18,7 @@ from .fragments import (
     safe_json_embed,
 )
 from .sim_shell import render_sim_page_shell
+from .turbulence import render_sim_turbulence_card
 
 
 def _build_eof_pf_section(eof_pf_data: dict[str, object] | None) -> str:
@@ -28,11 +29,15 @@ def _build_eof_pf_section(eof_pf_data: dict[str, object] | None) -> str:
     ord_p = int(eof_pf_data.get("order") or 8)
     stages = eof_pf_data.get("stages") or []
     st_desc = " &middot; ".join(
-        f"Stage {st.get('stage')}: {st.get('n_modes')} modes "
-        f"({st.get('n_blocks')} blocks, {st.get('offdiag_pct')}% off-diag)"
+        html.escape(
+            f"Stage {st.get('stage')}: {st.get('n_modes')} modes "
+            f"({st.get('n_blocks')} blocks, {st.get('offdiag_pct')}% off-diag)",
+            quote=False,
+        )
         for st in stages
         if isinstance(st, dict)
     )
+    max_lag = max(0, ord_p - 1)
     return (
         '<h2 id="eof-3d-predictive-matrix">Interactive 3D Modal Predictive Matrix (PF) '
         f'{render_section_badges(["calibration", "loop_operation"])}</h2>\n'
@@ -43,7 +48,7 @@ def _build_eof_pf_section(eof_pf_data: dict[str, object] | None) -> str:
         f"(<code>B={blk}</code> coupled modes/block): "
         "<code>a&#770;<sub>s0+i</sub>(t+d) = &Sigma;<sub>k,j</sub> "
         "F[i,k,j] a<sub>s0+j</sub>(t&minus;k)</code>. "
-        f"{html.escape(st_desc, quote=False)}</p>\n"
+        f"{st_desc}</p>\n"
         '  <div class="toolbar" style="margin-top:0;">\n'
         '    <div class="toolbar-group" id="eof-pf-stage-btns"></div>\n'
         '    <div class="toolbar-group">\n'
@@ -64,7 +69,11 @@ def _build_eof_pf_section(eof_pf_data: dict[str, object] | None) -> str:
         '  <div class="toolbar">\n'
         '    <div class="toolbar-group">\n'
         '      <label class="eof-pf-ctrl-label" for="eof-pf-lag-slider">Lag k:</label>\n'
-        '      <input type="range" id="eof-pf-lag-slider" min="0" max="7" value="0">\n'
+        '      <button type="button" class="btn-sm eof-pf-step-btn" '
+        'id="eof-pf-lag-prev" aria-label="Previous lag">&minus;</button>\n'
+        f'      <input type="range" id="eof-pf-lag-slider" min="0" max="{max_lag}" value="0">\n'
+        '      <button type="button" class="btn-sm eof-pf-step-btn" '
+        'id="eof-pf-lag-next" aria-label="Next lag">+</button>\n'
         '      <span id="eof-pf-lag-readout" class="muted">k=0</span>\n'
         '      <button type="button" class="btn-sm" id="eof-pf-play-btn">Play</button>\n'
         "    </div>\n"
@@ -74,6 +83,7 @@ def _build_eof_pf_section(eof_pf_data: dict[str, object] | None) -> str:
         '        <option value="0">Full Block</option>\n'
         '        <option value="64">First 64</option>\n'
         '        <option value="32">First 32</option>\n'
+        '        <option value="16">First 16</option>\n'
         "      </select>\n"
         '      <label class="eof-pf-ctrl-label" for="eof-pf-cmap-sel">Color:</label>\n'
         '      <select class="select-input" id="eof-pf-cmap-sel">\n'
@@ -83,34 +93,54 @@ def _build_eof_pf_section(eof_pf_data: dict[str, object] | None) -> str:
         '      <label class="eof-pf-ctrl-label">'
         '<input type="checkbox" id="eof-pf-hide-diag"> Hide Diag</label>\n'
         '      <label class="eof-pf-ctrl-label" for="eof-pf-thresh-slider">3D Cut:</label>\n'
-        '      <input type="range" id="eof-pf-thresh-slider" min="0" max="15" value="2">\n'
-        '      <span id="eof-pf-thresh-val" class="muted">0.015</span>\n'
+        '      <input type="range" id="eof-pf-thresh-slider" min="0" max="20" value="6">\n'
+        '      <span id="eof-pf-thresh-val" class="muted">auto</span>\n'
         '      <button type="button" class="btn-sm" id="eof-pf-reset-btn">Reset 3D</button>\n'
         "    </div>\n"
         "  </div>\n"
-        '  <div class="eof-pf-grid">\n'
-        '    <div class="canvas-wrap">\n'
+        '  <div class="eof-pf-vis-grid" id="eof-pf-vis-grid">\n'
+        '    <div class="canvas-wrap eof-pf-main-wrap" id="eof-pf-main-wrap">\n'
         '      <canvas id="eof-pf-main-canvas" class="eof-pf-canvas"></canvas>\n'
         '      <div id="eof-pf-tooltip" class="canvas-tooltip"></div>\n'
         '      <div class="eof-pf-hint muted" id="eof-pf-hint">'
-        "Drag 3D cube to rotate orbit; switch to Lag Slice / L2 Coupling to inspect "
-        "or click any mode pair (i, j).</div>\n"
+        "Drag 3D cube to rotate orbit; move Lag k to inspect the 2D timeslice image.</div>\n"
         "    </div>\n"
-        '    <div class="eof-pf-side">\n'
-        '      <div class="eof-pf-side-card">\n'
-        '        <h3 id="eof-pf-pair-title">Pair Temporal Kernel</h3>\n'
-        '        <div class="canvas-wrap">\n'
-        '          <canvas id="eof-pf-kernel-canvas" class="eof-pf-kernel-canvas"></canvas>\n'
+        '    <div class="canvas-wrap eof-pf-slice-wrap" id="eof-pf-slice-wrap">\n'
+        '      <div class="eof-pf-slice-hdr">\n'
+        '        <div class="eof-pf-slice-hdr-left">\n'
+        '          <span class="eof-pf-lag-pill" id="eof-pf-slice-pill">k=0</span>\n'
+        '          <h3 id="eof-pf-slice-title">Selected Timeslice (2D Image)</h3>\n'
+        "        </div>\n"
+        '        <div class="eof-pf-slice-hdr-right">\n'
+        '          <span id="eof-pf-slice-meta" class="muted eof-pf-slice-meta"></span>\n'
+        '          <label class="eof-pf-ctrl-label" '
+        'title="Scale 2D slice colormap to the selected timeslice peak">'
+        '<input type="checkbox" id="eof-pf-slice-autoscale" checked> Auto-scale</label>\n'
         "        </div>\n"
         "      </div>\n"
-        '      <div class="eof-pf-side-card">\n'
-        "        <h3>Tensor &amp; Pair Statistics</h3>\n"
-        '        <div id="eof-pf-stats" class="eof-pf-stats-grid"></div>\n'
+        '      <div class="eof-pf-slice-stage">\n'
+        '        <canvas id="eof-pf-slice-canvas" class="eof-pf-slice-canvas"></canvas>\n'
+        '        <div id="eof-pf-slice-tooltip" class="canvas-tooltip"></div>\n'
         "      </div>\n"
-        '      <div class="eof-pf-side-card">\n'
-        "        <h3>Top Cross-Mode Pairs</h3>\n"
-        '        <div id="eof-pf-pairs" class="eof-pf-pair-chips"></div>\n'
+        '      <div class="eof-pf-hint muted" id="eof-pf-slice-hint">'
+        "2D image of F[i, k, j] at selected lag k; hover for weight, "
+        "click any (i, j) cell to inspect kernel.</div>\n"
+        "    </div>\n"
+        "  </div>\n"
+        '  <div class="eof-pf-details-grid">\n'
+        '    <div class="eof-pf-side-card">\n'
+        '      <h3 id="eof-pf-pair-title">Pair Temporal Kernel</h3>\n'
+        '      <div class="canvas-wrap">\n'
+        '        <canvas id="eof-pf-kernel-canvas" class="eof-pf-kernel-canvas"></canvas>\n'
         "      </div>\n"
+        "    </div>\n"
+        '    <div class="eof-pf-side-card">\n'
+        "      <h3>Tensor &amp; Pair Statistics</h3>\n"
+        '      <div id="eof-pf-stats" class="eof-pf-stats-grid"></div>\n'
+        "    </div>\n"
+        '    <div class="eof-pf-side-card">\n'
+        "      <h3>Top Cross-Mode Pairs</h3>\n"
+        '      <div id="eof-pf-pairs" class="eof-pf-pair-chips"></div>\n'
         "    </div>\n"
         "  </div>\n"
         '  <script src="eof_pf_data.js"></script>\n'
@@ -130,7 +160,9 @@ def build_sim_optical_html(
     staged_files: list[Path],
     ctx: RenderContext,
     has_compute_report: bool,
+    has_pyrwfs_report: bool = False,
     updated_utc: str,
+    turb_profile: dict[str, object] | None = None,
 ) -> str:
     """Build the simulation Optical Performance sub-page (optical.html)."""
     ctx.has_mermaid = False
@@ -169,21 +201,28 @@ def build_sim_optical_html(
             '<canvas id="opt-canvas" class="chart-canvas"></canvas>'
             '<div id="opt-tooltip" class="canvas-tooltip"></div>'
             "</div>"
+            '<div id="opt-legend" class="opt-legend"></div>'
             f'<script id="optical-explorer-data" type="application/json">'
             f"{safe_json_embed(explorer_data)}</script>"
             "</div>"
         )
 
+    turb_banner = render_sim_turbulence_card(
+        turb_profile,
+        rel_root="..",
+        compact=True,
+    )
     eof_html = _build_eof_pf_section(eof_pf_data)
     extra_figs = build_extra_figures_section(
         staged_files,
         ctx,
-        exclude_names=GUI_CONFIG_IMAGES | COMPUTE_IMAGES,
+        exclude_names=GUI_CONFIG_IMAGES | COMPUTE_IMAGES | PYRWFS_IMAGES,
     )
     raw_body = "\n\n".join(
         p
         for p in (
             f"<h1>{html.escape(title, quote=False)} &middot; Optical Performance</h1>",
+            turb_banner,
             explorer_html,
             eof_html,
             opt_html,
@@ -210,6 +249,7 @@ def build_sim_optical_html(
         hierarchy=hierarchy,
         active_tab="optical",
         has_compute_report=has_compute_report,
+        has_pyrwfs_report=has_pyrwfs_report,
         body_html=raw_body,
         toc_items=toc_items,
         page_scripts=tuple(page_scripts),

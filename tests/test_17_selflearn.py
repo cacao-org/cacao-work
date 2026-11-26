@@ -196,6 +196,9 @@ def _run_lockstep_case(
     latency: float = 2.0,
     shadow: str = "OFF",
     save_dir: str = "",
+    nl_mode: int = 0,
+    max_wfs_gain: float = 0.6,
+    qshared: int = 2,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float], float]:
     t_len, n_mode = wfs.shape
     wfs_p = work_dir / "wfs.bin"
@@ -228,17 +231,18 @@ milk-fps-set -q \
     sl_t.outtweak=sl_twk \
     sl_t.outPFstat=sl_stat \
     sl_t.out_mode=0 \
+    sl_t.nl_mode={nl_mode} \
     sl_t.key_mode={key_mode} \
     sl_t.NBmodeMax={n_mode} \
     sl_t.kmax={kmax} \
-    sl_t.qshared=2 \
+    sl_t.qshared={qshared} \
     sl_t.nwarmup=25 \
     sl_t.keywarmup=150 \
     sl_t.blend_soft=ON \
     sl_t.rlim={rlim} \
     sl_t.latency={latency} \
     sl_t.dc_leak=0.99 \
-    sl_t.max_wfs_gain=0.6 \
+    sl_t.max_wfs_gain={max_wfs_gain} \
     sl_t.max_ar_norm2=2.5 \
     sl_t.lam0=15.0 \
     sl_t.lam1=60.0 \
@@ -416,4 +420,53 @@ def test_17_2_selflearn_live_closed_loop_unmod_pywfs(shm_sandbox):
     assert sr_gric > sr_ol * 3.0, f"Closed-loop GRIC Strehl failed: {sr_gric:.4f} vs OL {sr_ol:.4f}"
     assert sr_gric >= sr_int * 0.95, (
         f"Closed-loop GRIC Strehl ({sr_gric:.4f}) degraded vs integrator ({sr_int:.4f})"
+    )
+
+
+def test_17_4_selflearn_nl_pywfs_modes(shm_sandbox):
+    """Verify nl_mode=1 (+odd sat/OG/TT) & nl_mode=2 (+shared WFS xtalk) beat nl_mode=0."""
+    _shm_dir, work_dir, env = shm_sandbox
+    exe = _compile_driver(work_dir, env)
+    rng = np.random.default_rng(7)
+
+    t_len, n_mode = 2400, 16
+    ol = np.zeros((t_len, n_mode), dtype=np.float64)
+    wfs = np.zeros((t_len, n_mode), dtype=np.float64)
+    # Synthetic nonlinear PyWFS: true residual e_m compressed by odd tanh + TT-dependent OG
+    # plus shared low-order WFS crosstalk; OL_obs under-reports true turbulence via WFS.
+    e_true = np.zeros((t_len, n_mode), dtype=np.float64)
+    for k in range(2, t_len):
+        e_true[k] = 0.82 * e_true[k - 1] + 0.08 * rng.standard_normal(n_mode)
+        r_tt = np.hypot(e_true[k, 0], e_true[k, 1])
+        g_inst = 1.0 / (1.0 + 4.0 * r_tt)
+        wfs[k] = g_inst * np.tanh(3.5 * e_true[k]) / 3.5
+        # True OL ahead depends nonlinearly on wfs + crosstalk from mode 0
+        ol[k] = 0.94 * ol[k - 1] + 0.15 * e_true[k] + 0.08 * wfs[k, 0]
+    dm = -ol
+
+    _, twk0, d0, us0 = _run_lockstep_case(
+        exe, work_dir, env, wfs, ol, dm,
+        key_mode=0, rlim=0.8, kmax=12, latency=2.0, nl_mode=0, max_wfs_gain=1.5, qshared=4,
+    )
+    _, twk1, d1, us1 = _run_lockstep_case(
+        exe, work_dir, env, wfs, ol, dm,
+        key_mode=0, rlim=0.8, kmax=12, latency=2.0, nl_mode=1, max_wfs_gain=1.5, qshared=4,
+    )
+    _, twk2, d2, us2 = _run_lockstep_case(
+        exe, work_dir, env, wfs, ol, dm,
+        key_mode=0, rlim=0.8, kmax=12, latency=2.0, nl_mode=2, max_wfs_gain=1.5, qshared=4,
+    )
+    for arr, diag, us, tag in ((twk1, d1, us1, "nl1"), (twk2, d2, us2, "nl2")):
+        assert np.all(np.isfinite(arr)), f"{tag} produced non-finite tweak"
+        assert diag.get("out.updates", 0) >= 2000.0
+        assert diag.get("out.oos_vr_tot_pct", 0.0) > 10.0, f"{tag} low OOS VR: {diag}"
+        assert us < 250.0, f"{tag} too slow for RT loop: {us:.1f} us/fr"
+    assert d2["out.oos_vr_tot_pct"] >= d0["out.oos_vr_tot_pct"], (
+        f"Expected nl_mode=2 ({d2['out.oos_vr_tot_pct']:.2f}%) >= "
+        f"nl_mode=0 ({d0['out.oos_vr_tot_pct']:.2f}%)"
+    )
+    print(
+        f"\n[test_17_4] nl0={d0['out.oos_vr_tot_pct']:+.2f}% ({us0:.1f} us/fr) | "
+        f"nl1={d1['out.oos_vr_tot_pct']:+.2f}% ({us1:.1f} us/fr) | "
+        f"nl2={d2['out.oos_vr_tot_pct']:+.2f}% ({us2:.1f} us/fr)"
     )

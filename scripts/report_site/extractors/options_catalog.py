@@ -22,8 +22,20 @@ _C_DEFAULT_RE = re.compile(
     re.MULTILINE,
 )
 
+_C_STATIC_VAR_DEFAULT_RE = re.compile(
+    r"^\s*static\s+(?:const\s+)?[a-zA-Z0-9_]+\s+"
+    r"([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\[[^\]]*\])?\s*=\s*([^;]+);",
+    re.MULTILINE,
+)
+
 _X_MACRO_CALL_RE = re.compile(
     r'X\(\s*"([^"]+)"\s*,\s*&?(param_[a-zA-Z0-9_]+)\s*,\s*'
+    r"(FPTYPE_[A-Z0-9_]+)\s*,\s*([01])\s*,\s*([^,]+?)\s*,\s*((?:\"[^\"]*\"\s*)+)\)",
+    re.DOTALL,
+)
+
+_X_MACRO_ANY_CALL_RE = re.compile(
+    r'X\(\s*"([^"]+)"\s*,\s*&?([a-zA-Z_][a-zA-Z0-9_]*)\s*,\s*'
     r"(FPTYPE_[A-Z0-9_]+)\s*,\s*([01])\s*,\s*([^,]+?)\s*,\s*((?:\"[^\"]*\"\s*)+)\)",
     re.DOTALL,
 )
@@ -92,7 +104,7 @@ RUNNER_CLI_OPTIONS: list[dict[str, object]] = [
         "key": "seeing",
         "arg": "<arcsec>",
         "type": "float",
-        "default": "0.6",
+        "default": "0.8",
         "group": "Atmosphere & Timing",
         "tier": "core",
         "label": "Seeing [arcsec]",
@@ -441,6 +453,17 @@ RUNNER_CLI_OPTIONS: list[dict[str, object]] = [
         "description": "Keep Stage-3 Lyot LLOWFS loop open during science integration",
     },
     {
+        "flag": "--psol-og1",
+        "key": "psol_og1",
+        "arg": "<float>",
+        "type": "float",
+        "default": "",
+        "group": "Loop Control",
+        "tier": "advanced",
+        "label": "Stg1 PSOL OG",
+        "description": "Optional Stage-1 on-sky optical-gain scale for PSOL WFSfact (1/g_opt)",
+    },
+    {
         "flag": "--zpo-og",
         "key": "zpo_og",
         "arg": "<float>",
@@ -626,7 +649,18 @@ RUNNER_CLI_OPTIONS: list[dict[str, object]] = [
         "group": "Predictive Control",
         "tier": "advanced",
         "label": "PF Modal Exp",
-        "description": "Modal PF mix rolloff exponent applied to mgainfact",
+        "description": "Stage-1/default modal PF mix rolloff exponent applied to mgainfact",
+    },
+    {
+        "flag": "--pf-mgain-exp2",
+        "key": "pf_mgain_exp2",
+        "arg": "<float>",
+        "type": "float",
+        "default": "(same as --pf-mgain-exp)",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "PF Modal Exp (Stg 2)",
+        "description": "Optional Stage-2 modal PF mix rolloff exponent applied to mgainfact (defaults to --pf-mgain-exp)",
     },
     {
         "flag": "--nbloop",
@@ -966,6 +1000,127 @@ RUNNER_CLI_OPTIONS: list[dict[str, object]] = [
         "description": "Stage-2 mkEOFPF ZOH-centered ridge regularization toggle (ON/OFF)",
     },
     {
+        "flag": "--mult-tt",
+        "key": "mult_tt",
+        "arg": "<float>",
+        "type": "float",
+        "default": "",
+        "group": "Loop Control",
+        "tier": "advanced",
+        "label": "Stg1 TT Leak Mult",
+        "description": "Optional Stage-1 Tip/Tilt (m=0,1) leak multiplier override",
+    },
+    {
+        "flag": "--mmult-floor",
+        "key": "mmult_floor",
+        "arg": "<float>",
+        "type": "float",
+        "default": "",
+        "group": "Loop Control",
+        "tier": "advanced",
+        "label": "Stg1 Modal Leak Floor",
+        "description": "Optional Stage-1 highest-mode leak multiplier floor (unset = flat mult1)",
+    },
+    {
+        "flag": "--mmult-alpha",
+        "key": "mmult_alpha",
+        "arg": "<float>",
+        "type": "float",
+        "default": "1.0",
+        "group": "Loop Control",
+        "tier": "advanced",
+        "label": "Stg1 Modal Leak Alpha",
+        "description": "Stage-1 power-law exponent shaping per-mode leak multiplier rolloff",
+    },
+    {
+        "flag": "--dmmask-rmax",
+        "key": "dmmask_rmax",
+        "arg": "<float>",
+        "type": "float",
+        "default": "",
+        "group": "Calibration",
+        "tier": "advanced",
+        "label": "Stg1 Active DM Mask Rmax",
+        "description": "Optional Stage-1 active DM mask outer radius [act] for outer-rim slaving",
+    },
+    {
+        "flag": "--pf-mix-tt",
+        "key": "pf_mix_tt",
+        "arg": "<float>",
+        "type": "float",
+        "default": "",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "Stg1 LO PF Mix",
+        "description": "Optional Stage-1 leading low-order (0..lo-1) predictive mix override [0..1]",
+    },
+    {
+        "flag": "--pf-lo-nmode",
+        "key": "pf_lo_nmode",
+        "arg": "<int>",
+        "type": "int",
+        "default": "2",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "Stg1 LO Override Modes",
+        "description": "Number of leading Stage-1 modes receiving --pf-mix-tt / --mult-tt overrides",
+    },
+    {
+        "flag": "--pf-diff-nmode",
+        "key": "pf_diff_nmode",
+        "arg": "<int>",
+        "type": "int",
+        "default": "0",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "PF Diff-Space Modes",
+        "description": "Stage-1 leading modes solved in temporal-difference EOF space (0=off)",
+    },
+    {
+        "flag": "--pf-diff-order",
+        "key": "pf_diff_order",
+        "arg": "<int>",
+        "type": "int",
+        "default": "0",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "PF Diff-Space Order",
+        "description": "Difference-space EOF lookback tap order (0=diagorder, 2..64)",
+    },
+    {
+        "flag": "--pf-diff-reg",
+        "key": "pf_diff_reg",
+        "arg": "<float>",
+        "type": "float",
+        "default": "0.05",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "PF Diff-Space Reg",
+        "description": "Difference-space EOF relative Tikhonov regularization lambda",
+    },
+    {
+        "flag": "--pf-diff-maxnorm2",
+        "key": "pf_diff_maxnorm2",
+        "arg": "<float>",
+        "type": "float",
+        "default": "4.0",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "PF Diff MaxNorm2",
+        "description": "Difference-space EOF position-equivalent ||W_m||_2^2 norm cap",
+    },
+    {
+        "flag": "--pf-diff-maxdcgain",
+        "key": "pf_diff_maxdcgain",
+        "arg": "<float>",
+        "type": "float",
+        "default": "0.9995",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "PF Diff MaxDCGain",
+        "description": "Difference-space EOF exact self-DC gain (0.9..0.99995)",
+    },
+    {
         "flag": "--pf-gram-halflife",
         "key": "pf_gram_halflife",
         "arg": "<int>",
@@ -1076,6 +1231,177 @@ RUNNER_CLI_OPTIONS: list[dict[str, object]] = [
         "description": "Run real-time lag>=ceil(tau) closed-loop whiteness monitor (modalwhite)",
     },
     {
+        "flag": "--selflearn",
+        "key": "selflearn",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Predictive Control",
+        "tier": "core",
+        "label": "Cascaded Self-Learning",
+        "description": "Cascade online Global + Clustered (libgric) self-learning on top of Block-EOF",
+    },
+    {
+        "flag": "--selflearn-modes",
+        "key": "selflearn_modes",
+        "arg": "<int>",
+        "type": "int",
+        "default": "128",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "Self-Learn Modes",
+        "description": "Maximum controlled modal dimension tweaked by cacaopc-selflearn",
+    },
+    {
+        "flag": "--selflearn-kmax",
+        "key": "selflearn_kmax",
+        "arg": "<int>",
+        "type": "int",
+        "default": "16",
+        "group": "Predictive Control",
+        "tier": "advanced",
+        "label": "Self-Learn Clusters",
+        "description": "Maximum libgric cluster anchors maintained by cacaopc-selflearn",
+    },
+    {
+        "flag": "--no-pyrwfs-tlm",
+        "key": "no_pyrwfs_tlm",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Telemetry & Reports",
+        "tier": "common",
+        "label": "Disable PyWFS Telemetry",
+        "description": (
+            "Disable live Stage-1 & Stage-2 Pyramid WFS telemetry monitors "
+            "(cacao-fpsexec-pyrwfstlm; enabled by default)"
+        ),
+    },
+    {
+        "flag": "--pyrwfs-stride",
+        "key": "pyrwfs_stride",
+        "arg": "<int>",
+        "type": "int",
+        "default": "auto (~200 Hz)",
+        "group": "Telemetry & Reports",
+        "tier": "advanced",
+        "label": "PyWFS Telemetry Stride",
+        "description": (
+            "Override Stage-1 frame decimation stride for cacao-fpsexec-pyrwfstlm "
+            "(Stage-2 scales proportionally to match physical cadence)"
+        ),
+    },
+    {
+        "flag": "--no-wind-var",
+        "key": "no_wind_var",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Atmosphere & Timing",
+        "tier": "core",
+        "label": "Disable Wind Drift",
+        "description": "Disable smooth wind speed & direction meandering (default: ON)",
+    },
+    {
+        "flag": "--wind-var-scale",
+        "key": "wind_var_scale",
+        "arg": "<float>",
+        "type": "float",
+        "default": "1.0",
+        "group": "Atmosphere & Timing",
+        "tier": "advanced",
+        "label": "Wind Drift Scale",
+        "description": "Amplitude multiplier for smooth wind speed & direction meandering",
+    },
+    {
+        "flag": "--no-wind-burst",
+        "key": "no_wind_burst",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Atmosphere & Timing",
+        "tier": "core",
+        "label": "Disable Wind Bursts",
+        "description": "Disable stochastic atmospheric wind bursts & Cn2 surges (default: ON)",
+    },
+    {
+        "flag": "--wind-burst-scale",
+        "key": "wind_burst_scale",
+        "arg": "<float>",
+        "type": "float",
+        "default": "1.0",
+        "group": "Atmosphere & Timing",
+        "tier": "advanced",
+        "label": "Wind Burst Scale",
+        "description": "Strength multiplier for non-stationary atmospheric wind bursts",
+    },
+    {
+        "flag": "--no-vib",
+        "key": "no_vib",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Atmosphere & Timing",
+        "tier": "core",
+        "label": "Disable Vibrations",
+        "description": "Disable stochastic telescope & optical-bench vibrations (default: ON)",
+    },
+    {
+        "flag": "--vib-rms-nm",
+        "key": "vib_rms_nm",
+        "arg": "<float>",
+        "type": "float",
+        "default": "45.0",
+        "group": "Atmosphere & Timing",
+        "tier": "advanced",
+        "label": "Vibration RMS [nm]",
+        "description": "Total telescope & optical-bench vibration OPD RMS [nm] (14.5..138 Hz)",
+    },
+    {
+        "flag": "--no-petal",
+        "key": "no_petal",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Atmosphere & Timing",
+        "tier": "core",
+        "label": "Disable Petaling",
+        "description": "Disable thermally induced slow-varying pupil petaling / LWE (default: ON)",
+    },
+    {
+        "flag": "--petal-rms-nm",
+        "key": "petal_rms_nm",
+        "arg": "<float>",
+        "type": "float",
+        "default": "1000.0",
+        "group": "Atmosphere & Timing",
+        "tier": "advanced",
+        "label": "Petaling RMS [nm]",
+        "description": "Total thermally induced island petaling (LWE) OPD RMS [nm]",
+    },
+    {
+        "flag": "--petal-tau-s",
+        "key": "petal_tau_s",
+        "arg": "<float>",
+        "type": "float",
+        "default": "3.0",
+        "group": "Atmosphere & Timing",
+        "tier": "advanced",
+        "label": "Petaling Tau [s]",
+        "description": "Correlation timescale [s] for slow thermal petaling evolution",
+    },
+    {
+        "flag": "--no-perturb",
+        "key": "no_perturb",
+        "arg": "",
+        "type": "bool",
+        "default": "OFF",
+        "group": "Atmosphere & Timing",
+        "tier": "core",
+        "label": "Disable All Perturb",
+        "description": "Disable wind meandering, wind bursts, vibrations & thermal petaling",
+    },
+    {
         "flag": "-h, --help",
         "key": "help",
         "arg": "",
@@ -1148,14 +1474,30 @@ CACAOLOOP_ENV_VARS: list[dict[str, str]] = [
      "description": "Tikhonov ridge regularization parameter lambda for PF solver"},
     {"name": "CACAO_PF_MAXNORM2", "default": "(unset)", "group": "Predictive Control",
      "description": "Optional per-row ||F_m||_2^2 filter norm ceiling"},
+    {"name": "CACAO_PF_MAXDCGAIN", "default": "(unset)", "group": "Predictive Control",
+     "description": "Optional mkEOFPF self-DC gain ceiling override"},
     {"name": "CACAO_PF_NTHREADS", "default": "4", "group": "Predictive Control",
      "description": "OpenMP thread count for real-time applyARPF / applyEOFPF execution"},
     {"name": "CACAO_PF_MKTHREADS", "default": "8", "group": "Predictive Control",
      "description": "OpenMP thread count for background mkARPF / mkEOFPF solver"},
     {"name": "CACAO_PF_MIX", "default": "0.90 (Stg1/2), 0.50 (Stg3)", "group": "Predictive Control",
      "description": "Predictive control mix weight [0..1] blending PF output with integrator"},
+    {"name": "CACAO_PF_MIX_TT", "default": "(unset)", "group": "Predictive Control",
+     "description": "Optional leading low-order (0..lo-1) predictive mix weight override [0..1]"},
+    {"name": "CACAO_PF_LO_NMODE", "default": "2", "group": "Predictive Control",
+     "description": "Leading modes receiving CACAO_PF_MIX_TT / CACAO_LOOPMULT_TT overrides"},
     {"name": "CACAO_PF_MGAIN_EXP", "default": "0.50", "group": "Predictive Control",
      "description": "Exponent rolling off PF mix across modes via mgainfact^exp"},
+    {"name": "CACAO_PF_DIFF_NMODE", "default": "0", "group": "Predictive Control",
+     "description": "Leading modes solved in temporal-difference EOF space (0=off)"},
+    {"name": "CACAO_PF_DIFF_ORDER", "default": "0", "group": "Predictive Control",
+     "description": "Difference-space EOF lookback tap order (0=diagorder, 2..64)"},
+    {"name": "CACAO_PF_DIFF_REG", "default": "0.05", "group": "Predictive Control",
+     "description": "Difference-space EOF relative Tikhonov lambda"},
+    {"name": "CACAO_PF_DIFF_MAXNORM2", "default": "4.0", "group": "Predictive Control",
+     "description": "Difference-space EOF position-equivalent ||W_m||_2^2 cap"},
+    {"name": "CACAO_PF_DIFF_MAXDCGAIN", "default": "0.9995", "group": "Predictive Control",
+     "description": "Difference-space EOF exact self-DC gain (0.9..0.99995)"},
     {"name": "CACAO_PF_MAXWAITUS", "default": "3000", "group": "Predictive Control",
      "description": "Maximum wait timeout [us] for applyPF synchronization with mfilt"},
     {"name": "CACAO_DYNPSOL_KERNEL", "default": "(unset)", "group": "Loop Control",
@@ -1204,10 +1546,46 @@ CACAOLOOP_ENV_VARS: list[dict[str, str]] = [
      "description": "Enable dark/bias pedestal subtraction in acquWFS (ON/OFF)"},
     {"name": "CACAO_WFS_NORMFLOOR", "default": "1.0", "group": "Timing & Latency",
      "description": "Minimum flux denominator floor in acquWFS intensity normalization (0.001 for faint stars)"},
+    {"name": "CACAO_SELFLEARN_ENABLE", "default": "0", "group": "Predictive Control",
+     "description": "Cascade cacaopc-selflearn (Global + Clustered libgric RLS) downstream of applyEOFPF (0/1)"},
+    {"name": "CACAO_SELFLEARN_MODES", "default": "128", "group": "Predictive Control",
+     "description": "Maximum modal dimension tweaked by cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_KMAX", "default": "16", "group": "Predictive Control",
+     "description": "Maximum libgric cluster anchors maintained by cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_KEYMODE", "default": "0", "group": "Predictive Control",
+     "description": "GRIC state key mode (0=TT2_E2, 1=E1, 2=WFS_LO4, 3=TT2_DM2_E2, 4=REGIME)"},
+    {"name": "CACAO_SELFLEARN_QSHARED", "default": "2", "group": "Predictive Control",
+     "description": "Shared low-order cross-mode feature count in cacaopc-selflearn (0..8)"},
+    {"name": "CACAO_SELFLEARN_RLIM", "default": "2.0", "group": "Predictive Control",
+     "description": "GRIC cluster spawn radius in standardized key space"},
+    {"name": "CACAO_SELFLEARN_MAX_WFS_GAIN", "default": "0.40", "group": "Predictive Control",
+     "description": "Physical stability cap on learned WFS optical-gain weight"},
+    {"name": "CACAO_SELFLEARN_LAM0", "default": "20.0", "group": "Predictive Control",
+     "description": "Level-0 global online RLS ridge regularization in cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_LAM1", "default": "200.0", "group": "Predictive Control",
+     "description": "Level-1 per-cluster RLS shrinkage ridge in cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_MAX_TWEAK", "default": "0.25", "group": "Predictive Control",
+     "description": "Hard per-mode absolute tweak clamp [modal units] in cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_NWARMUP", "default": "40", "group": "Predictive Control",
+     "description": "Per-cluster shrinkage warmup frame count in cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_KEYWARMUP", "default": "200", "group": "Predictive Control",
+     "description": "Key standardization warmup frame count in cacaopc-selflearn"},
+    {"name": "CACAO_SELFLEARN_NL_MODE", "default": "0", "group": "Predictive Control",
+     "description": "Nonlinear PyWFS basis (0=linear, 1=+odd sat/OG/TT, 2=+shared WFS xtalk)"},
     {"name": "CACAO_LOOPGAIN", "default": "0.35 / 0.35 / 0.20", "group": "Loop Control",
      "description": "Closed-loop modal integrator gain (stage 1 / 2 / 3)"},
     {"name": "CACAO_LOOPMULT", "default": "0.98 / 0.98 / 0.99", "group": "Loop Control",
      "description": "Closed-loop leaky integrator multiplier (stage 1 / 2 / 3)"},
+    {"name": "CACAO_LOOPMULT_TT", "default": "(unset)", "group": "Loop Control",
+     "description": "Optional Tip/Tilt (m=0,1) leaky integrator multiplier override"},
+    {"name": "CACAO_MMULT_FLOOR", "default": "(unset)", "group": "Loop Control",
+     "description": "Optional highest-mode leak multiplier floor for high-order rim stabilization"},
+    {"name": "CACAO_MMULT_ALPHA", "default": "1.0", "group": "Loop Control",
+     "description": "Power-law exponent shaping per-mode leak multiplier rolloff"},
+    {"name": "CACAO_DMMASK_RMAX", "default": "(unset)", "group": "Calibration",
+     "description": "Optional active DM mask outer radius [act] to slave unilluminated rim actuators"},
+    {"name": "CACAO_LOOPLIMIT_TT", "default": "2.5 (Stg1), unset (Stg2/3)", "group": "Loop Control",
+     "description": "Tip/Tilt (m=0,1) modal stroke limit [um] override on mlimitfact"},
     {"name": "CACAO_SVDLIM", "default": "0.004 / 0.004 / 0.02", "group": "Calibration",
      "description": "SVD singular-value cutoff threshold for control matrix inversion"},
     {"name": "CACAO_CPAMAX", "default": "28 / 22 / 4", "group": "Calibration",
@@ -1297,13 +1675,20 @@ def _clean_c_string_literal(raw: str) -> str:
     return "".join(parts).replace('\\"', '"').replace("\\n", " ").strip()
 
 
-def _clean_c_default_val(raw: str) -> str:
+def _clean_c_default_val(raw: str, fptype_raw: str = "") -> str:
     """Normalize a C static initializer literal for table display."""
     s = raw.strip()
     if s.startswith('"') and s.endswith('"'):
         return s[1:-1]
-    if re.fullmatch(r"-?[0-9]+(?:\.[0-9]*)?[fF]", s):
+    if fptype_raw == "FPTYPE_ONOFF":
+        if s in ("0", "0u", "0U", "false"):
+            return "OFF"
+        if s in ("1", "1u", "1U", "true"):
+            return "ON"
+    if re.fullmatch(r"-?[0-9]+(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?[fF]", s):
         s = s[:-1]
+    if re.fullmatch(r"-?[0-9]+[uUlL]+", s):
+        s = re.sub(r"[uUlL]+$", "", s)
     if s.endswith(".0") and len(s) > 2:
         return s
     return s
@@ -1368,6 +1753,100 @@ def _parse_atmturb_fps_c(path: Path) -> dict[str, object] | None:
         "anchor": make_fps_unit_anchor("milkatmturb", cmdkey),
         "params": params,
     }
+
+
+_CACAO_PREDICTIVE_FPS_FILES: tuple[tuple[str, str], ...] = (
+    ("AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_mkARPF.c", "mkARPF"),
+    ("AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_applyARPF.c", "applyARPF"),
+    ("AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_mkEOFPF.c", "mkEOFPF"),
+    ("AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_applyEOFPF.c", "applyEOFPF"),
+    ("AOloopControl_PredictiveControl/AOloopControl_PredictiveControl_selflearn.c", "selflearn"),
+    ("AOloopControl/modalfilter.c", "modalfilter"),
+    ("AOloopControl/modalwhite.c", "modalwhite"),
+)
+
+
+def _parse_cacao_fps_c(path: Path, unit_fallback: str) -> dict[str, object] | None:
+    """Parse one CACAO MILK_RUNNABLE C source file into a structured FPS unit dict."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    raw_defaults: dict[str, str] = {}
+    for m in _C_STATIC_VAR_DEFAULT_RE.finditer(text):
+        raw_defaults[m.group(1)] = m.group(2).strip()
+
+    unwrapped = text.replace("\\\n", "\n")
+
+    meta: dict[str, str] = {}
+    for m in _RUNNABLE_FIELD_RE.finditer(unwrapped):
+        meta[m.group(1)] = _clean_c_string_literal(m.group(2))
+    exp_m = _EXPORT_FPSEXEC_RE.search(unwrapped)
+    binary = f"{exp_m.group(1)}-fpsexec-{exp_m.group(2)}" if exp_m else ""
+    cmdkey = meta.get("cmdkey") or unit_fallback
+    fps_name = meta.get("fps_name") or unit_fallback
+    desc = meta.get("description") or f"cacao {cmdkey} compute unit"
+
+    params: list[dict[str, object]] = []
+    seen_kw: set[str] = set()
+    for m in _X_MACRO_ANY_CALL_RE.finditer(unwrapped):
+        kw = m.group(1).strip()
+        if kw in seen_kw:
+            continue
+        seen_kw.add(kw)
+        var_name = m.group(2).strip()
+        fptype_raw = m.group(3).strip()
+        is_primary = m.group(4).strip() == "1"
+        flags_raw = m.group(5).strip()
+        pdesc = _clean_c_string_literal(m.group(6))
+
+        writerun = "FPFLAG_WRITERUN" in flags_raw
+        is_output = "FPFLAG_DEFAULT_OUTPUT" in flags_raw or "FPFLAG_STATUS" in flags_raw
+        access = "output" if is_output else ("live" if writerun else "init")
+        raw_def = raw_defaults.get(var_name, "")
+        params.append(
+            {
+                "keyword": kw,
+                "type": _FPTYPE_MAP.get(fptype_raw, fptype_raw.lower()),
+                "default": _clean_c_default_val(raw_def, fptype_raw) if raw_def else "",
+                "access": access,
+                "writerun": writerun,
+                "primary": is_primary,
+                "trigger": "FPFLAG_STREAM_RUN_REQUIRED" in flags_raw
+                or "FPFLAG_DEFAULT_TRIGGER_STREAM" in flags_raw,
+                "description": pdesc,
+                "anchor": make_fps_opt_anchor("cacao", cmdkey, kw),
+            }
+        )
+
+    if not params:
+        return None
+    return {
+        "package": "cacao",
+        "unit": cmdkey,
+        "cmdkey": cmdkey,
+        "fps_name": fps_name,
+        "binary": binary or f"cacao-fpsexec-{cmdkey}",
+        "description": desc,
+        "anchor": make_fps_unit_anchor("cacao", cmdkey),
+        "params": params,
+    }
+
+
+def extract_cacao_predictive_fps_units() -> list[dict[str, object]]:
+    """Extract CACAO predictive-control, modalfilter, and modalwhite FPS units from C sources."""
+    src_parent = _REPO_ROOT.parent
+    cacao_root = Path(os.environ.get("CACAO_SRC_DIR", str(src_parent / "cacao")))
+    units: list[dict[str, object]] = []
+    if cacao_root.is_dir():
+        for rel_path, unit_fb in _CACAO_PREDICTIVE_FPS_FILES:
+            cpath = cacao_root / rel_path
+            if cpath.is_file():
+                parsed = _parse_cacao_fps_c(cpath, unit_fb)
+                if parsed is not None:
+                    units.append(parsed)
+    return units
 
 
 def extract_atmturb_fps_units() -> list[dict[str, object]]:
@@ -1549,6 +2028,7 @@ def build_options_catalog(public_dir: Path | None = None) -> dict[str, object]:
         fps_units.append(u)
 
     fps_units.extend(extract_atmturb_fps_units())
+    fps_units.extend(extract_cacao_predictive_fps_units())
 
     cacaosim_cli: list[dict[str, object]] = []
     for raw_c in raw_csim.get("cli_options") or []:
@@ -1591,6 +2071,7 @@ def build_options_catalog(public_dir: Path | None = None) -> dict[str, object]:
             "fps_params": sum(len(u.get("params") or []) for u in fps_units),
             "cacaosim_units": sum(1 for u in fps_units if u.get("package") == "cacaosim"),
             "atmturb_units": sum(1 for u in fps_units if u.get("package") == "milkatmturb"),
+            "cacao_units": sum(1 for u in fps_units if u.get("package") == "cacao"),
             "cacaosim_cli": len(cacaosim_cli),
             "runner_cli": len(runner_cli),
             "env_vars": len(env_vars),

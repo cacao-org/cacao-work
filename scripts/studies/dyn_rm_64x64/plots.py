@@ -631,12 +631,12 @@ def _solve_twosided_toeplitz_step(
     dt_s: float,
     lam: float = 3.0e-3,
     t_max_s: float = 0.014,
-) -> tuple[np.ndarray, float, float]:
+) -> tuple[np.ndarray, float, float, int, int]:
     """Invert fixed-exposure boxcar using BOTH time-domain boundaries (t<t_on: 0, t>=T_max: 1).
 
     Because a physical DM step response is zero before causal onset and settles to 1.0 after
     T_max, the tall rectangular Toeplitz boxcar operator B has strictly zero null space even
-    at f = k / T_exp (finite condition number kappa(B) ~ 27-40 instead of infinity).
+    at f = k / T_exp (finite condition number instead of infinity).
     """
     l_obs = len(y_step)
     n_on = int(np.argmax(y_step >= 0.02)) if np.any(y_step >= 0.02) else 0
@@ -675,7 +675,7 @@ def _solve_twosided_toeplitz_step(
 
     s_full = np.concatenate([np.zeros(n_on), s_act, np.ones(l_obs - n_end)])
     fit_rms_pct = 100.0 * float(np.sqrt(np.mean((b_mat @ s_act + c_tail - y_step) ** 2)))
-    return s_full, cond_b, fit_rms_pct
+    return s_full, cond_b, fit_rms_pct, l_obs, l_act
 
 
 def render_exposure_deconv_1x2(
@@ -703,8 +703,10 @@ def render_exposure_deconv_1x2(
     y_step_m3 = r3_z4[:, 3, :] @ w_m3
 
     # 1. Two-sided finite-support Toeplitz solver (strict zero before onset & unity after 14 ms)
-    s_toep_m0, cond_b, fit_m0_pct = _solve_twosided_toeplitz_step(y_step_m0[q0:], n_sub, dt_s)
-    s_toep_m3, _, fit_m3_pct = _solve_twosided_toeplitz_step(y_step_m3[q0:], n_sub, dt_s)
+    s_toep_m0, cond_b, fit_m0_pct, l_obs, l_act = _solve_twosided_toeplitz_step(
+        y_step_m0[q0:], n_sub, dt_s
+    )
+    s_toep_m3, _, fit_m3_pct, _, _ = _solve_twosided_toeplitz_step(y_step_m3[q0:], n_sub, dt_s)
     h_toep_m0 = np.diff(s_toep_m0, prepend=0.0)
     h_toep_m3 = np.diff(s_toep_m3, prepend=0.0)
 
@@ -750,7 +752,7 @@ def render_exposure_deconv_1x2(
     dec_ov_m3 = (float(np.max(s_toep_m3)) - 1.0) * 100.0
 
     # Align physical step time axis: causal boxcar averages [t - T_exp + dt, t], so sample n
-    # corresponds to physical time (n + 0.5)*dt (starting right at causal onset ~1.25 ms).
+    # corresponds to physical time (n + 0.5)*dt (starting right at causal onset ~1.1 ms).
     t_phys_ms = t_post_ms
 
     fig, axes = plt.subplots(1, 2, figsize=(14.0, 5.4), constrained_layout=True)
@@ -758,13 +760,15 @@ def render_exposure_deconv_1x2(
     # Left panel: Frequency transfer functions showing 1 kHz recovery via two-sided Toeplitz
     ax = axes[0]
     sinc_mag = np.abs(np.sinc(freqs * t_exp_s))
+    null_freqs = [f for f in (1000.0, 2000.0, 3000.0) if f < nyq_hz * 0.95]
+    null_lbl = ", ".join(f"{int(f // 1000)}" for f in null_freqs)
     ax.plot(
         freqs,
         sinc_mag,
         color="#94a3b8",
         ls=":",
         lw=1.6,
-        label="|sinc(f · 1 ms)| boxcar (null at 1 kHz)",
+        label=f"|sinc(f · 1 ms)| boxcar (null{'s' if len(null_freqs) > 1 else ''} at {null_lbl} kHz)",
     )
     ax.plot(
         freqs,
@@ -782,7 +786,7 @@ def render_exposure_deconv_1x2(
         ls="-.",
         lw=1.5,
         alpha=0.85,
-        label="Naive periodic FFT Wiener — (22,23) (null notch)",
+        label="Naive periodic FFT Wiener — (22,23) (null notches)",
     )
     ax.plot(
         freqs,
@@ -798,14 +802,15 @@ def render_exposure_deconv_1x2(
         lw=2.1,
         label=f"Two-sided Toeplitz |H_phys(f)| — Rim (57,31) (1 kHz: {h1k_toep_m3:.2f})",
     )
-    ax.axvline(1000.0, color="#be123c", ls=":", lw=1.3)
+    for nf in null_freqs:
+        ax.axvline(nf, color="#be123c" if nf == 1000.0 else "#94a3b8", ls=":", lw=1.3 if nf == 1000.0 else 0.9)
     ax.set_xlim(0.0, nyq_hz * 0.98)
     ax.set_ylim(0.0, max(2.75, float(max(mag_toep_m0.max(), mag_toep_m3.max())) * 1.32))
     ax.set_xlabel("Temporal frequency f [Hz]")
     ax.set_ylabel("Normalized transfer magnitude |H(f)|")
-    ax.set_title(f"(a) Recovering f₀ = 1 kHz Across Camera Null ({eff_khz:.0f} kHz Grid)")
+    ax.set_title(f"(a) Recovering f₀ = 1 kHz Across Camera Nulls ({eff_khz:.0f} kHz Grid)")
     ax.grid(True)
-    ax.legend(loc="upper left", frameon=True, facecolor="white", fontsize=8.3)
+    ax.legend(loc="upper right", frameon=True, facecolor="white", fontsize=8.3)
 
     # Right panel: Raw 1 ms step vs FFT Wiener vs Two-sided finite-support Toeplitz physical step
     ax = axes[1]
@@ -855,6 +860,8 @@ def render_exposure_deconv_1x2(
     fig.savefig(out_path, dpi=165)
     plt.close(fig)
     return out_path, {
+        "toeplitz_rows": int(l_obs),
+        "toeplitz_cols": int(l_act),
         "toeplitz_cond_b": cond_b,
         "toeplitz_fit_rms_m0_pct": fit_m0_pct,
         "toeplitz_fit_rms_m3_pct": fit_m3_pct,

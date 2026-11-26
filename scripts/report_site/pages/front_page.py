@@ -39,6 +39,8 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         + "</div>\n"
         '<div class="hero-actions">'
         '<a class="btn" href="./simulations/index.html">Browse All Simulations &rarr;</a>'
+        '<a class="btn btn-secondary" href="./predictive-control/index.html">Predictive Control Guide</a>'
+        '<a class="btn btn-secondary" href="./turbulence/index.html">Turbulence &amp; Perturbation Model</a>'
         '<a class="btn btn-secondary" href="./algorithms/index.html">Algorithms &amp; Matrix</a>'
         '<a class="btn btn-secondary" href="./reference/index.html">Options Reference</a>'
         '<a class="btn btn-secondary" href="./stack/index.html">Stack &amp; Reproduction Guide</a>'
@@ -199,6 +201,18 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         f"<p>Filter, compare, and inspect all {len(run_metas)} closed-loop runs with "
         "parameter diffs, optical Strehl/contrast charts, and runtime explorers.</p></div>"
         '<span class="subpage-cta">Open Simulation Catalog &rarr;</span></a>'
+        '<a class="subpage-card" href="./predictive-control/index.html">'
+        '<div><h3>CACAO Predictive Control Guide</h3>'
+        "<p>Practical human-readable guide to Diagonal AR(P), Cross-Mode Block-EOF (with "
+        "ZOH ridge, wind priors, regime memory, FX &amp; multi-rate), and Cascaded Self-Learning "
+        "(Global RLS + libgric): physics motivation, setup steps, presets &amp; troubleshooting.</p></div>"
+        '<span class="subpage-cta">Open Predictive Control Guide &rarr;</span></a>'
+        '<a class="subpage-card" href="./turbulence/index.html">'
+        '<div><h3>Default Turbulence &amp; Perturbation Model</h3>'
+        "<p>7-layer Maunakea von Karman atmosphere (0.80&quot; seeing), non-stationary "
+        "wind meandering &amp; gust bursts, 45 nm vibrations, and 500 nm Subaru V-spider "
+        "thermal petaling (LWE) with interactive visuals &amp; scaling calculator.</p></div>"
+        '<span class="subpage-cta">Open Turbulence Model &rarr;</span></a>'
         '<a class="subpage-card" href="./algorithms/index.html">'
         '<div><h3>Algorithms &amp; Dependency Matrix</h3>'
         "<p>Color-coded catalog and 2D matrix distinguishing Offline Calibration, Online "
@@ -206,10 +220,11 @@ def build_front_page_html(hierarchy: dict[str, object]) -> str:
         "dedicated webpage per entry.</p></div>"
         '<span class="subpage-cta">Open Algorithms Matrix &rarr;</span></a>'
         '<a class="subpage-card" href="./reference/index.html">'
-        '<div><h3>Simulator Options Reference</h3>'
+        '<div><h3>Simulator &amp; CACAO Options Reference</h3>'
         "<p>Searchable tables for every <code>.bench</code> optical element key, "
-        "all 17 <code>cacaosim</code> &amp; <code>milkatmturb</code> FPS compute units, "
-        "runner CLI flags, and <code>CACAO_*</code> environment variables.</p></div>"
+        "all <code>cacaosim</code>, <code>milkatmturb</code> &amp; <code>cacao</code> "
+        "predictive-control FPS compute units, runner CLI flags, and "
+        "<code>CACAO_*</code> environment variables.</p></div>"
         '<span class="subpage-cta">Open Options Reference &rarr;</span></a>'
         '<a class="subpage-card" href="./stack/index.html">'
         '<div><h3>Open-Source Stack &amp; Reproduction</h3>'

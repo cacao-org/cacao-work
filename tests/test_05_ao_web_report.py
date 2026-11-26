@@ -561,6 +561,157 @@ def test_cacaosim_telemetry_video_renderer(
     assert vmeta["n_frames"] >= 10
     assert vmeta["oversample"] == 4
 
+    # Verify Incoming WF, DM1/DM2 shapes, and Residual WF row when wf_clip_* cubes are present.
+    pup = np.ones((32, 32), dtype=np.float32)
+    fits.writeto(tlm_dir / "csim_pup.fits", pup, overwrite=True)
+    wf_raw = (800.0 * rng.standard_normal((20, 32, 32))).astype(np.float32)
+    dm1_opd = (780.0 * rng.standard_normal((20, 32, 32))).astype(np.float32)
+    dm2_opd = (120.0 * rng.standard_normal((20, 32, 32))).astype(np.float32)
+    wf_fin = (wf_raw - dm1_opd - dm2_opd).astype(np.float32)
+    fits.writeto(tlm_dir / "wf_clip_raw.fits", wf_raw, overwrite=True)
+    fits.writeto(tlm_dir / "wf_clip_final.fits", wf_fin, overwrite=True)
+    fits.writeto(tlm_dir / "dm_clip_opd_stg1.fits", dm1_opd, overwrite=True)
+    fits.writeto(tlm_dir / "dm_clip_opd_stg2.fits", dm2_opd, overwrite=True)
+    (tlm_dir / "wf_clip_meta.json").write_text(
+        json.dumps(
+            {
+                "n_frames": 20,
+                "nwf": 32,
+                "dt_phys_s": 0.0005,
+                "clip_start_frame": 1,
+                "has_dm1_opd": True,
+                "has_dm2_opd": True,
+                "frames": list(range(1, 21)),
+                "wfs2_cnt0": [100 + k for k in range(20)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    out_mp4_4r = rep_dir / "wfs_psf_short_evolution_4row.mp4"
+    meta_out_4r = rep_dir / "wfs_psf_short_evolution_4row_meta.json"
+    res2 = subprocess.run(
+        [
+            "cacaosim-telemetry-video",
+            "--telemetry-dir",
+            str(tlm_dir),
+            "--report-dir",
+            str(rep_dir),
+            "--out",
+            str(out_mp4_4r),
+            "--meta-out",
+            str(meta_out_4r),
+            "--duration-ms",
+            "8.0",
+            "--fps",
+            "10",
+        ],
+        env=stack_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res2.returncode == 0, res2.stderr + res2.stdout
+    vmeta2 = json.loads(meta_out_4r.read_text(encoding="utf-8"))
+    assert vmeta2["has_wf_dm_row"] is True
+    assert vmeta2["has_residual_wf"] is True
+    assert vmeta2["wf_in_source"] == "wf_clip"
+    assert vmeta2["dm1_source"] == "dm_clip"
+    assert vmeta2["dm2_source"] == "dm_clip"
+    assert vmeta2["height_px"] == 1280
+
+    # Verify 5-panel Row 0 (Incoming WF + PSOL + Diff + DM1 + DM2) when aol1_modevalOL exists.
+    calib1_dir = tlm_dir / "calib_stg1"
+    calib1_dir.mkdir(parents=True, exist_ok=True)
+    cm1 = (0.05 * rng.standard_normal((4, 8, 8))).astype(np.float32)
+    fits.writeto(calib1_dir / "CMmodesDM.fits", cm1, overwrite=True)
+    write_stream("aol1_modevalOL", 10, 4, 1, 0.0, 1.0)
+    out_mp4_5p = rep_dir / "wfs_psf_short_evolution_5panel.mp4"
+    meta_out_5p = rep_dir / "wfs_psf_short_evolution_5panel_meta.json"
+    res3 = subprocess.run(
+        [
+            "cacaosim-telemetry-video",
+            "--telemetry-dir",
+            str(tlm_dir),
+            "--report-dir",
+            str(rep_dir),
+            "--out",
+            str(out_mp4_5p),
+            "--meta-out",
+            str(meta_out_5p),
+            "--duration-ms",
+            "8.0",
+            "--fps",
+            "10",
+        ],
+        env=stack_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res3.returncode == 0, res3.stderr + res3.stdout
+    vmeta3 = json.loads(meta_out_5p.read_text(encoding="utf-8"))
+    assert vmeta3["has_wf_dm_row"] is True
+    assert vmeta3["wf_dm_panel_count"] == 5
+    assert vmeta3["wf_in_source"] == "wf_clip"
+    assert vmeta3["psol_source"] == "aol1_modevalOL"
+    assert vmeta3["has_psol_wf"] is True
+    assert vmeta3["has_wf_psol_diff"] is True
+    assert vmeta3["width_px"] == 1760
+    assert vmeta3["height_px"] == 1240
+    assert "wf_psol_diff_rms_mean_nm" in vmeta3
+
+    # Verify full-duration real-time mode (--realtime) with wf_full_* cubes.
+    fits.writeto(tlm_dir / "wf_full_raw.fits", wf_raw[::4], overwrite=True)
+    fits.writeto(tlm_dir / "wf_full_final.fits", wf_fin[::4], overwrite=True)
+    fits.writeto(tlm_dir / "dm_full_opd_stg1.fits", dm1_opd[::4], overwrite=True)
+    fits.writeto(tlm_dir / "dm_full_opd_stg2.fits", dm2_opd[::4], overwrite=True)
+    (tlm_dir / "wf_full_meta.json").write_text(
+        json.dumps(
+            {
+                "n_frames": 5,
+                "nwf": 32,
+                "dt_phys_s": 0.0005,
+                "full_step_frames": 4.0,
+                "has_dm1_opd": True,
+                "has_dm2_opd": True,
+                "frames": [1, 5, 9, 13, 17],
+                "wfs2_cnt0": [100, 104, 108, 112, 116],
+            }
+        ),
+        encoding="utf-8",
+    )
+    out_mp4_rt = rep_dir / "wfs_psf_full_evolution.mp4"
+    meta_out_rt = rep_dir / "wfs_psf_full_evolution_meta.json"
+    res4 = subprocess.run(
+        [
+            "cacaosim-telemetry-video",
+            "--telemetry-dir",
+            str(tlm_dir),
+            "--report-dir",
+            str(rep_dir),
+            "--out",
+            str(out_mp4_rt),
+            "--meta-out",
+            str(meta_out_rt),
+            "--realtime",
+            "--fps",
+            "10",
+        ],
+        env=stack_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res4.returncode == 0, res4.stderr + res4.stdout
+    vmeta4 = json.loads(meta_out_rt.read_text(encoding="utf-8"))
+    assert vmeta4["playback_mode"] == "realtime"
+    assert vmeta4["wf_dm_panel_count"] == 5
+    assert vmeta4["wf_in_source"] == "wf_full"
+    assert vmeta4["dm1_source"] == "dm_full"
+    assert vmeta4["has_wf_psol_diff"] is True
+    assert vmeta4["width_px"] == 1760
+    assert vmeta4["height_px"] == 1240
+
 
 def test_all_matrix_imshow_use_lower_origin(repo_root: Path) -> None:
     """Verify report plotters never use origin='upper' and always use origin='lower'."""
@@ -992,8 +1143,20 @@ def test_eof_pf_extractor_and_optical_page(
     assert (slug_out / "eof_pf_data.js").is_file()
     opt_html = (slug_out / "optical.html").read_text(encoding="utf-8")
     assert 'id="eof-pf-panel"' in opt_html
+    assert 'id="eof-pf-vis-grid"' in opt_html
+    assert 'id="eof-pf-slice-canvas"' in opt_html
+    assert 'id="eof-pf-slice-pill"' in opt_html
+    assert 'id="eof-pf-slice-autoscale"' in opt_html
+    assert 'id="eof-pf-lag-prev"' in opt_html
+    assert 'id="eof-pf-lag-next"' in opt_html
+    assert "&amp;middot;" not in opt_html
     assert "eof_pf_viewer.js" in opt_html
     assert 'src="eof_pf_data.js"' in opt_html
+    viewer_js = (site_dir / "public" / "assets" / "js" / "eof_pf_viewer.js").read_text(
+        encoding="utf-8"
+    )
+    assert "renderSelectedSlice2D" in viewer_js
+    assert "eof-pf-slice-canvas" in viewer_js
 
     ar_dir = tmp_path / "ar_synth"
     ar_dir.mkdir(parents=True)
@@ -1646,3 +1809,961 @@ def test_options_reference_config_and_run_options_tracking(
                 continue
             resolved = (html_file.parent / target).resolve()
             assert resolved.exists(), f"Broken link {raw_href!r} in {html_file}"
+
+
+def test_simulations_ordered_by_date_with_date_column(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify simulations default to newest-first date ordering with a Sim Date (UTC) column."""
+    import re
+
+    site_dir = tmp_path / "web_site"
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+
+    # 1. Oldest run: baseline (LLOWFS open), timestamp from wf_stats.json mtime (2026-11-18 17:58)
+    #    even though ao3k_scexao_metrics.json was replotted later (2026-11-22 10:00).
+    r_old = tmp_path / "sim_baseline_old"
+    _create_synthetic_report(r_old)
+    (r_old / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(
+            {
+                "star_and_atmosphere": {"seeing_arcsec_500nm": 0.60, "physical_time_s": 5.0},
+                "coronagraph_metrics": {"llowfs": {"enabled_closed_loop": False}},
+                "psf_metrics": {
+                    "vis": {"final": {"strehl_peak": 0.72}},
+                    "nir": {"final": {"strehl_peak": 0.91}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wf_old = r_old / "wf_stats.json"
+    wf_old.write_text('{"n_frames": 100}\n', encoding="utf-8")
+    os.utime(wf_old, (1795024710, 1795024710))  # 2026-11-18 17:58:30 UTC
+    os.utime(r_old / "ao3k_scexao_metrics.json", (1795341600, 1795341600))  # 2026-11-22 10:00 UTC
+
+    # 2. Middle run: predictive AR(8), timestamp from wf_stats.json mtime (2026-11-19 08:30).
+    r_mid = tmp_path / "sim_pred_mid"
+    _create_synthetic_report(r_mid)
+    (r_mid / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(
+            {
+                "star_and_atmosphere": {"seeing_arcsec_500nm": 0.60, "physical_time_s": 5.0},
+                "coronagraph_metrics": {"llowfs": {"enabled_closed_loop": True}},
+                "predictive_control": {"enabled": True, "pf_mode": "ar", "pf_order": 8},
+                "psf_metrics": {
+                    "vis": {"final": {"strehl_peak": 0.80}},
+                    "nir": {"final": {"strehl_peak": 0.95}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wf_mid = r_mid / "wf_stats.json"
+    wf_mid.write_text('{"n_frames": 100}\n', encoding="utf-8")
+    os.utime(wf_mid, (1795077000, 1795077000))  # 2026-11-19 08:30:00 UTC
+
+    # 3. Newest run: explicit simulation_utc in run_options.json (2026-11-24 21:46:28 UTC)
+    #    overrides older wf_stats.json mtime.
+    r_new = tmp_path / "sim_latest_eof"
+    _create_synthetic_report(r_new)
+    (r_new / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(
+            {
+                "star_and_atmosphere": {"seeing_arcsec_500nm": 0.80, "physical_time_s": 10.0},
+                "coronagraph_metrics": {"llowfs": {"enabled_closed_loop": True}},
+                "predictive_control": {
+                    "enabled": True,
+                    "pf_mode": "eof",
+                    "pf_blocksize": 32,
+                    "pf_order": 32,
+                },
+                "calib_2wfs1dm": {"enabled": True},
+                "psf_metrics": {
+                    "vis": {"final": {"strehl_peak": 0.68}},
+                    "nir": {"final": {"strehl_peak": 0.92}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wf_new = r_new / "wf_stats.json"
+    wf_new.write_text('{"n_frames": 100}\n', encoding="utf-8")
+    os.utime(wf_new, (1794900000, 1794900000))  # intentionally older mtime
+    (r_new / "run_options.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "runner": "sim-ao3k-scexao.milk",
+                "simulation_utc": "2026-11-24T21:46:28Z",
+                "options": {"seeing": 0.8, "phys_time": 10.0, "wfs2_mod_rad": 3.0},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Stage in non-chronological order to ensure sorting is driven strictly by simulation date.
+    for rdir, slug in (
+        (r_mid, "sim_pred_mid"),
+        (r_old, "sim_baseline_old"),
+        (r_new, "sim_latest_eof"),
+    ):
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(rdir),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+
+    pub = site_dir / "public"
+    sims_html = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert '<th class="sort-desc" style="text-align: left;">Sim Date (UTC)</th>' in sims_html
+    assert 'data-sort-val="2026-11-24T21:46:28Z"' in sims_html
+    assert "<code>2026-11-24 21:46</code>" in sims_html
+    assert 'data-sort-val="2026-11-19T08:30:00Z"' in sims_html
+    assert "<code>2026-11-19 08:30</code>" in sims_html
+    assert 'data-sort-val="2026-11-18T17:58:30Z"' in sims_html
+    assert "<code>2026-11-18 17:58</code>" in sims_html
+
+    row_slugs = re.findall(r'class="sim-cmp-cb" value="([^"]+)"', sims_html)
+    assert row_slugs == ["sim_latest_eof", "sim_pred_mid", "sim_baseline_old"]
+
+    # Verify report_meta.json persisted simulation_utc and did not use replotted metrics mtime.
+    old_meta = json.loads((pub / "sim_baseline_old" / "report_meta.json").read_text("utf-8"))
+    assert old_meta["simulation_utc"] == "2026-11-18 17:58 UTC"
+    assert old_meta["simulation_iso"] == "2026-11-18T17:58:30Z"
+
+    # Verify legacy report_meta.json without simulation_utc still backfills cleanly on index build.
+    legacy_meta_p = pub / "sim_pred_mid" / "report_meta.json"
+    legacy_meta = json.loads(legacy_meta_p.read_text("utf-8"))
+    for k in ("simulation_utc", "simulation_iso", "simulation_epoch"):
+        legacy_meta.pop(k, None)
+    legacy_meta_p.write_text(json.dumps(legacy_meta, indent=2) + "\n", encoding="utf-8")
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from report_site.builder import write_root_indices_and_firebase
+
+    write_root_indices_and_firebase(site_dir, None, None)
+    sims_html_2 = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
+    row_slugs_2 = re.findall(r'class="sim-cmp-cb" value="([^"]+)"', sims_html_2)
+    assert row_slugs_2 == ["sim_latest_eof", "sim_pred_mid", "sim_baseline_old"]
+    assert "<code>2026-11-19 08:30</code>" in sims_html_2
+
+    # Verify common.js guards ISO date strings from numeric year-only parsing and reads data-sort-val.
+    common_js = (pub / "assets" / "js" / "common.js").read_text(encoding="utf-8")
+    assert r"/^\d{4}-\d{2}-\d{2}/.test(s)" in common_js
+    assert 'getAttribute("data-sort-val")' in common_js
+
+
+def test_optical_explorer_wfe_ctrl_mode_breakdown(tmp_path: Path) -> None:
+    """Verify WFE Time Series extracts both exact per-frame and snapshot-calibrated modal splits."""
+    import sys as _sys
+
+    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+    from report_site.extractors.optical import extract_optical_explorer_data
+    from report_site.builder import build_site
+
+    # Case 1: exact per-frame 11-column wf_timeseries.csv
+    d_exact = tmp_path / "exact_sim"
+    _create_synthetic_report(d_exact)
+    (d_exact / "wf_timeseries.csv").write_text(
+        "frame,t_phys_s,rms_raw_nm,rms_stg1_nm,rms_final_nm,"
+        "rms_raw_in_nm,rms_raw_out_nm,rms_stg1_in_nm,rms_stg1_out_nm,"
+        "rms_final_in_nm,rms_final_out_nm\n"
+        "1,0.0005,1000.0,100.0,50.0,998.9,46.0,60.0,80.0,30.0,40.0\n"
+        "2,0.0010,1010.0,95.0,48.0,1008.9,47.0,55.0,77.5,28.0,39.0\n",
+        encoding="utf-8",
+    )
+    (d_exact / "wf_stats.json").write_text(
+        json.dumps(
+            {
+                "control_modes": {
+                    "stg1_cm_modes": 340,
+                    "stg2_cm_modes": 1059,
+                    "stg1_basis_rank": 340,
+                    "final_basis_rank": 1059,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    site_dir = tmp_path / "_site"
+    build_site(d_exact, site_dir, "exact_sim")
+    opt_html = (site_dir / "public" / "exact_sim" / "optical.html").read_text(encoding="utf-8")
+    assert 'id="opt-legend"' in opt_html
+    assert '"rms_stg1_in_nm":[60.0,55.0]' in opt_html
+    assert '"rms_stg1_out_nm":[80.0,77.5]' in opt_html
+    assert '"source":"exact_per_frame"' in opt_html
+    assert '"stg1_modes":340' in opt_html
+    js_src = (site_dir / "public" / "assets" / "js" / "optical_explorer.js").read_text(
+        encoding="utf-8"
+    )
+    assert "Within Ctrl Modes" in js_src
+    assert "Outside Ctrl Modes" in js_src
+
+    # Case 2: legacy 5-column wf_timeseries.csv + wf_ctrl_breakdown.json snapshot calibration
+    d_snap = tmp_path / "snap_sim"
+    _create_synthetic_report(d_snap)
+    (d_snap / "wf_timeseries.csv").write_text(
+        "frame,t_phys_s,rms_raw_nm,rms_stg1_nm,rms_final_nm\n"
+        "1,1.0,1000.0,100.0,50.0\n"
+        "2,3.0,900.0,90.0,50.0\n",
+        encoding="utf-8",
+    )
+    (d_snap / "wf_ctrl_breakdown.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source": "snapshot_calibrated",
+                "stg1_cm_modes": 340,
+                "stg2_cm_modes": 1059,
+                "stg1_basis_rank": 340,
+                "final_basis_rank": 1069,
+                "planes": {
+                    "raw": {"out_rms_nm": 45.0, "samples": [{"t_phys_s": 1.0, "out_nm": 45.0}]},
+                    "stg1": {
+                        "out_rms_nm": 80.0,
+                        "samples": [
+                            {"t_phys_s": 1.0, "out_nm": 80.0},
+                            {"t_phys_s": 3.0, "out_nm": 72.0},
+                        ],
+                    },
+                    "final": {"out_rms_nm": 40.0, "samples": [{"t_phys_s": 1.0, "out_nm": 40.0}]},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ex = extract_optical_explorer_data(d_snap, {})
+    wf = ex["wf_timeseries"]
+    assert wf["ctrl_meta"]["source"] == "snapshot_calibrated"
+    assert abs(wf["rms_stg1_in_nm"][0] - 60.0) < 1e-3
+    assert abs(wf["rms_stg1_out_nm"][0] - 80.0) < 1e-3
+    assert abs(wf["rms_stg1_in_nm"][1] - 54.0) < 1e-3
+    assert abs(wf["rms_final_in_nm"][0] - 30.0) < 1e-3
+    assert abs(wf["rms_final_out_nm"][0] - 40.0) < 1e-3
+
+
+def test_default_turbulence_model_page_and_per_sim_diffs(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify /turbulence/index.html, visuals, and per-sim diff linking across all regimes."""
+    from html.parser import HTMLParser
+
+    site_dir = tmp_path / "web_site"
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+
+    # 1. Exact default model run (0.80" seeing, 500 nm thermal petaling, all perturbations ON)
+    r_def = tmp_path / "sim_turb_default"
+    _create_synthetic_report(r_def)
+    (r_def / "perturb_summary_2x2.png").write_bytes(TINY_PNG)
+    (r_def / "run_options.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "options": {
+                    "seeing": 0.8,
+                    "wind_var": 1,
+                    "wind_var_scale": 1.0,
+                    "wind_burst": 1,
+                    "wind_burst_scale": 1.0,
+                    "vib_enable": 1,
+                    "vib_rms_nm": 45.0,
+                    "petal_enable": 1,
+                    "petal_rms_nm": 1000.0,
+                    "petal_tau_s": 3.0,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    def_metrics = json.loads((r_def / "ao3k_scexao_metrics.json").read_text(encoding="utf-8"))
+    def_metrics["star_and_atmosphere"]["seeing_arcsec_500nm"] = 0.80
+    def_metrics["timeseries_metrics"] = {
+        "perturbations": {
+            "wind_active": True,
+            "burst_active": True,
+            "vib_active": True,
+            "petal_active": True,
+            "wind_scale_min": 0.79,
+            "wind_scale_mean": 1.06,
+            "wind_scale_max": 1.88,
+            "wind_deg_min": -18.5,
+            "wind_deg_max": 21.0,
+            "burst_peak": 0.96,
+            "burst_frac_pct": 29.0,
+            "cn2_scale_max": 1.28,
+            "vib_rms_nm_quad": 44.6,
+            "petal_rms_nm_mean": 964.0,
+            "petal_ptv_nm_max": 3240.0,
+        }
+    }
+    (r_def / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(def_metrics) + "\n", encoding="utf-8"
+    )
+
+    # 2. Custom run: seeing 0.60" (0.75x), wind speed 2x, petaling OFF, vib 90 nm, wind switch
+    r_cust = tmp_path / "sim_turb_custom"
+    _create_synthetic_report(r_cust)
+    cust_metrics = json.loads((r_cust / "ao3k_scexao_metrics.json").read_text(encoding="utf-8"))
+    cust_metrics["star_and_atmosphere"]["seeing_arcsec_500nm"] = 0.60
+    (r_cust / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(cust_metrics) + "\n", encoding="utf-8"
+    )
+    (r_cust / "run_options.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "options": {
+                    "seeing": 0.6,
+                    "wind_speed_scale": 2.0,
+                    "wind_var": 1,
+                    "wind_var_scale": 1.0,
+                    "wind_burst": 1,
+                    "wind_burst_scale": 1.0,
+                    "vib_enable": 1,
+                    "vib_rms_nm": 90.0,
+                    "petal_enable": 0,
+                    "petal_rms_nm": 1000.0,
+                    "petal_tau_s": 3.0,
+                    "wind_switch_sec": 5.0,
+                    "wind_switch_deg": 45.0,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # 3. Half-petaling run (0.80" default seeing, 500 nm = 0.50x default petaling)
+    r_half = tmp_path / "sim_turb_half_petal"
+    _create_synthetic_report(r_half)
+    half_metrics = json.loads((r_half / "ao3k_scexao_metrics.json").read_text(encoding="utf-8"))
+    half_metrics["star_and_atmosphere"]["seeing_arcsec_500nm"] = 0.80
+    (r_half / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(half_metrics) + "\n", encoding="utf-8"
+    )
+    (r_half / "run_options.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "options": {
+                    "seeing": 0.8,
+                    "wind_var": 1,
+                    "wind_var_scale": 1.0,
+                    "wind_burst": 1,
+                    "wind_burst_scale": 1.0,
+                    "vib_enable": 1,
+                    "vib_rms_nm": 45.0,
+                    "petal_enable": 1,
+                    "petal_rms_nm": 500.0,
+                    "petal_tau_s": 3.0,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # 4. Legacy stationary run (no perturbation keys, no perturb_timeseries.csv)
+    r_leg = tmp_path / "sim_turb_legacy"
+    _create_synthetic_report(r_leg)
+
+    for rdir, slug in (
+        (r_def, "sim_turb_default"),
+        (r_cust, "sim_turb_custom"),
+        (r_half, "sim_turb_half_petal"),
+        (r_leg, "sim_turb_legacy"),
+    ):
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(rdir),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+
+    pub = site_dir / "public"
+    turb_dir = pub / "turbulence"
+    turb_html = (turb_dir / "index.html").read_text(encoding="utf-8")
+
+    # Dedicated turbulence page has all 5 visuals, sections, calculator, and simulation usage table
+    expected_pngs = (
+        "turb_profile_and_spectrum_2x2.png",
+        "turb_wavefront_phase_screens_2x2.png",
+        "turb_wind_dynamics_2x2.png",
+        "turb_vibrations_2x2.png",
+        "turb_petaling_lwe_2x2.png",
+    )
+    for png in expected_pngs:
+        assert (turb_dir / png).is_file(), f"Missing staged visual {png}"
+        assert f'src="{png}"' in turb_html
+    for sec_id in (
+        "parameter-calculator",
+        "atmosphere-profile",
+        "wind-dynamics",
+        "vibrations-model",
+        "petaling-model",
+        "cli-overrides",
+        "simulations-using-model",
+    ):
+        assert f'id="{sec_id}"' in turb_html
+    assert "turbulence_explorer.js" in turb_html
+    assert 'id="turb-model-data"' in turb_html
+    assert "10.73 cm" in turb_html
+    assert "45.0 nm" in turb_html
+    assert "1000.0 nm" in turb_html
+    assert "sim_turb_default" in turb_html
+    assert "sim_turb_custom" in turb_html
+    assert "sim_turb_half_petal" in turb_html
+    assert "sim_turb_legacy" in turb_html
+
+    # Search index includes /turbulence/index.html and sub-sections
+    search_js = (pub / "assets" / "js" / "search-index.js").read_text(encoding="utf-8")
+    assert "turbulence/index.html" in search_js
+    assert "turbulence/index.html#petaling-model" in search_js
+    assert "turbulence/index.html#vibrations-model" in search_js
+
+    # Default run links to /turbulence/index.html and reports default match + realized telemetry
+    for page in ("index.html", "config.html", "optical.html", "how_to_run.html"):
+        txt = (pub / "sim_turb_default" / page).read_text(encoding="utf-8")
+        assert "../turbulence/index.html" in txt
+        assert "Matches Default Model" in txt
+    def_ov = (pub / "sim_turb_default" / "index.html").read_text(encoding="utf-8")
+    assert "Realized Vib 44.6 nm RMS" in def_ov
+    assert "Realized Petaling 964 nm mean" in def_ov
+    assert 'href="perturb_summary_2x2.png"' in def_ov
+
+    # Custom run clearly explains every changed parameter across Overview, Config, and Optical
+    for page in ("index.html", "config.html", "optical.html"):
+        txt = (pub / "sim_turb_custom" / page).read_text(encoding="utf-8")
+        assert "../turbulence/index.html" in txt
+        assert "Modified from Default" in txt
+        assert "0.75x default" in txt
+        assert "2x default" in txt
+        assert "Additional thermally induced island petaling / LWE turned OFF" in txt
+        assert "90.0 nm" in txt
+        assert "+45 deg" in txt
+
+    # Half-petaling run clearly explains 500 nm = 0.50x default vs 1000 nm
+    half_ov = (pub / "sim_turb_half_petal" / "index.html").read_text(encoding="utf-8")
+    assert "Modified from Default (1 change)" in half_ov
+    assert "0.50x default" in half_ov
+    assert "vs default 1000 nm" in half_ov
+
+    # Legacy run explicitly notes stationary frozen-flow with perturbations OFF
+    leg_ov = (pub / "sim_turb_legacy" / "index.html").read_text(encoding="utf-8")
+    assert "../turbulence/index.html" in leg_ov
+    assert "Stationary Frozen-Flow" in leg_ov
+    assert "turned OFF" in leg_ov
+
+    # Simulations catalog & Front page both link to /turbulence/index.html with status pills
+    front_html = (pub / "index.html").read_text(encoding="utf-8")
+    assert "./turbulence/index.html" in front_html
+    sims_html = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert "../turbulence/index.html" in sims_html
+    assert "Default model" in sims_html
+    assert "Wind speed 2x" in sims_html
+    assert "Petal 500 nm (0.50x default)" in sims_html
+    assert 'Seeing 0.60&quot; · perturb OFF' in sims_html or 'Seeing 0.60" · perturb OFF' in sims_html
+
+    # Zero broken local links and zero inline <style> across the entire generated site
+    class _LinkCheck(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.has_style = False
+            self.refs: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "style":
+                self.has_style = True
+            for k, v in attrs:
+                if k in ("href", "src") and v:
+                    self.refs.append(v)
+
+    for html_file in sorted(pub.rglob("*.html")):
+        chk = _LinkCheck()
+        chk.feed(html_file.read_text(encoding="utf-8"))
+        assert not chk.has_style, f"Inline <style> found in {html_file}"
+        for raw in chk.refs:
+            if raw.startswith(("http://", "https://", "#", "mailto:", "data:")):
+                continue
+            target = raw.split("#", 1)[0].split("?", 1)[0]
+            if not target:
+                continue
+            assert (html_file.parent / target).resolve().exists(), (
+                f"Broken link {raw!r} in {html_file}"
+            )
+
+
+def test_predictive_control_guide_and_cacao_fps_reference(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify /predictive-control/index.html and CACAO predictive FPS extraction."""
+    from html.parser import HTMLParser
+
+    scripts_dir = repo_root / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from report_site.extractors import build_options_catalog
+
+    opt_cat = build_options_catalog()
+    counts = opt_cat["counts"]
+    assert counts["cacao_units"] == 7
+    unit_keys = {(u["package"], u["unit"]) for u in opt_cat["fps_units"]}
+    for uname in (
+        "mkARPF",
+        "applyARPF",
+        "mkEOFPF",
+        "applyEOFPF",
+        "selflearn",
+        "modalfilter",
+        "modalwhite",
+    ):
+        assert ("cacao", uname) in unit_keys, f"Missing cacao FPS unit {uname}"
+
+    site_dir = tmp_path / "web_site"
+    rep_dir = tmp_path / "sim_pc_check"
+    _create_synthetic_report(rep_dir)
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--report-dir",
+            str(rep_dir),
+            "--site-dir",
+            str(site_dir),
+            "--slug",
+            "sim_pc_check",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+
+    pub = site_dir / "public"
+    pc_html = (pub / "predictive-control" / "index.html").read_text(encoding="utf-8")
+    for sec_id in (
+        "psol-prerequisite",
+        "controller-ladder",
+        "diagonal-ar",
+        "block-eof",
+        "self-learning",
+        "setup-workflow",
+        "tuning-presets",
+        "troubleshooting",
+        "deep-dives",
+    ):
+        assert f'id="{sec_id}"' in pc_html, f"Missing section #{sec_id}"
+    assert "mermaid" in pc_html
+    assert 'href="../reference/index.html#opt-fps-cacao-mkarpf-pforder"' in pc_html
+    assert 'href="../reference/index.html#opt-fps-cacao-mkeofpf-zoh_ridge"' in pc_html
+    assert 'href="../reference/index.html#opt-fps-cacao-selflearn-shadow"' in pc_html
+    assert 'href="../reference/index.html#opt-fps-cacao-modalwhite-out-alert_flags"' in pc_html
+
+    # Verify Options Reference includes cacao package tab & introspected FPS anchors
+    ref_html = (pub / "reference" / "index.html").read_text(encoding="utf-8")
+    assert 'data-ref-pkg="cacao"' in ref_html
+    assert 'id="opt-fps-cacao-mkeofpf-zoh_ridge"' in ref_html
+    assert 'id="opt-fps-cacao-selflearn-inbasepf"' in ref_html
+    assert 'id="opt-fps-cacao-modalfilter-pf-mixcoeff"' in ref_html
+
+    # Verify SELFLEARN algorithm detail page links CACAO_SELFLEARN_* & FPS anchors cleanly
+    sl_html = (pub / "algorithms" / "selflearn" / "index.html").read_text(encoding="utf-8")
+    assert "CACAO_SELFLEARN_LAM0" in sl_html
+    assert 'href="../../reference/index.html#opt-fps-cacao-selflearn-shadow"' in sl_html
+    assert 'href="../../predictive-control/index.html"' in sl_html
+    assert "<code>u_total = u_EOF + delta_u_global + delta_u_cluster</code>" in sl_html
+
+    # Verify front page, topic hub, algorithms hub, and search index all link to guide
+    assert "./predictive-control/index.html" in (pub / "index.html").read_text(encoding="utf-8")
+    assert "../../predictive-control/index.html" in (
+        pub / "topics" / "wavefront-control" / "index.html"
+    ).read_text(encoding="utf-8")
+    assert "../predictive-control/index.html" in (
+        pub / "algorithms" / "index.html"
+    ).read_text(encoding="utf-8")
+    search_js = (pub / "assets" / "js" / "search-index.js").read_text(encoding="utf-8")
+    assert "predictive-control/index.html" in search_js
+    assert "predictive-control/index.html#self-learning" in search_js
+    assert "predictive-control/index.html#troubleshooting" in search_js
+
+    # Zero inline <style> and zero broken relative links across every generated page
+    class _LinkCheck(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.has_style = False
+            self.refs: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "style":
+                self.has_style = True
+            for k, v in attrs:
+                if k in ("href", "src") and v:
+                    self.refs.append(v)
+
+    for html_file in sorted(pub.rglob("*.html")):
+        chk = _LinkCheck()
+        chk.feed(html_file.read_text(encoding="utf-8"))
+        assert not chk.has_style, f"Inline <style> found in {html_file}"
+        for raw in chk.refs:
+            if raw.startswith(("http://", "https://", "#", "mailto:", "data:")):
+                continue
+            target = raw.split("#", 1)[0].split("?", 1)[0]
+            if not target:
+                continue
+            assert (html_file.parent / target).resolve().exists(), (
+                f"Broken link {raw!r} in {html_file}"
+            )
+
+
+def test_pyrwfs_telemetry_subpage_and_backwards_compat(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify dedicated pyrwfs.html sub-page for new sims without altering older 5-tab sims."""
+    old_dir = tmp_path / "legacy_sim"
+    new_dir = tmp_path / "pyrwfs_sim"
+    site_dir = tmp_path / "web_site"
+    _create_synthetic_report(old_dir)
+    _create_synthetic_report(new_dir)
+
+    # Populate PyWFS telemetry CSVs, summary JSON, and 3 diagnostic PNGs on new_dir only
+    csv_hdr = (
+        "frame,t_phys_s,timestamp,ftot,bg_mean,bg_std,sat_hi_frac,sat_dark_frac,flux_ok,"
+        "f_pup,f_diam,f_bH,f_bV,f_out,df_pup,aniso,nl_ratio,"
+        "qx,qy,qx_mean,qy_mean,qx_rms,qy_rms,qdiag,"
+        "scint_idx,curl_ratio,lwe_metric,"
+        "pup_dx,pup_dy,pup_ds,pup_dast,pup_rot,pup_corr\n"
+    )
+    rows1 = [
+        f"{i},{i * 0.05:.4f},{1000.0 + i * 0.05:.4f},250000.0,100.1,1.2,0.0,0.0,1,"
+        f"0.780,0.065,0.045,0.043,0.067,0.042,0.022,0.180,"
+        f"0.002,-0.001,0.001,-0.001,0.014,0.012,0.003,"
+        f"0.038,0.295,0.045,0.04,-0.02,0.01,0.00,0.05,0.985\n"
+        for i in range(12)
+    ]
+    rows2 = [
+        f"{i},{i * 0.05:.4f},{1000.0 + i * 0.05:.4f},180000.0,100.2,0.9,0.0,0.0,1,"
+        f"0.745,0.082,0.054,0.052,0.067,0.031,0.018,0.140,"
+        f"-0.001,0.001,0.000,0.001,0.009,0.008,-0.002,"
+        f"0.024,0.240,0.032,-0.03,0.02,-0.01,0.01,-0.04,0.991\n"
+        for i in range(12)
+    ]
+    (new_dir / "pyrwfs_tlm_stg1.csv").write_text(csv_hdr + "".join(rows1), encoding="utf-8")
+    (new_dir / "pyrwfs_tlm_stg2.csv").write_text(csv_hdr + "".join(rows2), encoding="utf-8")
+    pyrwfs_summary = {
+        "schema_version": 1,
+        "enabled": True,
+        "spider_angle_deg": 51.75,
+        "reg_stride": 20,
+        "stages": {
+            "stage1": {
+                "stage": 1,
+                "label": "Stage 1 (AO3k J-Band PyWFS)",
+                "short_label": "Stage 1 (AO3k NIR)",
+                "lambda_um": 1.22,
+                "mod_rad_ld": 0.0,
+                "rate_hz": 1000.0,
+                "eff_rate_hz": 200.0,
+                "n_frames": 12,
+                "f_pup0": 0.738,
+                "csv_file": "pyrwfs_tlm_stg1.csv",
+                "flux": {
+                    "f_pup_mean": 0.780,
+                    "f_pup_std": 0.005,
+                    "df_pup_mean": 0.042,
+                    "f_diam_mean": 0.065,
+                    "f_bH_mean": 0.045,
+                    "f_bV_mean": 0.043,
+                    "f_out_mean": 0.067,
+                    "aniso_mean": 0.022,
+                    "nl_ratio_mean": 0.180,
+                },
+                "health": {"bg_mean": 100.1, "flux_ok_pct": 100.0},
+                "jitter": {"qx_mean": 0.001, "qy_mean": -0.001, "q_tt_rms_quad": 0.0184},
+                "wavefront": {"scint_idx_mean": 0.038, "curl_ratio_mean": 0.295, "lwe_metric_mean": 0.045},
+                "alignment": {
+                    "pup_dx_mean": 0.04,
+                    "pup_dx_std": 0.01,
+                    "pup_dx_max_abs": 0.05,
+                    "pup_dy_mean": -0.02,
+                    "pup_dy_std": 0.01,
+                    "pup_dy_max_abs": 0.03,
+                    "pup_ds_mean": 0.01,
+                    "pup_dast_mean": 0.0,
+                    "pup_rot_mrad_mean": 0.05,
+                    "pup_corr_mean": 0.985,
+                    "pup_corr_min": 0.982,
+                    "pupgeom": [
+                        {"quadrant": "BL (Q0)", "xc_pix": 40.1, "yc_pix": 40.2, "rout_pix": 31.5, "corr": 0.988},
+                    ],
+                },
+                "crosscheck": {"corr_dfpup_vs_1mS": 0.87, "corr_lwe_vs_petal": 0.64},
+            },
+            "stage2": {
+                "stage": 2,
+                "label": "Stage 2 (SCExAO Vis PyWFS)",
+                "short_label": "Stage 2 (SCExAO Vis)",
+                "lambda_um": 0.75,
+                "mod_rad_ld": 3.0,
+                "rate_hz": 2000.0,
+                "eff_rate_hz": 200.0,
+                "n_frames": 12,
+                "f_pup0": 0.714,
+                "csv_file": "pyrwfs_tlm_stg2.csv",
+                "flux": {
+                    "f_pup_mean": 0.745,
+                    "f_pup_std": 0.004,
+                    "df_pup_mean": 0.031,
+                    "f_diam_mean": 0.082,
+                    "f_bH_mean": 0.054,
+                    "f_bV_mean": 0.052,
+                    "f_out_mean": 0.067,
+                    "aniso_mean": 0.018,
+                    "nl_ratio_mean": 0.140,
+                },
+                "health": {"bg_mean": 100.2, "flux_ok_pct": 100.0},
+                "jitter": {"qx_mean": 0.0, "qy_mean": 0.001, "q_tt_rms_quad": 0.0120},
+                "wavefront": {"scint_idx_mean": 0.024, "curl_ratio_mean": 0.240, "lwe_metric_mean": 0.032},
+                "alignment": {
+                    "pup_dx_mean": -0.03,
+                    "pup_dx_std": 0.01,
+                    "pup_dx_max_abs": 0.04,
+                    "pup_dy_mean": 0.02,
+                    "pup_dy_std": 0.01,
+                    "pup_dy_max_abs": 0.03,
+                    "pup_ds_mean": -0.01,
+                    "pup_dast_mean": 0.01,
+                    "pup_rot_mrad_mean": -0.04,
+                    "pup_corr_mean": 0.991,
+                    "pup_corr_min": 0.989,
+                    "pupgeom": [],
+                },
+                "crosscheck": {"corr_dfpup_vs_1mS": 0.81, "corr_lwe_vs_petal": 0.52},
+            },
+        },
+    }
+    (new_dir / "pyrwfs_tlm_summary.json").write_text(
+        json.dumps(pyrwfs_summary, indent=2) + "\n", encoding="utf-8"
+    )
+    for png in (
+        "pyrwfs_flux_strehl_2x2.png",
+        "pyrwfs_align_jitter_2x2.png",
+        "pyrwfs_pupil_maps_2x4.png",
+    ):
+        (new_dir / png).write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+    for rdir, rslug in ((old_dir, "legacy_sim"), (new_dir, "pyrwfs_sim")):
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(rdir),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                rslug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+
+    pub = site_dir / "public"
+    # Legacy sim keeps 5-tab layout without pyrwfs.html
+    assert not (pub / "legacy_sim" / "pyrwfs.html").exists()
+    legacy_idx = (pub / "legacy_sim" / "index.html").read_text(encoding="utf-8")
+    assert 'href="pyrwfs.html"' not in legacy_idx
+
+    # New sim generates pyrwfs.html and links it cleanly everywhere
+    pyr_out = pub / "pyrwfs_sim"
+    assert (pyr_out / "pyrwfs.html").is_file()
+    pyr_meta = json.loads((pyr_out / "report_meta.json").read_text(encoding="utf-8"))
+    assert pyr_meta["has_pyrwfs_report"] is True
+
+    pyr_html = (pyr_out / "pyrwfs.html").read_text(encoding="utf-8")
+    assert 'id="pyrwfs-explorer-data"' in pyr_html
+    assert "pyrwfs_explorer.js" in pyr_html
+    assert 'src="pyrwfs_flux_strehl_2x2.png"' in pyr_html
+    assert 'src="pyrwfs_align_jitter_2x2.png"' in pyr_html
+    assert 'src="pyrwfs_pupil_maps_2x4.png"' in pyr_html
+    assert 'href="pyrwfs_tlm_stg1.csv"' in pyr_html
+    assert 'href="pyrwfs_tlm_stg2.csv"' in pyr_html
+    assert 'href="pyrwfs_tlm_summary.json"' in pyr_html
+    assert "Stage 1 (AO3k J-Band PyWFS)" in pyr_html
+    assert "Stage 2 (SCExAO Vis PyWFS)" in pyr_html
+    # Sim switcher on pyrwfs.html safely routes legacy_sim to index.html (never 404)
+    assert 'value="../legacy_sim/index.html"' in pyr_html
+    assert 'value="../pyrwfs_sim/pyrwfs.html"' in pyr_html
+
+    # Overview links to pyrwfs.html; optical.html excludes PYRWFS_IMAGES (no duplicate)
+    new_idx = (pyr_out / "index.html").read_text(encoding="utf-8")
+    assert 'href="pyrwfs.html"' in new_idx
+    assert "3. Pyramid WFS" in new_idx
+    new_opt = (pyr_out / "optical.html").read_text(encoding="utf-8")
+    assert 'href="pyrwfs.html"' in new_opt
+    assert 'src="pyrwfs_flux_strehl_2x2.png"' not in new_opt
+    assert 'src="pyrwfs_align_jitter_2x2.png"' not in new_opt
+    assert 'src="pyrwfs_pupil_maps_2x4.png"' not in new_opt
+
+    # Search index and simulation catalog link to pyrwfs.html for new_dir only
+    search_js = (pub / "assets" / "js" / "search-index.js").read_text(encoding="utf-8")
+    assert "pyrwfs_sim/pyrwfs.html" in search_js
+    assert "legacy_sim/pyrwfs.html" not in search_js
+    sims_html = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert "../pyrwfs_sim/pyrwfs.html" in sims_html
+    assert "../legacy_sim/pyrwfs.html" not in sims_html
+
+
+def test_archived_simulations_dynamic_presets_and_coro_crossrefs(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify archived_simulations callout, static-route exclusion, dynamic presets & coro hub."""
+    from html.parser import HTMLParser
+
+    site_dir = tmp_path / "web_site"
+    script = repo_root / "scripts" / "build-ao-web-report.py"
+
+    sim_dir = tmp_path / "ao3k_modern_eof"
+    sim_dir.mkdir(parents=True)
+    (sim_dir / "REPORT.md").write_text("# Modern Block-EOF Run\n\nBody.\n", encoding="utf-8")
+    (sim_dir / "ao3k_scexao_metrics.json").write_text(
+        json.dumps(
+            {
+                "predictive_control": {"enabled": True, "pf_mode": "eof", "pf_order": 12},
+                "coronagraph_metrics": {
+                    "llowfs": {"enabled_closed_loop": True, "dm3_stroke_rms_nm": 12.0},
+                    "closed_loop": {"mean_planet_contrast_3_10ld": 1.5e-4},
+                },
+                "psf_metrics": {
+                    "vis": {"final": {"strehl_peak": 0.72}},
+                    "nir": {"final": {"strehl_peak": 0.91}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tr_dir = tmp_path / "archival_study"
+    tr_dir.mkdir(parents=True)
+    (tr_dir / "REPORT.md").write_text(
+        "# Archival Study\n\n"
+        "See [Algorithms](../algorithms/index.html) and [Reference](../reference/index.html).\n",
+        encoding="utf-8",
+    )
+    (tr_dir / "study_meta.json").write_text(
+        json.dumps(
+            {
+                "report_type": "tech_report",
+                "domain": "wavefront-control",
+                "title": "Archival Study",
+                "referenced_simulations": ["ao3k_modern_eof"],
+                "archived_simulations": ["ao3k_old_ar4", "ao3k_old_ar16"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for src, slug in ((sim_dir, "ao3k_modern_eof"), (tr_dir, "archival_study")):
+        res = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--report-dir",
+                str(src),
+                "--site-dir",
+                str(site_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+
+    pub = site_dir / "public"
+    tr_meta = json.loads((pub / "archival_study" / "report_meta.json").read_text(encoding="utf-8"))
+    assert tr_meta["referenced_simulations"] == ["ao3k_modern_eof"]
+    assert tr_meta["archived_simulations"] == ["ao3k_old_ar4", "ao3k_old_ar16"]
+
+    tr_html = (pub / "archival_study" / "index.html").read_text(encoding="utf-8")
+    assert "Archived study runs" in tr_html
+    assert "ao3k_old_ar4" in tr_html
+    assert "ao3k_old_ar16" in tr_html
+    assert "../ao3k_old_ar4/" not in tr_html
+
+    # Coronagraphy hub dynamically showcases modern coronagraphic runs when legacy runs are gone
+    coro_hub = (pub / "topics" / "coronagraphy-lowfs" / "index.html").read_text(encoding="utf-8")
+    assert "ao3k_modern_eof" in coro_hub
+
+    # Dynamic compare presets show Compare All and hide legacy AR Sweep / EOF vs AR when absent
+    sims_html = (pub / "simulations" / "index.html").read_text(encoding="utf-8")
+    assert 'data-cmp-preset="all"' in sims_html
+    assert 'data-cmp-preset="ar-sweep"' not in sims_html
+    assert 'data-cmp-preset="eof-vs-ar"' not in sims_html
+
+    class LinkCheck(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refs: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            for k, v in attrs:
+                if k in ("href", "src") and v:
+                    self.refs.append(v)
+
+    for html_path in sorted(pub.rglob("*.html")):
+        lc = LinkCheck()
+        lc.feed(html_path.read_text(encoding="utf-8"))
+        for ref in lc.refs:
+            if ref.startswith(("http://", "https://", "#", "data:", "javascript:", "mailto:")):
+                continue
+            rel = ref.split("#", 1)[0].split("?", 1)[0]
+            if rel:
+                assert (html_path.parent / rel).resolve().exists(), f"Broken {ref!r} in {html_path}"
+
+

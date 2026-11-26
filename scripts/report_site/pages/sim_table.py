@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import html
 
-from ..extractors.common import meta_sort_key
+from ..extractors.common import baseline_sort_key, meta_sort_key
 from ..extractors.params import TRACKED_PARAMS, resolve_run_parameters
 from .fragments import safe_json_embed
 from .sim_table_helpers import (
@@ -78,9 +78,14 @@ def render_simulations_section(
             if pkey in param_dicts[0]:
                 shared_items.append((plabel, param_dicts[0][pkey]))
 
+    base_idx = (
+        min(range(len(run_metas)), key=lambda i: baseline_sort_key(run_metas[i]))
+        if run_metas
+        else 0
+    )
     ref_vals: dict[str, str] = {}
     for pkey, _ in changed_specs:
-        ref_v = param_dicts[0].get(pkey) if param_dicts else None
+        ref_v = param_dicts[base_idx].get(pkey) if param_dicts else None
         if ref_v is None:
             ref_v = next((pd[pkey] for pd in param_dicts if pkey in pd), "")
         ref_vals[pkey] = ref_v
@@ -120,7 +125,7 @@ def render_simulations_section(
         rdom = str(domain_by_slug.get(mslug) or m.get("domain") or "bench-runtime")
         dom_counts[rdom] = dom_counts.get(rdom, 0) + 1
         tr_html, f_attrs, cmp_payload = build_sim_table_row(
-            row_idx,
+            row_idx == base_idx,
             len(run_metas),
             m,
             pd,
@@ -160,6 +165,7 @@ def render_simulations_section(
         ctrl_counts=ctrl_counts,
         llowfs_counts=llowfs_counts,
         c2d_counts=c2d_counts,
+        run_slugs=[str(m.get("slug", "")) for m in run_metas if isinstance(m, dict)],
     )
 
     intro = intro_html or (

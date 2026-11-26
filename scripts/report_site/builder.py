@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import shutil
 
-from .assets import stage_site_assets, write_search_index_js
+from .assets import stage_site_assets, stage_turbulence_visuals, write_search_index_js
 from .constants import ASSET_EXTS
 from .cross_links import refresh_cross_links
 from .extractors import (
@@ -21,14 +21,19 @@ from .extractors import (
     extract_eof_pf_data,
     extract_metrics_highlights,
     extract_optical_explorer_data,
+    extract_pyrwfs_telemetry_data,
     extract_referenced_simulations,
     extract_runtime_explorer_data,
     extract_runtime_summary,
+    extract_simulation_timestamp,
+    extract_turbulence_profile,
     find_bench_path,
+    find_metrics_path,
     is_tech_report_meta,
     load_cacaosim_schema,
     load_json_safe,
     parse_bench_file,
+    parse_utc_timestamp,
 )
 from .markdown import RenderContext, convert_markdown_to_html, split_simulation_markdown
 from .pages import (
@@ -37,16 +42,19 @@ from .pages import (
     build_extra_figures_section,
     build_front_page_html,
     build_options_reference_html,
+    build_predictive_control_guide_html,
     build_sim_config_html,
     build_sim_how_to_run_html,
     build_sim_optical_html,
     build_sim_overview_html,
+    build_sim_pyrwfs_html,
     build_sim_runtime_html,
     build_simulations_catalog_html,
     build_stack_guide_html,
     build_tech_report_html,
     build_telemetry_files_section,
     build_topic_hub_html,
+    build_turbulence_model_html,
 )
 from .pages.fragments import safe_json_embed
 from .taxonomy import build_site_hierarchy, classify_report, load_taxonomy
@@ -83,6 +91,30 @@ def _load_staged_metas(public_dir: Path) -> list[dict[str, object]]:
         try:
             loaded = json.loads(meta_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
+                if not is_tech_report_meta(loaded) and not loaded.get("simulation_utc"):
+                    ropts = load_json_safe(meta_path.parent / "run_options.json")
+                    sim_utc, sim_iso, sim_ep = extract_simulation_timestamp(
+                        None,
+                        meta_path.parent,
+                        run_options=ropts or None,
+                    )
+                    if not sim_utc:
+                        parsed = parse_utc_timestamp(loaded.get("updated_utc"))
+                        if parsed is not None:
+                            sim_utc, sim_iso, sim_ep = parsed
+                    if sim_utc:
+                        loaded["simulation_utc"] = sim_utc
+                        loaded["simulation_iso"] = sim_iso
+                        loaded["simulation_epoch"] = sim_ep
+                if not is_tech_report_meta(loaded) and not isinstance(
+                    loaded.get("turbulence_profile"), dict
+                ):
+                    m_path = find_metrics_path(meta_path.parent)
+                    m_data = load_json_safe(m_path) if m_path is not None else {}
+                    ropts = load_json_safe(meta_path.parent / "run_options.json")
+                    loaded["turbulence_profile"] = extract_turbulence_profile(
+                        m_data, ropts or None, meta_path.parent
+                    )
                 metas.append(loaded)
         except (OSError, json.JSONDecodeError):
             continue
@@ -119,6 +151,19 @@ def write_root_indices_and_firebase(
     sims_dir.mkdir(parents=True, exist_ok=True)
     (sims_dir / "index.html").write_text(
         build_simulations_catalog_html(hierarchy), encoding="utf-8"
+    )
+
+    turb_dir = public_dir / "turbulence"
+    turb_dir.mkdir(parents=True, exist_ok=True)
+    stage_turbulence_visuals(public_dir)
+    (turb_dir / "index.html").write_text(
+        build_turbulence_model_html(hierarchy, options_catalog), encoding="utf-8"
+    )
+
+    pc_dir = public_dir / "predictive-control"
+    pc_dir.mkdir(parents=True, exist_ok=True)
+    (pc_dir / "index.html").write_text(
+        build_predictive_control_guide_html(hierarchy, options_catalog), encoding="utf-8"
     )
 
     algos_dir = public_dir / "algorithms"
@@ -230,12 +275,32 @@ def build_site(
     known_siblings = {str(m.get("slug", "")) for m in existing_metas if m.get("slug")}
 
     if is_tech:
-        ref_sims = extract_referenced_simulations(md_text, study_meta)
+        known_sim_slugs = {
+            str(m.get("slug", ""))
+            for m in existing_metas
+            if m.get("slug") and not is_tech_report_meta(m)
+        }
+        known_tech_slugs = {
+            str(m.get("slug", ""))
+            for m in existing_metas
+            if m.get("slug") and is_tech_report_meta(m)
+        }
+        ref_sims = extract_referenced_simulations(
+            md_text,
+            study_meta,
+            known_sims=known_sim_slugs or None,
+            excluded_slugs=known_tech_slugs,
+        )
+        archived_sims = (
+            [str(a).strip() for a in study_meta.get("archived_simulations") or [] if str(a).strip()]
+            if isinstance(study_meta.get("archived_simulations"), list)
+            else []
+        )
         ctx = RenderContext(
             out_slug_dir,
             has_compute_report=False,
             is_simulation=False,
-            known_siblings=known_siblings | set(ref_sims),
+            known_siblings=known_siblings,
         )
         report_body, det_rtitle = convert_markdown_to_html(md_text, ctx)
         report_title = det_rtitle or f"Technical Report ({slug})"
@@ -258,6 +323,8 @@ def build_site(
             "total_bytes": sum(p.stat().st_size for p in all_slug_files),
             "file_count": len(all_slug_files) + 1,
         }
+        if archived_sims:
+            meta["archived_simulations"] = archived_sims
         for skey in ("nav_label", "button_label", "summary", "topic", "domain", "subtopic"):
             if study_meta.get(skey):
                 meta[skey] = str(study_meta[skey])
@@ -290,9 +357,20 @@ def build_site(
         badges, repro_dict, cmp_dict, params_dict, metrics_data = extract_metrics_highlights(
             out_slug_dir
         )
+        ropts_path = out_slug_dir / "run_options.json"
+        run_options = load_json_safe(ropts_path) if ropts_path.is_file() else None
+        turb_profile = extract_turbulence_profile(metrics_data, run_options, out_slug_dir)
+        sim_utc, sim_iso, sim_epoch = extract_simulation_timestamp(
+            report_dir,
+            out_slug_dir,
+            metrics_data=metrics_data,
+            run_options=run_options,
+        )
         bench_path = find_bench_path(out_slug_dir)
         bench_sections = parse_bench_file(bench_path)
         explorer_data = extract_optical_explorer_data(out_slug_dir, metrics_data)
+        pyrwfs_data = extract_pyrwfs_telemetry_data(out_slug_dir, metrics_data)
+        has_pyrwfs = pyrwfs_data is not None
         eof_pf_data = extract_eof_pf_data(report_dir, metrics_data)
         if eof_pf_data is not None:
             (out_slug_dir / "eof_pf_data.js").write_text(
@@ -308,6 +386,7 @@ def build_site(
         ctx = RenderContext(
             out_slug_dir,
             has_compute_report=has_compute,
+            has_pyrwfs_report=has_pyrwfs,
             is_simulation=True,
             known_siblings=known_siblings,
         )
@@ -324,18 +403,25 @@ def build_site(
             "slug": slug,
             "report_type": "simulation",
             "has_compute_report": has_compute,
+            "has_pyrwfs_report": has_pyrwfs,
             "has_repro_section": True,
             "badges": badges,
             "updated_utc": updated_utc,
             "total_bytes": sum(p.stat().st_size for p in all_slug_files),
             "file_count": len(all_slug_files) + 1,
         }
+        if sim_utc:
+            meta["simulation_utc"] = sim_utc
+            meta["simulation_iso"] = sim_iso
+            meta["simulation_epoch"] = sim_epoch
         if repro_dict is not None:
             meta["reproducibility"] = repro_dict
         if cmp_dict is not None:
             meta["comparison"] = cmp_dict
         if params_dict:
             meta["parameters"] = params_dict
+        if turb_profile:
+            meta["turbulence_profile"] = turb_profile
         if runtime_summary:
             meta["runtime_summary"] = runtime_summary
         for skey in ("domain", "subtopic"):
@@ -361,13 +447,13 @@ def build_site(
             out_slug_dir=out_slug_dir,
             staged_files=staged_files,
             has_compute_report=has_compute,
+            has_pyrwfs_report=has_pyrwfs,
             updated_utc=updated_utc,
+            turb_profile=turb_profile,
         )
         (out_slug_dir / "index.html").write_text(overview_html, encoding="utf-8")
 
         bench_opt_lookup = build_bench_opt_lookup(load_cacaosim_schema())
-        ropts_path = out_slug_dir / "run_options.json"
-        run_options = load_json_safe(ropts_path) if ropts_path.is_file() else None
 
         config_html = build_sim_config_html(
             slug=slug,
@@ -382,8 +468,10 @@ def build_site(
             out_slug_dir=out_slug_dir,
             ctx=ctx,
             has_compute_report=has_compute,
+            has_pyrwfs_report=has_pyrwfs,
             updated_utc=updated_utc,
             bench_opt_lookup=bench_opt_lookup,
+            turb_profile=turb_profile,
         )
         (out_slug_dir / "config.html").write_text(config_html, encoding="utf-8")
 
@@ -398,9 +486,24 @@ def build_site(
             staged_files=staged_files,
             ctx=ctx,
             has_compute_report=has_compute,
+            has_pyrwfs_report=has_pyrwfs,
             updated_utc=updated_utc,
+            turb_profile=turb_profile,
         )
         (out_slug_dir / "optical.html").write_text(optical_html, encoding="utf-8")
+
+        if has_pyrwfs and pyrwfs_data is not None:
+            pyrwfs_html = build_sim_pyrwfs_html(
+                slug=slug,
+                title=report_title,
+                domain_id=dom_id,
+                hierarchy=hierarchy,
+                pyrwfs_data=pyrwfs_data,
+                out_slug_dir=out_slug_dir,
+                has_compute_report=has_compute,
+                updated_utc=updated_utc,
+            )
+            (out_slug_dir / "pyrwfs.html").write_text(pyrwfs_html, encoding="utf-8")
 
         runtime_html = build_sim_runtime_html(
             slug=slug,
@@ -411,6 +514,7 @@ def build_site(
             runtime_data=runtime_data,
             ctx=ctx,
             has_compute_report=has_compute,
+            has_pyrwfs_report=has_pyrwfs,
             updated_utc=updated_utc,
         )
         (out_slug_dir / "runtime.html").write_text(runtime_html, encoding="utf-8")
@@ -429,8 +533,10 @@ def build_site(
             repro_md=sections["repro"],
             ctx=ctx,
             has_compute_report=has_compute,
+            has_pyrwfs_report=has_pyrwfs,
             updated_utc=updated_utc,
             run_options=run_options,
+            turb_profile=turb_profile,
         )
         (out_slug_dir / "how_to_run.html").write_text(how_to_run_html, encoding="utf-8")
 
@@ -458,12 +564,19 @@ def rebuild_all_published(
     public_dir = site_dir.resolve() / "public"
     if not public_dir.is_dir():
         raise FileNotFoundError(f"Missing public directory: {public_dir}")
-    slugs: list[str] = []
+    sim_slugs: list[str] = []
+    tech_slugs: list[str] = []
     for mpath in sorted(public_dir.glob("*/report_meta.json")):
         slug = mpath.parent.name
         src_dir = work_root / slug
-        if (src_dir / "REPORT.md").is_file():
-            slugs.append(slug)
+        if not (src_dir / "REPORT.md").is_file():
+            continue
+        study_meta = load_json_safe(src_dir / "study_meta.json")
+        if is_tech_report_meta(study_meta):
+            tech_slugs.append(slug)
+        else:
+            sim_slugs.append(slug)
+    slugs = sim_slugs + tech_slugs
     metas: list[dict[str, object]] = []
     for slug in slugs:
         print(f"[build-ao-web-report] Rebuilding {slug}...")

@@ -8,6 +8,7 @@ from __future__ import annotations
 from .extractors import (  # noqa: F401
     REL_SIBLING_RE,
     TRACKED_PARAMS,
+    baseline_sort_key,
     build_compute_unit_catalog,
     classify_phase_category,
     classify_shm_category,
@@ -18,6 +19,7 @@ from .extractors import (  # noqa: F401
     extract_run_parameters,
     extract_runtime_explorer_data,
     extract_runtime_summary,
+    extract_simulation_timestamp,
     find_bench_path,
     find_metrics_path,
     human_bytes,
@@ -25,5 +27,7 @@ from .extractors import (  # noqa: F401
     load_json_safe,
     meta_sort_key,
     parse_bench_file,
+    parse_utc_timestamp,
     resolve_run_parameters,
+    simulation_sort_epoch,
 )
