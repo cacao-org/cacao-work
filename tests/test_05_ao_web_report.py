@@ -1309,10 +1309,11 @@ def test_runner_cli_and_cacaoloop_env_drift_guards(repo_root: Path) -> None:
     catalog = build_options_catalog()
     counts = catalog["counts"]
     assert counts["bench_options"] >= 160
-    assert counts["cacaosim_units"] == 12
+    assert counts["cacaosim_units"] == 13
     assert counts["atmturb_units"] == 5
     assert counts["fps_params"] >= 400
     unit_names = {(u["package"], u["unit"]) for u in catalog["fps_units"]}
+    assert ("cacaosim", "adc") in unit_names
     assert ("cacaosim", "wfstat") in unit_names
     assert ("cacaosim", "htsim") in unit_names
     assert ("milkatmturb", "mkwfs") in unit_names

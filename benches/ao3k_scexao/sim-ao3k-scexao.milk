@@ -265,6 +265,7 @@ Options:
   --petal-th-even <f> Petal Even detection threshold in waves (default: ${PETAL_TH_EVEN})
   --petal-th-sign <f> Petal Odd chromatic sign confirmation threshold (default: ${PETAL_TH_SIGN})
   --petal-enable-at <p> When to enable petal jumps: warmup (default) or science (t_phys=0)
+  --petal-test-inject <s> Optional test petal injection spec into dm01disp07 at t_phys=0
   -h, --help          Show this help message
 EOF
 }
