@@ -11,7 +11,10 @@
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CALLER_PWD="${PWD}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+MASK_SLAVE_HELPER="${SCRIPT_DIR}/calib_masks_slave.py"
 
 STAGE="1"
 if [[ "${1:-}" == "--stage" ]]; then
@@ -46,6 +49,7 @@ if [[ "${STAGE}" == "1" || "${STAGE}" == "ao3k" ]]; then
     DEF_DELTACPA="1.0"
     DEF_AMPL="0.015"
     DEF_PF_MIX="0.90"
+    DEF_WFSMASK_DILATE="2"
 elif [[ "${STAGE}" == "2" || "${STAGE}" == "scexao" ]]; then
     DEF_NAME="scexao"
     DEF_NUM=2
@@ -64,6 +68,7 @@ elif [[ "${STAGE}" == "2" || "${STAGE}" == "scexao" ]]; then
     DEF_DELTACPA="1.0"
     DEF_AMPL="0.010"
     DEF_PF_MIX="0.90"
+    DEF_WFSMASK_DILATE="2"
     USE_ZPO_MVM=1
 elif [[ "${STAGE}" == "3" || "${STAGE}" == "llowfs" || "${STAGE}" == "lowfs" ]]; then
     DEF_NAME="llowfs"
@@ -83,6 +88,7 @@ elif [[ "${STAGE}" == "3" || "${STAGE}" == "llowfs" || "${STAGE}" == "lowfs" ]];
     DEF_DELTACPA="1.0"
     DEF_AMPL="0.015"
     DEF_PF_MIX="0.50"
+    DEF_WFSMASK_DILATE="0"
     OWNS_DM=0
     MODAL_DIRECT=1
     DEF_MLAT_CPA="1.0"
@@ -193,6 +199,9 @@ MULT_TT="${CACAO_LOOPMULT_TT:-}"
 MMULT_FLOOR="${CACAO_MMULT_FLOOR:-}"
 MMULT_ALPHA="${CACAO_MMULT_ALPHA:-1.0}"
 DMMASK_RMAX="${CACAO_DMMASK_RMAX:-}"
+DMMASK_RMIN="${CACAO_DMMASK_RMIN:-}"
+DMMASK_COBS_SLAVE="${CACAO_DMMASK_COBS_SLAVE:-1}"
+WFSMASK_DILATE="${CACAO_WFSMASK_DILATE:-${DEF_WFSMASK_DILATE}}"
 DEF_LOOPLIMIT_TT=""
 (( N == 1 )) && DEF_LOOPLIMIT_TT="2.5"
 LOOPLIMIT_TT="${CACAO_LOOPLIMIT_TT:-${DEF_LOOPLIMIT_TT}}"
@@ -210,6 +219,7 @@ WFSMASK_RAD="${CACAO_WFSMASK_RAD:-${DEF_WFSMASK_RAD}}"
 SELFRM_ZSIZE="${CACAO_SELFRM_ZSIZE:-8}"
 POKE_AMPL="${CACAO_POKEAMPL:-${DEF_AMPL}}"
 FAST_CALIB="${CACAO_FAST_CALIB:-0}"
+CALIB_TRIG="${CACAO_CALIB_TRIG:-dm${DM}disp}"
 HTSIM_UNIT="${CACAO_HTSIM_UNIT:-csim_htsim}"
 
 if (( GPUINDEX < 0 )); then
@@ -401,7 +411,9 @@ cmd_deploy() {
     ensure_stream_zeros wfszpo      "${WFSX}, ${WFSY}"
     ensure_stream_zeros DMastrogrid "${DMX}, ${DMY}"
     if (( ! init_only )); then
-        if [[ -f ../conf/dmmask.fits ]]; then
+        if [[ -f ../conf/dmmask_act.fits ]]; then
+            fpspipe.loadfits dmmask ../conf/dmmask_act
+        elif [[ -f ../conf/dmmask.fits ]]; then
             fpspipe.loadfits dmmask ../conf/dmmask
         else
             ensure_stream_ones dmmask "${DMX}" "${DMY}"
@@ -897,22 +909,65 @@ EOF
         fcmd+=" .fpowerlaw=-0.5 .rCPAmin=0.8 .rCPAmax=${RCPAMAX}"
         fcmd+=" .align.centered=0 .align.xcenter=${XCENT} .align.ycenter=${YCENT}"
 
+        # Preserve untrimmed compmasksWFSDM mask as dmmask_raw.fits so repeated
+        # build_and_load_cm / --load-rm calls with different rmax/rmin are idempotent.
+        if [[ ! -f "../conf/dmmask_raw.fits" && -f "../conf/dmmask.fits" ]]; then
+            cp -f "../conf/dmmask.fits" "../conf/dmmask_raw.fits"
+        fi
+
         local trim_cmds=""
         if [[ -n "${DMMASK_RMAX}" ]]; then
-            trim_cmds="imgen.mkdisk dmmask_r ${DMX} ${DMY} ${XCENT} ${YCENT} ${DMMASK_RMAX}"$'\n'
-            trim_cmds+=$'@calc "dmmask = dmmask * dmmask_r"\n'
-            trim_cmds+='iofits.saveFITS dmmask "!../conf/dmmask.fits"'
+            trim_cmds+="imgen.mkdisk dmmask_rmax ${DMX} ${DMY} ${XCENT} ${YCENT} ${DMMASK_RMAX}"$'\n'
+            trim_cmds+=$'@calc "dmmask = dmmask * dmmask_rmax"\n'
+        fi
+        if [[ -n "${DMMASK_RMIN}" ]]; then
+            trim_cmds+="imgen.mkdisk dmmask_rmin ${DMX} ${DMY} ${XCENT} ${YCENT} ${DMMASK_RMIN}"$'\n'
+            trim_cmds+=$'@calc "dmmask = dmmask * (1.0 - dmmask_rmin)"\n'
         fi
         local ts_file="/tmp/.cacaoloop_ts_$$"
         rm -f "${ts_file}"
         t0="$(date +%s.%N)"
-        OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 cacao-cli -q >/dev/null 2>&1 <<EOF
+        if (( DMMASK_COBS_SLAVE )); then
+            OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 cacao-cli -q >/dev/null 2>&1 <<EOF
 ${zcmd}
 ${fcmd}
 arith.immerge zerc Fmodes syn0 2
 imgen.mkdisk dmmaskext ${DMX} ${DMY} ${XCENT} ${YCENT} ${rad_ext}
-iofits.loadfits "../conf/dmmask.fits" dmmask .
+iofits.loadfits "../conf/dmmask_raw.fits" dmmask .
 ${trim_cmds}
+iofits.saveFITS dmmask "!../conf/dmmask.fits"
+iofits.saveFITS dmmaskext "!../conf/dmmaskext.fits"
+iofits.saveFITS syn0 "!../conf/RMsyn_modesDM_raw.fits"
+exit
+EOF
+            "${PYTHON_BIN}" "${MASK_SLAVE_HELPER}" harmonic-slave-dm \
+                --modes "../conf/RMsyn_modesDM_raw.fits" \
+                --ctrl-mask "../conf/dmmask.fits" \
+                --act-mask "../conf/dmmaskext.fits" \
+                --out "../conf/RMsyn_modesDM.fits"
+            rm -f "../conf/RMsyn_modesDM_raw.fits"
+            cp -f "../conf/dmmaskext.fits" "../conf/dmmask_act.fits"
+            date +%s.%N > "${ts_file}"
+            OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 cacao-cli -q >/dev/null 2>&1 <<EOF
+iofits.loadfits "../conf/RMsyn_modesDM.fits" RMsynDM .
+iofits.loadfits "../conf/zrespC.fits" zrespM .
+${scale_cmds}
+cacaocc.generateRMWFS zrespM RMsynDM RMsynWFS
+iofits.saveFITS RMsynWFS "!../conf/RMsyn_modesWFS.fits"
+exit
+EOF
+        else
+            cp -f "../conf/dmmask_raw.fits" "../conf/dmmask_act.fits"
+            OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=32 cacao-cli -q >/dev/null 2>&1 <<EOF
+${zcmd}
+${fcmd}
+arith.immerge zerc Fmodes syn0 2
+imgen.mkdisk dmmaskext_out ${DMX} ${DMY} ${XCENT} ${YCENT} ${rad_ext}
+imgen.mkdisk dmmaskext_in ${DMX} ${DMY} ${XCENT} ${YCENT} ${RAD_IN}
+@calc "dmmaskext = dmmaskext_out - dmmaskext_in"
+iofits.loadfits "../conf/dmmask_raw.fits" dmmask .
+${trim_cmds}
+iofits.saveFITS dmmask "!../conf/dmmask.fits"
 cacaocc.maskextrapolate syn0 dmmask dmmaskext RMsynDM 1.0
 iofits.saveFITS RMsynDM "!../conf/RMsyn_modesDM.fits"
 date +%s.%N > "${ts_file}"
@@ -922,6 +977,7 @@ cacaocc.generateRMWFS zrespM RMsynDM RMsynWFS
 iofits.saveFITS RMsynWFS "!../conf/RMsyn_modesWFS.fits"
 exit
 EOF
+        fi
         t2="$(date +%s.%N)"
         t1="$(cat "${ts_file}" 2>/dev/null || printf '%s\n' "${t2}")"
         rm -f "${ts_file}"
@@ -949,6 +1005,11 @@ EOF
         "^${PFX}(mzeropoint|offload|mval|mfiltselfRM|arPFmat|eofPFmat)"
     fpspipe.loadfits CMmodesWFS ../conf/CMmodesWFS .force=1
     fpspipe.loadfits CMmodesDM  ../conf/CMmodesDM  .force=1
+    if [[ -f "../conf/dmmask_act.fits" ]]; then
+        fpspipe.loadfits dmmask ../conf/dmmask_act .force=1
+    elif [[ -f "../conf/dmmask.fits" ]]; then
+        fpspipe.loadfits dmmask ../conf/dmmask .force=1
+    fi
 
     local pf_lat
     pf_lat="$(awk -v h="${lat_fr}" -v s="${SOFT_LAT_FR}" 'BEGIN { printf "%.3f", h + s }')"
@@ -1017,7 +1078,8 @@ do_save_rm() {
     local fname
     for fname in \
         zpokeC.fits zrespC.fits DMmask.fits HpokeC.fits Hpixindex.fits Hmat.fits \
-        HrespC.fits dmmap.fits wfsmap.fits dmmask.fits wfsmask.fits wfsref.fits \
+        HrespC.fits dmmap.fits wfsmap.fits dmmask.fits dmmask_raw.fits dmmask_act.fits \
+        dmmaskext.fits wfsmask.fits wfsmask_raw.fits wfsref.fits \
         RMsyn_modesDM.fits RMsyn_modesWFS.fits CMmodesDM.fits CMmodesWFS.fits \
         mlat_hardwlatency.dat mlat_hardwlatencypts.dat mlat_cacaovars.bash \
         mlat_diffseq.fits selfRM_calib.fits mgainfact.fits rm_meta.env \
@@ -1065,7 +1127,8 @@ do_load_rm() {
     local fname
     for fname in \
         DMmask.fits HpokeC.fits Hpixindex.fits Hmat.fits HrespC.fits \
-        dmmap.fits wfsmap.fits dmmask.fits wfsmask.fits wfsref.fits \
+        dmmap.fits wfsmap.fits dmmask.fits dmmask_raw.fits dmmask_act.fits \
+        dmmaskext.fits wfsmask.fits wfsmask_raw.fits wfsref.fits \
         mlat_hardwlatency.dat mlat_hardwlatencypts.dat mlat_cacaovars.bash \
         mlat_diffseq.fits selfRM_calib.fits rm_meta.env calib_timings.json; do
         if [[ -f "${rm_dir}/${fname}" ]]; then
@@ -1117,10 +1180,56 @@ iofits.saveFITS dmmask "!../conf/dmmask.fits"
 iofits.saveFITS wfsmask "!../conf/wfsmask.fits"
 exit
 EOF
+            cp -f "../conf/dmmask.fits" "../conf/dmmask_raw.fits"
+            cp -f "../conf/wfsmask.fits" "../conf/wfsmask_raw.fits"
         fi
     fi
 
-    fpspipe.loadfits dmmask  ../conf/dmmask  .force=1
+    if [[ ! -f "../conf/dmmask_raw.fits" && -f "../conf/dmmask.fits" ]]; then
+        if [[ -f "../conf/dmmask_act.fits" ]]; then
+            cp -f "../conf/dmmask_act.fits" "../conf/dmmask_raw.fits"
+        else
+            cp -f "../conf/dmmask.fits" "../conf/dmmask_raw.fits"
+        fi
+    fi
+
+    local norm_scale="1.0"
+    if (( ! MODAL_DIRECT )); then
+        cp -f "../conf/wfsmask.fits" "../conf/wfsmask_loaded.fits"
+        if [[ ! -f "../conf/wfsmask_raw.fits" ]]; then
+            cp -f "../conf/wfsmask.fits" "../conf/wfsmask_raw.fits"
+        fi
+        "${PYTHON_BIN}" "${MASK_SLAVE_HELPER}" dilate-wfsmask \
+            --in "../conf/wfsmask_raw.fits" \
+            --out "../conf/wfsmask.fits" \
+            --radius "${WFSMASK_DILATE}"
+        local wmask_changed=0
+        wmask_changed="$("${PYTHON_BIN}" -c "import numpy as np; from astropy.io import fits; a=fits.getdata('../conf/wfsmask_loaded.fits')>0.5; b=fits.getdata('../conf/wfsmask.fits')>0.5; print(0 if np.array_equal(a,b) else 1)")"
+        if (( wmask_changed )); then
+            local flux_pre=0.0 flux_post=0.0
+            fpspipe.loadfits wfsmask ../conf/wfsmask_loaded .force=1
+            milk-stream-wait -q -t 15 "${PFX}imWFS1+8"
+            @get flux_pre="f.acquWFS-${N}.out.fluxtotal"
+            fpspipe.loadfits wfsmask ../conf/wfsmask .force=1
+            milk-stream-wait -q -t 15 "${PFX}imWFS1+15"
+            @get flux_post="f.acquWFS-${N}.out.fluxtotal"
+            norm_scale="$(awk -v a="${flux_pre}" -v b="${flux_post}" \
+                -v nx="${WFSX}" -v ny="${WFSY}" -v fl="${WFS_NORMFLOOR}" 'BEGIN {
+                    off = fl * nx * ny
+                    da = a + off; db = b + off
+                    if (da > 0.0 && db > 0.0) printf "%.8f", da / db
+                    else printf "1.0"
+                }')"
+            retake_ref=1
+        fi
+        rm -f "../conf/wfsmask_loaded.fits"
+    fi
+
+    if [[ -f "../conf/dmmask_act.fits" ]]; then
+        fpspipe.loadfits dmmask  ../conf/dmmask_act .force=1
+    else
+        fpspipe.loadfits dmmask  ../conf/dmmask  .force=1
+    fi
     fpspipe.loadfits wfsmask ../conf/wfsmask .force=1
 
     if (( retake_ref )) || [[ ! -f "../conf/wfsref.fits" ]]; then
@@ -1158,7 +1267,7 @@ EOF
     fi
 
     write_rm_meta "${fps_hz}" "${lat_fr}" "${svdlim}"
-    build_and_load_cm "${svdlim}" "${lat_fr}"
+    build_and_load_cm "${svdlim}" "${lat_fr}" "${norm_scale}"
     write_calib_timings
 }
 
@@ -1277,7 +1386,7 @@ EOF
         if (( FAST_CALIB )) && @exists "f.${HTSIM_UNIT}"; then
             milk-fps-set -q \
                 "${HTSIM_UNIT}.calib_wfs=${WFS_STREAM}" \
-                "${HTSIM_UNIT}.calib_trig=dm${DM}disp" \
+                "${HTSIM_UNIT}.calib_trig=${CALIB_TRIG}" \
                 "${HTSIM_UNIT}.calib_fast=ON" \
                 "measlinresp-${N}.timing.WFSfrequ=2000" \
                 "measlinresp-${N}.timing.hardwlatfr=1.5" \
@@ -1343,7 +1452,24 @@ EOF
         lat_fr="${LAT_FR}"
     fi
 
-    cacao-cli -q >/dev/null 2>&1 <<EOF
+    if (( DMMASK_COBS_SLAVE )); then
+        # Poke the full solid disk (including central obstruction & outer slaved rim) so
+        # zrespC captures exact plate-PDE coupling of all slaved actuators with zero extra
+        # Hadamard frames (Stg1: 3176 <= 4096, Stg2: 1932 <= 2048).
+        local had_rad_eff
+        had_rad_eff="$(awk -v r="${RAD}" -v n="${DMX}" \
+            'BEGIN { mx = 0.5 * n; v = r + 1.8; printf "%.4f", (v < mx ? v : mx) }')"
+        cacao-cli -q >/dev/null 2>&1 <<EOF
+imgen.mkdisk DMmask ${DMX} ${DMY} ${XCENT} ${YCENT} ${had_rad_eff}
+cacaocc.mkHadamard DMmask HpokeC
+iofits.saveFITS DMmask "!../conf/DMmask.fits"
+iofits.saveFITS HpokeC "!../conf/HpokeC.fits"
+iofits.saveFITS Hpixindex "!../conf/Hpixindex.fits"
+iofits.saveFITS Hmat "!../conf/Hmat.fits"
+exit
+EOF
+    else
+        cacao-cli -q >/dev/null 2>&1 <<EOF
 imgen.mkdisk DMouter ${DMX} ${DMY} ${XCENT} ${YCENT} ${HAD_RAD}
 imgen.mkdisk DMinner ${DMX} ${DMY} ${XCENT} ${YCENT} ${RAD_IN}
 @calc "DMmask = DMouter - DMinner"
@@ -1354,13 +1480,14 @@ iofits.saveFITS Hpixindex "!../conf/Hpixindex.fits"
 iofits.saveFITS Hmat "!../conf/Hmat.fits"
 exit
 EOF
+    fi
     _tc3="$(date +%s.%N)"
     LAST_MKHADAMARD_S="$(elapsed_s "${_tc2}" "${_tc3}")"
 
     if (( FAST_CALIB )) && @exists "f.${HTSIM_UNIT}"; then
         milk-fps-set -q \
             "${HTSIM_UNIT}.calib_wfs=${WFS_STREAM}" \
-            "${HTSIM_UNIT}.calib_trig=dm${DM}disp" \
+            "${HTSIM_UNIT}.calib_trig=${CALIB_TRIG}" \
             "${HTSIM_UNIT}.calib_fast=ON" \
             "measlinresp-${N}.timing.WFSfrequ=2000" \
             "measlinresp-${N}.timing.hardwlatfr=1.5" \
@@ -1414,10 +1541,20 @@ EOF
     _tc5="$(date +%s.%N)"
     LAST_HADDEC_S="$(elapsed_s "${_tc4}" "${_tc5}")"
 
+    cp -f "../conf/dmmask.fits" "../conf/dmmask_raw.fits"
+    cp -f "../conf/wfsmask.fits" "../conf/wfsmask_raw.fits"
+    if awk -v r="${WFSMASK_DILATE}" 'BEGIN { exit !(r > 0.0) }'; then
+        "${PYTHON_BIN}" "${MASK_SLAVE_HELPER}" dilate-wfsmask \
+            --in "../conf/wfsmask_raw.fits" \
+            --out "../conf/wfsmask.fits" \
+            --radius "${WFSMASK_DILATE}"
+    fi
+
     local flux_pre=0.0 flux_post=0.0 norm_scale="1.0"
     milk-stream-wait -q -t 15 "${PFX}imWFS1+4"
     @get flux_pre="f.acquWFS-${N}.out.fluxtotal"
 
+    rm -f "../conf/dmmask_act.fits"
     fpspipe.loadfits dmmask  ../conf/dmmask  .force=1
     fpspipe.loadfits wfsmask ../conf/wfsmask .force=1
     milk-stream-wait -q -t 15 "${PFX}imWFS1+15"
