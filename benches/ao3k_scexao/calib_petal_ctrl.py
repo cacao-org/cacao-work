@@ -431,6 +431,71 @@ def render_dm_opd(cmd_2d: np.ndarray, st_idx: np.ndarray, st_w: np.ndarray) -> n
     return np.sum(flat[st_idx] * st_w, axis=-1)
 
 
+def solve_static_plate_dm(cmd_2d: np.ndarray, dm_sec: dict[str, str]) -> np.ndarray:
+    """Solve exact static circular-rim plate equilibrium matching cacaosim_dm_step_static_plate.
+
+    Solves `(w0^2 * I - cm^2 * L + beta^2 * L^2) w = w0^2 * cmd` via Conjugate Gradient
+    when `[dm.ao3k]` uses `dyn_mode = plate` with `plate_drive = force`.
+    """
+    ny, nx = cmd_2d.shape
+    f0 = bfloat(dm_sec, "f0_hz", 1000.0)
+    pitch_m = bfloat(dm_sec, "act_pitch_mm", 1.5) * 1.0e-3
+    wave_c = bfloat(dm_sec, "wave_c", 14.0)
+    bend_beta = bfloat(dm_sec, "bend_beta", 0.0085)
+
+    w02 = (2.0 * math.pi * f0) ** 2
+    cm2 = (wave_c / pitch_m) ** 2
+    beta2 = (bend_beta / (pitch_m * pitch_m)) ** 2
+
+    yy, xx = np.indices((ny, nx), dtype=np.float64)
+    r_rim = 0.5 * float(min(nx, ny)) + 0.5
+    mask = ((xx - 0.5 * (nx - 1.0)) ** 2 + (yy - 0.5 * (ny - 1.0)) ** 2) <= (r_rim * r_rim)
+
+    def lap(u: np.ndarray) -> np.ndarray:
+        out = np.zeros_like(u)
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            s = np.roll(np.roll(u, -dy, axis=0), -dx, axis=1)
+            m_nb = np.roll(np.roll(mask, -dy, axis=0), -dx, axis=1)
+            if dy == -1:
+                m_nb[0, :] = False
+            elif dy == 1:
+                m_nb[-1, :] = False
+            if dx == -1:
+                m_nb[:, 0] = False
+            elif dx == 1:
+                m_nb[:, -1] = False
+            out += np.where(m_nb, s - u, 0.0)
+        return np.where(mask, out, 0.0)
+
+    def apply_a(v: np.ndarray) -> np.ndarray:
+        lv = lap(v)
+        llv = lap(lv) if beta2 > 0.0 else 0.0
+        return np.where(mask, w02 * v - cm2 * lv + beta2 * llv, 0.0)
+
+    b = np.where(mask, w02 * cmd_2d, 0.0)
+    w = np.zeros_like(b)
+    r = b.copy()
+    p = r.copy()
+    rr_n = float(np.sum(r * r))
+    if rr_n <= 1.0e-24:
+        return w
+    tol = 1.0e-12 * rr_n
+    for _ in range(96):
+        if rr_n <= tol:
+            break
+        ap_v = apply_a(p)
+        pap = float(np.sum(p * ap_v))
+        if pap <= 1.0e-30:
+            break
+        alpha = rr_n / pap
+        w += alpha * p
+        r -= alpha * ap_v
+        rr_new = float(np.sum(r * r))
+        p = r + (rr_new / rr_n) * p
+        rr_n = rr_new
+    return w
+
+
 def build_voronoi_dm_petal_modes(
     strict_petals: list[np.ndarray],
     nact_x: int,
@@ -565,14 +630,19 @@ def build_filter_matrix(
     wfsref: np.ndarray,
     beta: float,
     cm_wfs: np.ndarray | None = None,
+    cm_dm: np.ndarray | None = None,
+    dm_sec: dict[str, str] | None = None,
+    g_opt: float = 1.0,
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Build (7, npix) matched filter matrix [ev_sn, ev_ew, ev_adj, sg_e, sg_n, sg_w, sg_s].
 
     Rejects:
       - Centrosymmetric 4-spider turbulence/Zernike halo + mask constant + wfsref flux scale
       - Localized spider-corner / spider-edge DM windup modes (inner cobs, outer rim, mid-spider)
-      - Continuous-facesheet DM1 spider-edge roll-off modes
+      - Continuous-facesheet DM1 (Gaussian + ALPAO plate PDE) spider-bridge Even & Odd modes
+      - Voronoi-vs-KL (`dm01disp06` vs `CMmodesDM`) spider-edge residual modes (when cm_dm provided)
       - Stage-1 linear AO mode subspace CMmodesWFS[:k_cm] (when provided)
+    Scales output rows by `1 / g_opt` so a +1 lambda_J on-sky wrap maps to ~1.0 wave.
     """
     pup_pos = wfs.pup_amp > 0.0
     nwf = wfs.pup_amp.shape[0]
@@ -618,15 +688,21 @@ def build_filter_matrix(
     near_sp = (dist_to_sp <= 10.0) & pup_pos
 
     # Localized spider-corner / spider-strip modes (inner cobs corner, outer rim corner, mid-spider)
+    # Plus individual 8 inner spider-root corners up to 2*lambda_J (0.6..2.4 um) to reject localized
+    # unmodulated-PyWFS actuator windup where each spider meets the central obscuration.
     r_inner_cut = r_in + 0.30 * (r_out - r_in)
     r_outer_cut = r_out - 0.22 * (r_out - r_in)
     cn_ev_list = []
     cn_od_list = []
+    cn_hi_ev_list = []
+    cn_hi_od_list = []
     for p in range(4):
-        for rmask in (
-            rr_w < r_inner_cut,
-            rr_w > r_outer_cut,
-            (rr_w >= r_inner_cut) & (rr_w <= r_outer_cut),
+        for ri, rmask in enumerate(
+            (
+                rr_w < r_inner_cut,
+                rr_w > r_outer_cut,
+                (rr_w >= r_inner_cut) & (rr_w <= r_outer_cut),
+            )
         ):
             patch = (full_petals[p] & near_sp & rmask).astype(np.float64) * np.exp(-dist_to_sp / 4.0)
             pmax = float(patch.max())
@@ -637,6 +713,18 @@ def build_filter_matrix(
                     im = dsig(-amp * patch)
                     cn_ev_list.append((0.5 * (ip + im)).ravel())
                     cn_od_list.append((0.5 * (ip - im)).ravel())
+                if ri == 0:
+                    halves = (xx_w >= 0.0, xx_w < 0.0) if p in (1, 3) else (yy_w >= 0.0, yy_w < 0.0)
+                    for hmask in halves:
+                        hp = patch * hmask
+                        hpmax = float(hp.max())
+                        if hpmax > 0.0:
+                            hp /= hpmax
+                            for amp in (0.60, 1.20, 1.80, 2.40):
+                                ip = dsig(+amp * hp)
+                                im = dsig(-amp * hp)
+                                cn_hi_ev_list.append((0.5 * (ip + im)).ravel())
+                                cn_hi_od_list.append((0.5 * (ip - im)).ravel())
 
     u_cne, s_cne, _ = np.linalg.svd(np.array(cn_ev_list).T, full_matrices=False)
     u_cno, s_cno, _ = np.linalg.svd(np.array(cn_od_list).T, full_matrices=False)
@@ -645,14 +733,92 @@ def build_filter_matrix(
     k_cne_od = min(8, int(np.sum(s_cne > 1e-8 * s_cne[0])))
     k_cno_od = min(8, int(np.sum(s_cno > 1e-8 * s_cno[0])))
 
-    dm_edge_od = []
-    dm_edge_lin = []
+    u_h8e, s_h8e, _ = np.linalg.svd(np.array(cn_hi_ev_list).T, full_matrices=False)
+    u_h8o, s_h8o, _ = np.linalg.svd(np.array(cn_hi_od_list).T, full_matrices=False)
+    k_h8e = min(12, int(np.sum(s_h8e > 1e-8 * s_h8e[0])))
+    k_h8o = min(12, int(np.sum(s_h8o > 1e-8 * s_h8o[0])))
+
+    # Continuous-facesheet DM1 spider-bridge residual modes (Gaussian + ALPAO static plate PDE)
+    # When AO3k tracks large incoming thermal petaling on a continuous facesheet, the island
+    # interiors remain phased but the DM creates a steep spider-edge ramp whose Even & Odd WFS
+    # imprints otherwise leak strongly into ev_ew / ev_sn. Project out both Even and Odd parts.
+    is_plate = False
+    if dm_sec is not None:
+        dm_dyn = dm_sec.get("dyn_mode", "").strip().lower()
+        dm_drv = dm_sec.get("plate_drive", "force").strip().lower()
+        is_plate = (dm_dyn in ("plate", "3")) and (dm_drv in ("force", "1", ""))
+
+    bridge_specs = []
     for p in range(4):
-        opd_dm = render_dm_opd(dm_modes[p], st_idx, st_w)
         opd_sharp = np.where(full_petals[p], +0.75 * p_eq_um, -0.25 * p_eq_um)
-        opd_edge = (opd_dm - opd_sharp) * pup_pos
-        dm_edge_od.append(0.5 * (dsig(+opd_edge) - dsig(-opd_edge)))
-        dm_edge_lin.append(0.5 * (dsig(+0.1 * opd_edge) - dsig(-0.1 * opd_edge)))
+        opd_dm_g = render_dm_opd(dm_modes[p], st_idx, st_w)
+        bridge_specs.append((opd_dm_g - opd_sharp) * pup_pos)
+        if is_plate and dm_sec is not None:
+            opd_dm_p = render_dm_opd(solve_static_plate_dm(dm_modes[p], dm_sec), st_idx, st_w)
+            bridge_specs.append((opd_dm_p - opd_sharp) * pup_pos)
+    for pa, pb in ((0, 2), (3, 1)):
+        cmd_ab = dm_modes[pa] - dm_modes[pb]
+        opd_sharp_ab = np.where(full_petals[pa], +p_eq_um, np.where(full_petals[pb], -p_eq_um, 0.0))
+        if is_plate and dm_sec is not None:
+            opd_dm_ab = render_dm_opd(solve_static_plate_dm(cmd_ab, dm_sec), st_idx, st_w)
+        else:
+            opd_dm_ab = render_dm_opd(cmd_ab, st_idx, st_w)
+        bridge_specs.append((opd_dm_ab - opd_sharp_ab) * pup_pos)
+
+    br_ev_list = []
+    br_od_list = []
+    for opd_edge in bridge_specs:
+        for sc in (0.25, 0.75, 1.50, 2.25):
+            ip = dsig(+sc * opd_edge)
+            im = dsig(-sc * opd_edge)
+            br_ev_list.append((0.5 * (ip + im)).ravel())
+            br_od_list.append((0.5 * (ip - im)).ravel())
+    u_be, s_be, _ = np.linalg.svd(np.array(br_ev_list).T, full_matrices=False)
+    u_bo, s_bo, _ = np.linalg.svd(np.array(br_od_list).T, full_matrices=False)
+    k_be = min(12, int(np.sum(s_be > 1e-8 * s_be[0])))
+    k_bo_ev = min(12, int(np.sum(s_bo > 1e-8 * s_bo[0])))
+    k_bo_od = min(12, int(np.sum(s_bo > 1e-8 * s_bo[0])))
+
+    # Voronoi-vs-KL (`dm01disp06` vs `CMmodesDM`) spider-edge residual modes.
+    # When AO3k tracks sharp thermal petaling with smooth KL modes, or after petal-1
+    # unwraps a petal on dm01disp06 (+1w Voronoi) against -1w KL in aol1_dmC, a ~12 nm
+    # RMS (Voronoi - KL) spider-edge residual remains that otherwise leaks strongly into
+    # sg_e/n/w/s and ev_ew/sn. Project out the top 12 Even + 12 Odd modes up to 2.0 lambda_J.
+    k_vke = 0
+    k_vko = 0
+    u_vke = np.zeros((msk.size, 0), dtype=np.float64)
+    u_vko = np.zeros((msk.size, 0), dtype=np.float64)
+    if cm_dm is not None and cm_dm.ndim == 3 and cm_dm.shape[0] > 0:
+        b_dm = cm_dm.reshape(cm_dm.shape[0], -1).astype(np.float64)
+        _, s_dm, vt_dm = np.linalg.svd(b_dm, full_matrices=False)
+        q_dm = vt_dm[s_dm > (1e-6 * max(float(s_dm[0]), 1e-30))]
+        nact_y, nact_x = dm_modes.shape[1], dm_modes.shape[2]
+        vk_specs = []
+        for p in range(4):
+            opd_sharp = np.where(full_petals[p], +0.75 * p_eq_um, -0.25 * p_eq_um)
+            v = dm_modes[p].ravel()
+            v_kl = ((v @ q_dm.T) @ q_dm).reshape(nact_y, nact_x)
+            v_vk = dm_modes[p] - v_kl
+            if is_plate and dm_sec is not None:
+                vk_specs.append(render_dm_opd(solve_static_plate_dm(v_vk, dm_sec), st_idx, st_w) * pup_pos)
+                vk_specs.append(
+                    (render_dm_opd(solve_static_plate_dm(v_kl, dm_sec), st_idx, st_w) - opd_sharp) * pup_pos
+                )
+            else:
+                vk_specs.append(render_dm_opd(v_vk, st_idx, st_w) * pup_pos)
+                vk_specs.append((render_dm_opd(v_kl, st_idx, st_w) - opd_sharp) * pup_pos)
+        vk_ev_list = []
+        vk_od_list = []
+        for opd_edge in vk_specs:
+            for sc in (0.5, 1.2, 2.0):
+                ip = dsig(+sc * opd_edge)
+                im = dsig(-sc * opd_edge)
+                vk_ev_list.append((0.5 * (ip + im)).ravel())
+                vk_od_list.append((0.5 * (ip - im)).ravel())
+        u_vke, s_vke, _ = np.linalg.svd(np.array(vk_ev_list).T, full_matrices=False)
+        u_vko, s_vko, _ = np.linalg.svd(np.array(vk_od_list).T, full_matrices=False)
+        k_vke = min(12, int(np.sum(s_vke > 1e-8 * s_vke[0])))
+        k_vko = min(12, int(np.sum(s_vko > 1e-8 * s_vko[0])))
 
     # Optional Stage-1 linear AO mode subspace CMmodesWFS[:k_cm] (rank-safe SVD)
     k_cm_od = 0
@@ -683,6 +849,12 @@ def build_filter_matrix(
             np.array(od_p).reshape(4, -1),
             u_cne[:, :k_cne_ev].T,
             u_cno[:, :k_cno_ev].T,
+            u_h8e[:, :k_h8e].T,
+            u_h8o[:, :k_h8o].T,
+            u_be[:, :k_be].T,
+            u_bo[:, :k_bo_ev].T,
+            u_vke[:, :k_vke].T,
+            u_vko[:, :k_vko].T,
             msk.ravel(),
             (wfsref * msk).ravel(),
         ]
@@ -701,10 +873,14 @@ def build_filter_matrix(
             ev_se.ravel(),
             ev_sw.ravel(),
             np.array(lin_p).reshape(4, -1),
-            np.array(dm_edge_od).reshape(4, -1),
-            np.array(dm_edge_lin).reshape(4, -1),
+            u_be[:, :k_be].T,
+            u_bo[:, :k_bo_od].T,
             u_cne[:, :k_cne_od].T,
             u_cno[:, :k_cno_od].T,
+            u_h8e[:, :k_h8e].T,
+            u_h8o[:, :k_h8o].T,
+            u_vke[:, :k_vke].T,
+            u_vko[:, :k_vko].T,
             msk.ravel(),
             (wfsref * msk).ravel(),
         ],
@@ -722,8 +898,9 @@ def build_filter_matrix(
         else:
             w_od[p] = 0.0
 
-    # Stack full (7, npix) matrix and verify response on pure states & DM1-rendered petals!
-    w_mat = np.vstack([w_ev, w_od])  # (7, npix)
+    # Stack full (7, npix) matrix and apply on-sky optical-gain normalization (1 / g_opt)
+    g_opt_eff = min(max(float(g_opt), 0.25), 2.0)
+    w_mat = np.vstack([w_ev, w_od]) / g_opt_eff  # (7, npix)
 
     resp_sharp = {}
     resp_dm1 = {}
@@ -742,9 +919,16 @@ def build_filter_matrix(
 
     diag = {
         "od_clean_norms": [float(f"{x:.4e}") for x in od_clean_norms],
-        "ev_row_norms": [float(f"{np.linalg.norm(w_ev[i]):.3e}") for i in range(3)],
-        "od_row_norms": [float(f"{np.linalg.norm(w_od[i]):.3e}") for i in range(4)],
+        "ev_row_norms": [float(f"{np.linalg.norm(w_mat[i]):.3e}") for i in range(3)],
+        "od_row_norms": [float(f"{np.linalg.norm(w_mat[3 + i]):.3e}") for i in range(4)],
         "cm_wfs_proj_modes": k_cm_od,
+        "bridge_plate_pde": bool(is_plate),
+        "bridge_ev_rank": k_be,
+        "bridge_od_ev_rank": k_bo_ev,
+        "bridge_od_od_rank": k_bo_od,
+        "inner_corner_hi_rank": [k_h8e, k_h8o],
+        "voronoi_kl_rank": [k_vke, k_vko],
+        "g_opt_scale": round(g_opt_eff, 4),
         "nuis_ev_rank": int(qn_ev.shape[1]),
         "nuis_od_rank": int(qn_od.shape[1]),
         "response_sharp": resp_sharp,
@@ -798,6 +982,8 @@ def main() -> None:
     ap.add_argument("--wfsref", required=True, type=Path, help="Stage-1 wfsref.fits")
     ap.add_argument("--wfsmask", required=True, type=Path, help="Stage-1 wfsmask.fits")
     ap.add_argument("--cm-wfs", type=Path, default=None, help="Optional Stage-1 CMmodesWFS.fits for AO-mode orthogonalization")
+    ap.add_argument("--cm-dm", type=Path, default=None, help="Optional Stage-1 CMmodesDM.fits for Voronoi-vs-KL bridge projection")
+    ap.add_argument("--gopt", type=float, default=1.0, help="Expected on-sky PyWFS optical gain g_opt (scales M by 1/g_opt)")
     ap.add_argument("--outdir", required=True, type=Path, help="Output directory")
     ap.add_argument("--test-tlm", type=Path, default=None, help="Optional telemetry dir to replay")
     ap.add_argument("--test-dark-adu", type=float, default=0.0, help="Dark ADU subtracted in acquireWFSim during replay")
@@ -858,8 +1044,30 @@ def main() -> None:
     if args.cm_wfs is not None and args.cm_wfs.exists():
         cm_wfs = np.asarray(fits.getdata(args.cm_wfs), dtype=np.float64)
 
+    cm_dm_path = args.cm_dm
+    if cm_dm_path is None and args.cm_wfs is not None:
+        cand_dm = args.cm_wfs.parent / "CMmodesDM.fits"
+        if cand_dm.exists():
+            cm_dm_path = cand_dm
+    cm_dm = None
+    if cm_dm_path is not None and cm_dm_path.exists():
+        cm_dm = np.asarray(fits.getdata(cm_dm_path), dtype=np.float64)
+
     w_mat, diag = build_filter_matrix(
-        wfs, strict_petals, full_petals, dm_modes, st_idx, st_w, p_eq_um, wfsmask, wfsref, beta, cm_wfs=cm_wfs
+        wfs,
+        strict_petals,
+        full_petals,
+        dm_modes,
+        st_idx,
+        st_w,
+        p_eq_um,
+        wfsmask,
+        wfsref,
+        beta,
+        cm_wfs=cm_wfs,
+        cm_dm=cm_dm,
+        dm_sec=dm_sec,
+        g_opt=args.gopt,
     )
 
     # Save FITS in exact milk axis convention:
@@ -905,7 +1113,8 @@ def main() -> None:
     print(
         f"[calib_petal_ctrl] Done in {elapsed:.2f}s | nlam={len(chan_lams)} chrom_sep={chrom_sep:+.4f} "
         f"mod={mod_rad:.2f} l/D | p_eq={p_eq_um*1000:.2f} nm | wfsref_corr={ref_corr:.6f} "
-        f"(est_bias={beta*flux_e:.1f} ADU) | use_sign_rec={use_sign_rec}"
+        f"(est_bias={beta*flux_e:.1f} ADU) | g_opt={diag['g_opt_scale']:.2f} "
+        f"bridge_plate={int(diag['bridge_plate_pde'])} | use_sign_rec={use_sign_rec}"
     )
     print(f"  DM1 +1w South response: {diag['response_dm1']['S+1w_dm']}")
     print(f"  Sharp +1w South resp  : {diag['response_sharp']['S+1w']}")
