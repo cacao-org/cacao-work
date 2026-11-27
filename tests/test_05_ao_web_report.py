@@ -712,6 +712,63 @@ def test_cacaosim_telemetry_video_renderer(
     assert vmeta4["width_px"] == 1760
     assert vmeta4["height_px"] == 1240
 
+    # Verify Stage-1 passive petal-unwrap offset (aol1_petal_cmd + petal_dm_modes) is included in PSOL.
+    # Inject a uniform +0.60 um DM surface (+1200 nm OPD) South-half step into wf_full_raw and
+    # set aol1_modevalOL = 0 with aol1_petal_cmd[:, 3] = 1.0 so PSOL + petal cancels the step.
+    pet_dir = rep_dir / "petal_ctrl"
+    pet_dir.mkdir(parents=True, exist_ok=True)
+    pdm = np.zeros((4, 8, 8), dtype=np.float32)
+    pdm[3, :4, :] = 0.60
+    pdm[3, 4:, :] = -0.60
+    fits.writeto(pet_dir / "petal_dm_modes.fits", pdm, overwrite=True)
+    wf_pet_step = np.zeros((5, 32, 32), dtype=np.float32)
+    wf_pet_step[:, :16, :] = 1200.0
+    wf_pet_step[:, 16:, :] = -1200.0
+    fits.writeto(tlm_dir / "wf_full_raw.fits", wf_pet_step, overwrite=True)
+    fits.writeto(
+        tlm_dir / "aol1_modevalOL_12:00:00.000000.fits",
+        np.zeros((10, 4, 1), dtype=np.float32),
+        overwrite=True,
+    )
+    pcmd = np.zeros((10, 8, 1), dtype=np.float32)
+    pcmd[:, 3, 0] = 1.0
+    fits.writeto(tlm_dir / "aol1_petal_cmd_12:00:00.000000.fits", pcmd, overwrite=True)
+    (tlm_dir / "aol1_petal_cmd_12:00:00.000000.txt").write_text(
+        "\n".join(
+            f"{k} {k} 12:00:00.000000 {1000.0 + k*1e-3:.9f} {1000.0 + k*1e-3:.9f} {100 + k} 0"
+            for k in range(10)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out_mp4_pet = rep_dir / "wfs_psf_full_petal.mp4"
+    meta_out_pet = rep_dir / "wfs_psf_full_petal_meta.json"
+    res5 = subprocess.run(
+        [
+            "cacaosim-telemetry-video",
+            "--telemetry-dir",
+            str(tlm_dir),
+            "--report-dir",
+            str(rep_dir),
+            "--out",
+            str(out_mp4_pet),
+            "--meta-out",
+            str(meta_out_pet),
+            "--realtime",
+            "--fps",
+            "10",
+        ],
+        env=stack_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res5.returncode == 0, res5.stderr + res5.stdout
+    vmeta5 = json.loads(meta_out_pet.read_text(encoding="utf-8"))
+    assert vmeta5["psol_source"] == "aol1_modevalOL+petal"
+    assert vmeta5["psol_rms_mean_nm"] > 500.0
+    assert vmeta5["wf_psol_diff_rms_mean_nm"] < 0.60 * vmeta5["wf_in_rms_mean_nm"]
+
 
 def test_all_matrix_imshow_use_lower_origin(repo_root: Path) -> None:
     """Verify report plotters never use origin='upper' and always use origin='lower'."""
@@ -2519,7 +2576,12 @@ def test_pyrwfs_telemetry_subpage_and_backwards_compat(
                 },
                 "health": {"bg_mean": 100.1, "flux_ok_pct": 100.0},
                 "jitter": {"qx_mean": 0.001, "qy_mean": -0.001, "q_tt_rms_quad": 0.0184},
-                "wavefront": {"scint_idx_mean": 0.038, "curl_ratio_mean": 0.295, "lwe_metric_mean": 0.045},
+                "wavefront": {
+                    "scint_idx_mean": 0.038,
+                    "scint_debias_mean": 0.012,
+                    "curl_ratio_mean": 0.295,
+                    "lwe_metric_mean": 0.045,
+                },
                 "alignment": {
                     "pup_dx_mean": 0.04,
                     "pup_dx_std": 0.01,
@@ -2584,10 +2646,98 @@ def test_pyrwfs_telemetry_subpage_and_backwards_compat(
     (new_dir / "pyrwfs_tlm_summary.json").write_text(
         json.dumps(pyrwfs_summary, indent=2) + "\n", encoding="utf-8"
     )
+    wl_summary = {
+        "schema_version": 1,
+        "enabled": True,
+        "stage": 1,
+        "wfs_stream": "csim_wfs_nir",
+        "pha_stream": "aol1_dmC",
+        "in_pupgeom": "aol1_pyr_pupgeom",
+        "autocal_pup": True,
+        "atmturb_fresnel": 2,
+        "atmturb_fresnel_label": "Fourier Rytov (fresnel=2)",
+        "zenith_deg": 30.0,
+        "airmass": 1.1547,
+        "nframes": 5000,
+        "nblocks": 19,
+        "tint_s": 5.0,
+        "nlayers": 2,
+        "n_moving_layers": 2,
+        "n_matched_gt": 2,
+        "ksign": 1,
+        "zvalid": True,
+        "npix": 3980,
+        "dx_m": 0.106,
+        "diampix": 75.0,
+        "bg_adu": 100.0,
+        "corefrac": 0.92,
+        "fluxin": 0.78,
+        "lambda_um": 0.5,
+        "modrad_ld": 3.0,
+        "vmax_mps": 50.0,
+        "dv_mps": 0.75,
+        "has_vmaps": True,
+        "layers": [
+            {
+                "index": 0,
+                "vx_mps": 21.8,
+                "vy_mps": -0.9,
+                "speed_mps": 21.82,
+                "dir_deg": 357.6,
+                "snr": 42.5,
+                "frac_k": 0.24,
+                "frac_i": 0.55,
+                "z_m": 9120.0,
+                "zerr_m": 320.0,
+                "coh": 0.84,
+                "is_static": False,
+                "matched_gt_index": 4,
+                "matched_gt_regime": "Free Atm (Jet)",
+                "matched_gt_speed_mps": 22.0,
+                "matched_gt_dir_deg": 357.6,
+                "matched_gt_z_los_m": 8989.3,
+                "dv_mps": 0.2,
+                "dz_m": 130.7,
+            },
+            {
+                "index": 1,
+                "vx_mps": -0.5,
+                "vy_mps": -6.6,
+                "speed_mps": 6.62,
+                "dir_deg": 265.7,
+                "snr": 88.0,
+                "frac_k": 0.52,
+                "frac_i": 0.14,
+                "z_m": 250.0,
+                "zerr_m": 110.0,
+                "coh": 0.41,
+                "is_static": False,
+                "matched_gt_index": 0,
+                "matched_gt_regime": "Boundary Layer",
+                "matched_gt_speed_mps": 6.5,
+                "matched_gt_dir_deg": 264.2,
+                "matched_gt_z_los_m": 0.0,
+                "dv_mps": 0.18,
+                "dz_m": 250.0,
+            },
+        ],
+        "ground_truth_layers": [
+            {"index": 0, "regime": "Boundary Layer", "alt_agl_m": 0.0, "z_los_m": 0.0, "cn2_frac": 0.38, "speed_mps": 6.5, "dir_deg": 264.2},
+            {"index": 4, "regime": "Free Atm (Jet)", "alt_agl_m": 7785.0, "z_los_m": 8989.3, "cn2_frac": 0.13, "speed_mps": 22.0, "dir_deg": 357.6},
+        ],
+        "report_text": "# windlayers: 5000 frames, 5.0 s, 2 layers",
+    }
+    (new_dir / "windlayers_summary.json").write_text(
+        json.dumps(wl_summary, indent=2) + "\n", encoding="utf-8"
+    )
+    (new_dir / "wl1_report.txt").write_text(
+        "# windlayers: 5000 frames, 5.0 s, 2 layers\n", encoding="utf-8"
+    )
     for png in (
         "pyrwfs_flux_strehl_2x2.png",
         "pyrwfs_align_jitter_2x2.png",
         "pyrwfs_pupil_maps_2x4.png",
+        "pyrwfs_windlayers_2x2.png",
     ):
         (new_dir / png).write_bytes(b"\x89PNG\r\n\x1a\n")
 
@@ -2629,6 +2779,12 @@ def test_pyrwfs_telemetry_subpage_and_backwards_compat(
     assert 'src="pyrwfs_flux_strehl_2x2.png"' in pyr_html
     assert 'src="pyrwfs_align_jitter_2x2.png"' in pyr_html
     assert 'src="pyrwfs_pupil_maps_2x4.png"' in pyr_html
+    assert 'src="pyrwfs_windlayers_2x2.png"' in pyr_html
+    assert 'id="wind-layers-reconstruction"' in pyr_html
+    assert 'href="windlayers_summary.json"' in pyr_html
+    assert 'href="wl1_report.txt"' in pyr_html
+    assert "Fourier Rytov (fresnel=2)" in pyr_html
+    assert "0.0120" in pyr_html
     assert 'href="pyrwfs_tlm_stg1.csv"' in pyr_html
     assert 'href="pyrwfs_tlm_stg2.csv"' in pyr_html
     assert 'href="pyrwfs_tlm_summary.json"' in pyr_html

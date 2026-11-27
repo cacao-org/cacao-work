@@ -89,9 +89,16 @@
         series.push({ name: sl + " qx_mean", x: xs, y: ts.qx_mean || [], color: si === 0 ? "#059669" : "#dc2626", dash: [6, 3] });
         series.push({ name: sl + " qy_mean", x: xs, y: ts.qy_mean || [], color: si === 0 ? "#7c3aed" : "#0891b2", dash: [2, 3] });
       } else {
-        title = "Pupil Scintillation Index, Slope Curl/Div Ratio & Spider LWE";
+        title = "Pupil Scintillation (Raw & Debiased), Slope Curl/Div Ratio & Spider LWE";
         yLabel = "Metric Value";
-        series.push({ name: sl + " Scint", x: xs, y: ts.scint_idx || [], color: baseCol, dash: [] });
+        refZero = true;
+        var hasDeb = Array.isArray(ts.scint_debias) && ts.scint_debias.some(function(v) { return isFinite(v); });
+        if (hasDeb) {
+          series.push({ name: sl + " Scint (deb)", x: xs, y: ts.scint_debias, color: baseCol, dash: [] });
+          series.push({ name: sl + " Scint (raw)", x: xs, y: ts.scint_idx || [], color: si === 0 ? "#60a5fa" : "#fbbf24", dash: [4, 3] });
+        } else {
+          series.push({ name: sl + " Scint", x: xs, y: ts.scint_idx || [], color: baseCol, dash: [] });
+        }
         series.push({ name: sl + " Curl/Div", x: xs, y: ts.curl_ratio || [], color: si === 0 ? "#059669" : "#dc2626", dash: [6, 3] });
         series.push({ name: sl + " Spider LWE", x: xs, y: ts.lwe_metric || [], color: si === 0 ? "#7c3aed" : "#0891b2", dash: [2, 3] });
       }

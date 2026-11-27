@@ -135,7 +135,8 @@ def build_sim_overview_html(
         '<a class="subpage-card" href="pyrwfs.html">'
         "<div><h3>3. Pyramid WFS</h3>"
         "<p>Live Stage-1/Stage-2 packed-zone flux budget, defocus-invariant Strehl proxy, "
-        "6-DOF pupil registration, quad-cell jitter, scintillation &amp; spider LWE maps.</p></div>"
+        "temporal-variance 4-pupil geometry, noise-debiased scintillation, spider LWE, "
+        "and atmospheric wind layers reconstruction.</p></div>"
         '<span class="subpage-cta">Open Pyramid WFS &rarr;</span></a>\n'
         if has_pyrwfs_report
         else ""
@@ -174,6 +175,21 @@ def build_sim_overview_html(
     for fname, href, lbl in (
         ("cacaosim_gui_schematic.png", "config.html", "Optical Bench Schematic (Configuration)"),
         ("perturb_summary_2x2.png", "optical.html", "Realistic Perturbations: Wind, Vib & Petaling"),
+        (
+            "petal_ctrl_summary_3x2.png",
+            "optical.html",
+            "Stage-1 Passive Petal-Unwrap Control: Measurements & Corrections",
+        ),
+        (
+            "petal_ctrl_summary_2x2.png",
+            "optical.html",
+            "Stage-1 Passive Petal-Unwrap Control (petal-1 -> dm01disp06)",
+        ),
+        (
+            "adc_dispersion_summary.png",
+            "optical.html",
+            "Atmospheric Dispersion & AO188 ADC Residual Summary",
+        ),
         ("psf_comparison_2x3.png", "optical.html", "Long-Exposure PSFs (Optical Performance)"),
         ("coro_before_after_psf.png", "optical.html", "Lyot Coronagraph (Optical Performance)"),
         (
@@ -185,6 +201,11 @@ def build_sim_overview_html(
             "pyrwfs_pupil_maps_2x4.png",
             "pyrwfs.html",
             "Pyramid WFS 2D Zone & Scintillation Maps (Pyramid WFS)",
+        ),
+        (
+            "pyrwfs_windlayers_2x2.png",
+            "pyrwfs.html#wind-layers-reconstruction",
+            "Atmospheric Wind Layers Reconstruction (mlt-windlayers)",
         ),
         (
             "eof_pf_matrix_3d.png",

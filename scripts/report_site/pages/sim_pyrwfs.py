@@ -31,7 +31,10 @@ def _fmt_num(val: object, signed: bool = False, digits: int = 3, unit: str = "")
     return f"<code>{fmt.format(float(val))}{u}</code>"
 
 
-def _build_kpi_row(stages: dict[str, dict[str, object]]) -> str:
+def _build_kpi_row(
+    stages: dict[str, dict[str, object]],
+    wl_data: dict[str, object] | None = None,
+) -> str:
     cards: list[str] = []
     for skey, s_tag in (("stage1", "Stage 1 (AO3k NIR)"), ("stage2", "Stage 2 (SCExAO Vis)")):
         sd = stages.get(skey)
@@ -70,13 +73,37 @@ def _build_kpi_row(stages: dict[str, dict[str, object]]) -> str:
             continue
         jt = sd.get("jitter") if isinstance(sd.get("jitter"), dict) else {}
         wf = sd.get("wavefront") if isinstance(sd.get("wavefront"), dict) else {}
+        sc_raw = float(wf.get("scint_idx_mean", 0.0) or 0.0)
+        sc_deb = wf.get("scint_debias_mean")
+        sc_txt = (
+            f"scint deb {float(sc_deb):.4f} (raw {sc_raw:.4f})"
+            if isinstance(sc_deb, (int, float))
+            else f"scint {sc_raw:.3f}"
+        )
         cards.append(
             kpi_card(
                 f"{s_tag} Jitter / Scint / LWE",
                 f"{float(jt.get('q_tt_rms_quad', 0.0) or 0.0):.4f}",
-                f"scint {float(wf.get('scint_idx_mean', 0.0) or 0.0):.3f} | "
+                f"{sc_txt} | "
                 f"curl {float(wf.get('curl_ratio_mean', 0.0) or 0.0):.2f} | "
                 f"LWE {float(wf.get('lwe_metric_mean', 0.0) or 0.0):.3f}",
+            )
+        )
+    if isinstance(wl_data, dict) and wl_data.get("enabled"):
+        mov = [l for l in (wl_data.get("layers") or []) if isinstance(l, dict) and not l.get("is_static")]
+        n_mov = int(wl_data.get("n_moving_layers", len(mov)) or 0)
+        top_v = max((float(l.get("speed_mps", 0.0) or 0.0) for l in mov), default=0.0)
+        max_z_km = max(
+            (float(l["z_m"]) / 1000.0 for l in mov if isinstance(l.get("z_m"), (int, float))),
+            default=0.0,
+        )
+        f_lbl = str(wl_data.get("atmturb_fresnel_label") or "")
+        z_note = f" | max z {max_z_km:.1f} km" if max_z_km >= 0.5 else ""
+        cards.append(
+            kpi_card(
+                "Wind Layers (mlt-windlayers)",
+                f"{n_mov} moving",
+                f"top {top_v:.1f} m/s{z_note}" + (f" | {f_lbl}" if f_lbl else ""),
             )
         )
     return f'<div class="kpi-grid">{"".join(cards)}</div>' if cards else ""
@@ -189,13 +216,19 @@ def _build_metrics_tables(stages: dict[str, dict[str, object]]) -> str:
             "</tr>"
         )
 
+        sc_deb = wf.get("scint_debias_mean")
+        sc_cell = (
+            f'{_fmt_num(sc_deb, digits=4)} <span class="muted">(raw {_fmt_num(wf.get("scint_idx_mean"), digits=4)})</span>'
+            if isinstance(sc_deb, (int, float))
+            else _fmt_num(wf.get("scint_idx_mean"), digits=4)
+        )
         wf_rows.append(
             "<tr>"
             f"<td><strong>{lbl}</strong></td>"
             f'<td style="text-align:right;">{_fmt_num(jt.get("q_tt_rms_quad"), digits=4)}</td>'
             f'<td style="text-align:right;">{_fmt_num(jt.get("qx_mean"), signed=True, digits=4)} / '
             f'{_fmt_num(jt.get("qy_mean"), signed=True, digits=4)}</td>'
-            f'<td style="text-align:right;">{_fmt_num(wf.get("scint_idx_mean"), digits=4)}</td>'
+            f'<td style="text-align:right;">{sc_cell}</td>'
             f'<td style="text-align:right;">{_fmt_num(wf.get("curl_ratio_mean"), digits=3)}</td>'
             f'<td style="text-align:right;">{_fmt_num(wf.get("lwe_metric_mean"), digits=4)}</td>'
             f'<td style="text-align:right;">{_fmt_num(xc.get("corr_lwe_vs_petal"), signed=True, digits=2)}</td>'
@@ -260,7 +293,7 @@ def _build_metrics_tables(stages: dict[str, dict[str, object]]) -> str:
         "<th>PyWFS Stage</th>"
         '<th style="text-align:right;">TT Jitter RMS</th>'
         '<th style="text-align:right;">qx / qy Mean</th>'
-        '<th style="text-align:right;">Scint Index</th>'
+        '<th style="text-align:right;">Scint (Deb / Raw)</th>'
         '<th style="text-align:right;">Curl / Div</th>'
         '<th style="text-align:right;">Spider LWE</th>'
         '<th style="text-align:right;">r(LWE, Petal)</th>'
@@ -273,13 +306,209 @@ def _build_metrics_tables(stages: dict[str, dict[str, object]]) -> str:
     return "\n\n".join(parts)
 
 
-def _build_figures_section(out_slug_dir: Path) -> str:
+def _build_windlayers_section(
+    wl_data: dict[str, object] | None,
+    out_slug_dir: Path,
+) -> str:
+    if not isinstance(wl_data, dict) or not wl_data.get("enabled"):
+        return ""
+
+    layers = wl_data.get("layers") if isinstance(wl_data.get("layers"), list) else []
+    gt_layers = (
+        wl_data.get("ground_truth_layers")
+        if isinstance(wl_data.get("ground_truth_layers"), list)
+        else []
+    )
+    fres_lbl = html.escape(str(wl_data.get("atmturb_fresnel_label") or ""), quote=False)
+    in_pg = str(wl_data.get("in_pupgeom") or "").strip()
+    pg_src = f"SHM <code>{html.escape(in_pg, quote=False)}</code> + autocal" if in_pg else "standalone temporal-variance autocal"
+
+    wl_kpis = [
+        kpi_card(
+            "Detected Layers",
+            f"{int(wl_data.get('n_moving_layers', 0) or 0)} moving",
+            f"{int(wl_data.get('nlayers', len(layers)) or 0)} total | "
+            f"{int(wl_data.get('n_matched_gt', 0) or 0)} matched Maunakea truth",
+        ),
+        kpi_card(
+            "Scintillation Physics",
+            fres_lbl or "fresnel=0",
+            f"zenith {float(wl_data.get('zenith_deg', 30.0) or 30.0):.0f}&deg; "
+            f"(airmass {float(wl_data.get('airmass', 1.155) or 1.155):.3f}) | "
+            f"&lambda;={float(wl_data.get('lambda_um', 1.22) or 1.22):.2f} &mu;m",
+        ),
+        kpi_card(
+            "Pupil Geometry & Dark",
+            f"D = {float(wl_data.get('diampix', 0.0) or 0.0):.1f} pix",
+            f"dx {float(wl_data.get('dx_m', 0.0) or 0.0):.4f} m | "
+            f"bg {float(wl_data.get('bg_adu', 0.0) or 0.0):.1f} ADU | "
+            f"{int(wl_data.get('npix', 0) or 0)} mask pix",
+        ),
+        kpi_card(
+            "Integration",
+            f"{float(wl_data.get('tint_s', 0.0) or 0.0):.2f} s",
+            f"{int(wl_data.get('nframes', 0) or 0)} fr ({int(wl_data.get('nblocks', 0) or 0)} blocks) | "
+            f"flux_in {float(wl_data.get('fluxin', 0.0) or 0.0)*100:.1f}%",
+        ),
+    ]
+
+    l_rows: list[str] = []
+    for l in layers:
+        if not isinstance(l, dict):
+            continue
+        idx = int(l.get("index", 0) or 0)
+        is_st = bool(l.get("is_static"))
+        tag_s = f"<strong>L{idx}</strong>" + (' <span class="muted">(static)</span>' if is_st else "")
+        z_v = l.get("z_m")
+        ze_v = l.get("zerr_m")
+        if isinstance(z_v, (int, float)):
+            z_cell = f"<code>{float(z_v):.0f} m</code>"
+            if isinstance(ze_v, (int, float)):
+                z_cell += f' <span class="muted">&plusmn;{float(ze_v):.0f}</span>'
+        else:
+            z_cell = "&mdash;"
+        gt_idx = l.get("matched_gt_index")
+        if gt_idx is not None:
+            gt_reg = html.escape(str(l.get("matched_gt_regime") or ""), quote=False)
+            gt_cell = (
+                f"<strong>GT{int(gt_idx)}</strong> ({gt_reg})<br>"
+                f'<span class="muted"><code>{float(l.get("matched_gt_speed_mps", 0.0)):.1f} m/s</code> '
+                f'@ <code>{float(l.get("matched_gt_dir_deg", 0.0)):.0f}&deg;</code>, '
+                f'z<sub>LOS</sub>=<code>{float(l.get("matched_gt_z_los_m", 0.0)):.0f} m</code></span>'
+            )
+            dv = l.get("dv_mps")
+            dz = l.get("dz_m")
+            err_parts = []
+            if isinstance(dv, (int, float)):
+                err_parts.append(f"&Delta;v=<code>{float(dv):.2f} m/s</code>")
+            if isinstance(dz, (int, float)):
+                err_parts.append(f"&Delta;z=<code>{float(dz):+.0f} m</code>")
+            err_cell = "<br>".join(err_parts) if err_parts else "&mdash;"
+        elif is_st:
+            gt_cell = '<span class="muted">Static / Dome / Thermal Petaling</span>'
+            err_cell = "&mdash;"
+        else:
+            gt_cell = '<span class="muted">&mdash;</span>'
+            err_cell = "&mdash;"
+
+        l_rows.append(
+            "<tr>"
+            f"<td>{tag_s}</td>"
+            f'<td style="text-align:right;">{_fmt_num(l.get("speed_mps"), digits=2, unit="m/s")}</td>'
+            f'<td style="text-align:right;">{_fmt_num(l.get("dir_deg"), digits=1, unit="&deg;")}</td>'
+            f'<td style="text-align:right;">{_fmt_num(l.get("vx_mps"), signed=True, digits=2)} / '
+            f'{_fmt_num(l.get("vy_mps"), signed=True, digits=2)}</td>'
+            f'<td style="text-align:right;">{_fmt_num(l.get("snr"), digits=1)}</td>'
+            f'<td style="text-align:right;">{z_cell}</td>'
+            f'<td style="text-align:right;">{_fmt_num(l.get("coh"), digits=2)}</td>'
+            f'<td style="text-align:right;">{_fmt_pct(l.get("frac_k"), digits=1)} / '
+            f'{_fmt_pct(l.get("frac_i"), digits=1)}</td>'
+            f"<td>{gt_cell}</td>"
+            f'<td style="text-align:right;">{err_cell}</td>'
+            "</tr>"
+        )
+
+    tbl_html = (
+        '<div class="table-wrap" data-sortable="1"><table><thead><tr>'
+        "<th>Layer</th>"
+        '<th style="text-align:right;">Speed</th>'
+        '<th style="text-align:right;">Dir</th>'
+        '<th style="text-align:right;">v<sub>x</sub> / v<sub>y</sub> [m/s]</th>'
+        '<th style="text-align:right;">SNR</th>'
+        '<th style="text-align:right;">z<sub>LOS</sub> (&plusmn;&sigma;)</th>'
+        '<th style="text-align:right;">Coh</th>'
+        '<th style="text-align:right;">Frac K / I</th>'
+        "<th>Matched Maunakea Truth</th>"
+        '<th style="text-align:right;">Residual</th>'
+        f"</tr></thead><tbody>{''.join(l_rows)}</tbody></table></div>"
+        if l_rows
+        else "<p class=\"muted\">No valid wind layers detected above SNR threshold.</p>"
+    )
+
+    fig_html = ""
+    wl_png = "pyrwfs_windlayers_2x2.png"
+    if (out_slug_dir / wl_png).is_file():
+        cap = friendly_figure_caption(wl_png)
+        c_esc = html.escape(cap, quote=False)
+        fig_html = (
+            '<figure class="report-figure">'
+            f'<a href="{wl_png}" target="_blank" rel="noopener">'
+            f'<img src="{wl_png}" alt="{c_esc}" loading="lazy"></a>'
+            f"<figcaption>{c_esc}</figcaption>"
+            "</figure>"
+        )
+
+    gt_note = ""
+    if gt_layers:
+        gt_rows = "".join(
+            "<tr>"
+            f"<td><code>GT{int(g.get('index', 0))}</code></td>"
+            f"<td>{html.escape(str(g.get('regime', '')), quote=False)}</td>"
+            f'<td style="text-align:right;">{_fmt_num(g.get("alt_agl_m"), digits=0, unit="m")}</td>'
+            f'<td style="text-align:right;">{_fmt_num(g.get("z_los_m"), digits=0, unit="m")}</td>'
+            f'<td style="text-align:right;">{_fmt_pct(g.get("cn2_frac"), digits=1)}</td>'
+            f'<td style="text-align:right;">{_fmt_num(g.get("speed_mps"), digits=2, unit="m/s")}</td>'
+            f'<td style="text-align:right;">{_fmt_num(g.get("dir_deg"), digits=1, unit="&deg;")}</td>'
+            "</tr>"
+            for g in gt_layers
+            if isinstance(g, dict)
+        )
+        gt_note = (
+            '<details style="margin-top:0.8rem;"><summary>Ground-Truth 7-Layer Maunakea Reference '
+            "(mapped to WFS pupil pattern-motion frame &amp; zenith line-of-sight distance)</summary>"
+            '<div class="table-wrap" style="margin-top:0.5rem;"><table><thead><tr>'
+            "<th>Layer</th><th>Regime</th>"
+            '<th style="text-align:right;">Alt AGL</th>'
+            '<th style="text-align:right;">z<sub>LOS</sub></th>'
+            '<th style="text-align:right;">C<sub>n</sub>&sup2; Share</th>'
+            '<th style="text-align:right;">Speed</th>'
+            '<th style="text-align:right;">Pattern Dir</th>'
+            f"</tr></thead><tbody>{gt_rows}</tbody></table></div></details>"
+        )
+
+    rep_txt = str(wl_data.get("report_text") or "").strip()
+    rep_html = (
+        '<details style="margin-top:0.6rem;"><summary>Raw <code>mlt-windlayers</code> Text Report '
+        "(<code>wl1_report.txt</code>)</summary>"
+        f'<pre style="margin-top:0.5rem;overflow-x:auto;">{html.escape(rep_txt, quote=False)}</pre>'
+        "</details>"
+        if rep_txt
+        else ""
+    )
+
+    intro_wl = (
+        f"<p>Live Stage-1 atmospheric wind profiling from <code>milk-fpsexec-mlt-windlayers</code> "
+        f"combining <code>{html.escape(str(wl_data.get('wfs_stream', 'csim_wfs_nir')), quote=False)}</code> "
+        f"4-pupil intensity fluctuations with <code>{html.escape(str(wl_data.get('pha_stream', 'aol1_dmC')), quote=False)}</code> "
+        f"wavefront curvature using {pg_src} and dark pedestal subtraction.</p>"
+    )
+
+    return "\n\n".join(
+        p
+        for p in (
+            '<h2 id="wind-layers-reconstruction">Atmospheric Wind Layers Reconstruction '
+            f'{render_section_badges(["loop_operation", "analysis"])}</h2>',
+            intro_wl,
+            f'<div class="kpi-grid">{"".join(wl_kpis)}</div>',
+            tbl_html,
+            fig_html,
+            gt_note,
+            rep_html,
+        )
+        if p
+    )
+
+
+def _build_figures_section(out_slug_dir: Path, has_wl_section: bool = False) -> str:
     figs: list[str] = []
-    for fname in (
+    fig_list = [
         "pyrwfs_flux_strehl_2x2.png",
         "pyrwfs_align_jitter_2x2.png",
         "pyrwfs_pupil_maps_2x4.png",
-    ):
+    ]
+    if not has_wl_section:
+        fig_list.append("pyrwfs_windlayers_2x2.png")
+    for fname in fig_list:
         if (out_slug_dir / fname).is_file():
             cap = friendly_figure_caption(fname)
             f_esc = html.escape(fname, quote=True)
@@ -307,6 +536,9 @@ def _build_files_section(out_slug_dir: Path) -> str:
         ("pyrwfs_tlm_stg2.csv", "Stage 2 (SCExAO Vis PyWFS) per-frame telemetry time series"),
         ("pyrwfs_tlm_summary.json", "Aggregated per-stage Pyramid WFS telemetry & cross-check JSON"),
         ("pyrwfs_tlm_meta.json", "Live monitor capture metadata (rates, strides, flat f_pup0)"),
+        ("windlayers_summary.json", "Stage-1 atmospheric wind layers reconstruction & Maunakea truth comparison JSON"),
+        ("wl1_report.txt", "Live mlt-windlayers layer velocity, altitude & pupil geometry text report"),
+        ("wl1_info.txt", "MILK FPS configuration & runtime telemetry snapshot for wl-1"),
     ):
         fp = out_slug_dir / fname
         if fp.is_file():
@@ -343,14 +575,19 @@ def _build_metric_reference() -> str:
         "<td>Projection of normalized WFS signal onto the even-order Strehl mode divided by pupil RMS</td>"
         "<td>Quantifies even-order nonlinearity / optical-gain departure relative to the flat-WF reference.</td></tr>"
         "<tr><td><code>dx, dy, ds, d_ast, rot</code></td>"
-        "<td>6-DOF affine decomposition of soft-Sobel ZNCC 4-pupil edge registration</td>"
-        "<td>Tracks common pupil shift, radial magnification/separation, astigmatic scale, and rotation "
-        "at sub-pixel accuracy without being biased by pyramid apex diffraction.</td></tr>"
-        "<tr><td><code>scint_idx</code>, <code>curl_ratio</code>, <code>lwe_metric</code></td>"
-        "<td>EMA pupil intensity variance <code>&sigma;&sup2;/I&#772;&sup2;</code>, "
+        "<td>6-DOF affine decomposition of temporal-variance + quadrupole-debiased 4-pupil geometry &amp; edge registration</td>"
+        "<td>Locates all 4 pupils by minimizing the temporal variance of the aligned 4-pupil sum, "
+        "debiased for scintillation via the quadrupole combination <code>(I0+I3)&minus;(I1+I2)</code>, "
+        "and tracks live shift, magnification, astigmatic scale, and rotation without apex diffraction bias.</td></tr>"
+        "<tr><td><code>scint_idx</code>, <code>scint_debias</code>, <code>curl_ratio</code>, <code>lwe_metric</code></td>"
+        "<td>Raw &amp; lag-1 noise-debiased pupil intensity variance <code>&sigma;&sup2;/I&#772;&sup2;</code>, "
         "<code>RMS(&nabla;&times;S)/RMS(&nabla;&middot;S)</code>, spider-flanking flux RMS</td>"
-        "<td>Diagnoses pupil-plane scintillation, non-conservative branch-point/diffraction slopes, "
-        "and Subaru spider-island thermal petaling / Low-Wind Effect (LWE).</td></tr>"
+        "<td>Exact EMA lag-1 white-noise cancellation isolates true temporally correlated flying-shadow "
+        "scintillation from photon/readout noise; curl/div and spider LWE diagnose branch points and thermal petaling.</td></tr>"
+        "<tr><td><code>mlt-windlayers</code></td>"
+        "<td>Cross-spectral velocity mapping of 4-pupil sum intensity (<code>vmapi</code>) vs. wavefront curvature (<code>vmapk</code>)</td>"
+        "<td>Reconstructs multi-layer wind vectors <code>(vx, vy)</code> and line-of-sight propagation altitudes "
+        "<code>z_LOS</code> via Fresnel/Rytov curvature&ndash;scintillation cross-correlation using calibrated 4-pupil geometry.</td></tr>"
         "</tbody></table></div>"
     )
 
@@ -368,19 +605,22 @@ def build_sim_pyrwfs_html(
 ) -> str:
     """Build the dedicated Pyramid WFS Telemetry sub-page (<slug>/pyrwfs.html)."""
     stages = pyrwfs_data.get("stages") if isinstance(pyrwfs_data.get("stages"), dict) else {}
-    kpi_html = _build_kpi_row(stages)  # type: ignore[arg-type]
+    wl_data = pyrwfs_data.get("windlayers") if isinstance(pyrwfs_data.get("windlayers"), dict) else None
+    kpi_html = _build_kpi_row(stages, wl_data=wl_data)  # type: ignore[arg-type]
     explorer_html = _build_explorer_panel(pyrwfs_data)
     tables_html = _build_metrics_tables(stages)  # type: ignore[arg-type]
-    figs_html = _build_figures_section(out_slug_dir)
+    wl_html = _build_windlayers_section(wl_data, out_slug_dir)
+    figs_html = _build_figures_section(out_slug_dir, has_wl_section=bool(wl_html))
     files_html = _build_files_section(out_slug_dir)
     ref_html = _build_metric_reference()
 
     intro = (
         "<p>Live Pyramid WFS telemetry captured during closed-loop science integration by "
-        "<code>cacao-fpsexec-pyrwfstlm</code> (<code>pyWFStlm</code>): single-pass packed-zone "
-        "flux partitioning, defocus-invariant Strehl proxy, quad-cell tip/tilt jitter, "
-        "edge-based 6-DOF 4-pupil alignment tracking, pupil-plane scintillation, slope curl, "
-        "and Subaru spider-flanking LWE / petaling diagnostics.</p>"
+        "<code>cacao-fpsexec-pyrwfstlm</code> (<code>pyWFStlm</code>) and "
+        "<code>milk-fpsexec-mlt-windlayers</code>: temporal-variance 4-pupil geometry, "
+        "packed-zone flux partitioning, defocus-invariant Strehl proxy, quad-cell tip/tilt jitter, "
+        "noise-debiased pupil scintillation, slope curl, Subaru spider-flanking LWE / petaling "
+        "diagnostics, and multi-layer atmospheric wind reconstruction.</p>"
     )
 
     raw_body = "\n\n".join(
@@ -391,6 +631,7 @@ def build_sim_pyrwfs_html(
             kpi_html,
             explorer_html,
             tables_html,
+            wl_html,
             figs_html,
             files_html,
             ref_html,

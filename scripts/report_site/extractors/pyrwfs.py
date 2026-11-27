@@ -29,6 +29,7 @@ PYRWFS_TS_COLS: list[str] = [
     "qy_rms",
     "qdiag",
     "scint_idx",
+    "scint_debias",
     "curl_ratio",
     "lwe_metric",
     "pup_dx",
@@ -144,6 +145,11 @@ def _summarize_csv_fallback(csv_path: Path, stg_idx: int) -> dict[str, object] |
         },
         "wavefront": {
             "scint_idx_mean": _mean("scint_idx"),
+            **(
+                {"scint_debias_mean": _mean("scint_debias")}
+                if "scint_debias" in cols
+                else {}
+            ),
             "curl_ratio_mean": _mean("curl_ratio"),
             "lwe_metric_mean": _mean("lwe_metric"),
         },
@@ -197,7 +203,18 @@ def extract_pyrwfs_telemetry_data(
             if fb is not None:
                 stages[skey] = fb
 
-    if not stages:
+    wl_data: dict[str, object] | None = None
+    wl_path = out_slug_dir / "windlayers_summary.json"
+    if wl_path.is_file():
+        loaded_wl = load_json_safe(wl_path)
+        if isinstance(loaded_wl, dict) and loaded_wl.get("enabled"):
+            wl_data = dict(loaded_wl)
+    if wl_data is None:
+        m_wl = metrics_data.get("windlayers")
+        if isinstance(m_wl, dict) and m_wl.get("enabled"):
+            wl_data = dict(m_wl)
+
+    if not stages and wl_data is None:
         return None
 
     timeseries: dict[str, dict[str, list[float]]] = {}
@@ -215,4 +232,5 @@ def extract_pyrwfs_telemetry_data(
         "reg_stride": int(summary.get("reg_stride", 20)),
         "stages": stages,
         "timeseries": timeseries,
+        "windlayers": wl_data,
     }

@@ -44,6 +44,7 @@ PYRWFS_IMAGES = {
     "pyrwfs_flux_strehl_2x2.png",
     "pyrwfs_align_jitter_2x2.png",
     "pyrwfs_pupil_maps_2x4.png",
+    "pyrwfs_windlayers_2x2.png",
 }
 
 FRIENDLY_FIG_LABELS: dict[str, str] = {
@@ -182,6 +183,21 @@ FRIENDLY_FIG_LABELS: dict[str, str] = {
     "pyrwfs_pupil_maps_2x4.png": (
         "Pyramid WFS 2D Diagnostic Maps: Zone Geometry, Registered 4-Pupil Sum, "
         "Scintillation & Local Variance (2x4)"
+    ),
+    "pyrwfs_windlayers_2x2.png": (
+        "Atmospheric Wind Layers Reconstruction (mlt-windlayers): "
+        "Curvature, Scintillation & Cross-Correlation Velocity Maps + Altitude Profile (2x2)"
+    ),
+    "adc_dispersion_summary.png": (
+        "Atmospheric Dispersion, Chromatic Shear & AO188 ADC Residual Summary (1x3)"
+    ),
+    "petal_ctrl_summary_2x2.png": (
+        "Stage-1 Passive Petal-Unwrap Controller (petal-1 -> dm01disp06): "
+        "Even/Odd EMA Signals, Thermal Petaling vs WFE & DM1 Channel Map (2x2)"
+    ),
+    "petal_ctrl_summary_3x2.png": (
+        "Stage-1 Passive Petal-Unwrap Controller (petal-1 -> dm01disp06): "
+        "PyWFS1 Measurements, Applied Corrections & Residual Island OPD (3x2)"
     ),
 }
 
