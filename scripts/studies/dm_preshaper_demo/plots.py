@@ -603,8 +603,8 @@ def build_all_figures_and_metrics(raw_dir: Path, out_dir: Path) -> dict[str, Any
     ks_zern = _kernel_stats(c_zern, pf_zern.shape, "Zernike 28-Mode MIMO", "ps_zernike28_mimo.fits")
     ks_astro = _kernel_stats(c_astro, pf_astro.shape, "Astrogrid + Rim MIMO", "ps_astro20_mimo.fits")
 
-    fig = plt.figure(figsize=(15.2, 9.8))
-    gs = fig.add_gridspec(2, 6, height_ratios=[1.10, 1.05], left=0.055, right=0.975, top=0.915, bottom=0.065, hspace=0.34, wspace=0.42)
+    fig = plt.figure(figsize=(15.8, 9.8))
+    gs = fig.add_gridspec(2, 6, height_ratios=[1.10, 1.05], left=0.055, right=0.975, top=0.915, bottom=0.065, hspace=0.34, wspace=0.62)
 
     vmin_k, vmax_k = -2.6, 0.35
 
@@ -780,7 +780,7 @@ def build_all_figures_and_metrics(raw_dir: Path, out_dir: Path) -> dict[str, Any
     ax.set_xlim(1.0, 18.0)
     ax.set_ylim(0.0, 60.0)
     ax.set_xlabel("Time after DM step command [ms]")
-    ax.set_ylabel("2D traveling wave residual ‖OPD(t)−OPD_static‖ / ‖OPD_static‖ [%]")
+    ax.set_ylabel("2D wave residual ‖OPD(t)−OPD_static‖ / ‖OPD_static‖ [%]", fontsize=9.0)
     ax.set_title("(b) Full-Pupil 2D Circular Plate Wave Energy vs. Time")
     ax.grid(True)
     ax.legend(loc="upper right", frameon=True, facecolor="white", fontsize=8.2)
@@ -1100,12 +1100,12 @@ def build_all_figures_and_metrics(raw_dir: Path, out_dir: Path) -> dict[str, Any
            label=f"WITH Astrogrid MIMO (1.5 kHz = {m_ag_sq['mimo']['a1500_nm']:.1f} nm, 3rd/1st = {m_ag_sq['mimo']['ratio_3_1']:.2f})")
     ax.axvline(1567.0, color="#1e40af", ls="--", lw=1.2, label="Plate resonance f_res(k=8) = 1,567 Hz")
     ax.set_xlim(0.0, 3050.0)
-    ax.set_ylim(0.0, 295.0)
+    ax.set_ylim(0.0, 355.0)
     ax.set_xlabel("Temporal frequency f [Hz]")
     ax.set_ylabel("Fourier amplitude [nm RMS]")
     ax.set_title(f"(c) 500 Hz Astrogrid Spectrum (8 kHz): 1.5 kHz Resonance Crushed {ag_1500_title:.1f}×")
     ax.grid(True, axis="y")
-    ax.legend(loc="upper left", frameon=True, facecolor="white", fontsize=8.0)
+    ax.legend(loc="upper right", frameon=True, facecolor="white", fontsize=7.8)
 
     # (d) Summary across 3 Astrogrid regimes (1.5 kHz vibration & Turn-Off Ring-Down)
     ax = axes[1, 1]
@@ -1295,7 +1295,7 @@ def build_all_figures_and_metrics(raw_dir: Path, out_dir: Path) -> dict[str, Any
     ax.semilogy(r_cent, prof_rd_mimo, color="#059669", ls="--", lw=2.0,
                 label=f"Turn-Off Ring-Down — WITH Pre-Shaper (avg: {dh_rd_mimo:.2e}, {dh_rd_off/max(dh_rd_mimo,1e-12):.1f}× better)")
     ax.set_xlim(3.5, 22.0)
-    ax.set_ylim(1e-7, 2e-3)
+    ax.set_ylim(1e-7, 8e-3)
     ax.set_xlabel("Angular separation [λ/D] (excluding 4 primary spots)")
     ax.set_ylabel("Azimuthally averaged H-band raw contrast")
     ax.set_title("(d) H-Band Coronagraphic Dark-Hole Contrast Leakage From DM Ringing")
@@ -1910,16 +1910,18 @@ def build_all_figures_and_metrics(raw_dir: Path, out_dir: Path) -> dict[str, Any
             ax.bar(x_g + offs, vals, width=w_g, color=col, alpha=0.92, label=lbl)
         for i_p, p in enumerate(pnames):
             v_off = pa_metrics[p]["off"]["full_wave_ring_pct"]
+            v_k3 = pa_metrics[p]["k3"]["full_wave_ring_pct"]
             v_k4 = pa_metrics[p]["k4"]["full_wave_ring_pct"]
-            ax.text(
-                i_p + 1.5 * w_g,
-                v_k4 + 0.55,
+            ax.annotate(
                 f"{v_off / max(v_k4, 1e-6):.1f}×\n({(v_off / max(v_k4, 1e-6))**2:.0f}×E)",
+                xy=(i_p + 1.5 * w_g, v_k4 + 0.15),
+                xytext=(i_p + 1.5 * w_g, max(v_k3, v_k4) + 1.1),
                 ha="center",
                 va="bottom",
-                fontsize=7.1,
+                fontsize=7.0,
                 fontweight="bold",
                 color="#065f46",
+                arrowprops=dict(arrowstyle="->", color="#065f46", lw=0.9, shrinkA=1, shrinkB=1),
             )
         ax.set_xticks(x_g)
         ax.set_xticklabels(loc_names, fontsize=8.4)
