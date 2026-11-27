@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: 2026 Olivier Guyon et al
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# SCExAO Visible Pyramid WFS Tip-Tilt Mount Closed-Loop Differential TT Offload
+# (milk-fpsexec-milk-calc, triggered on Stage-3 LLOWFS modal DM command aol3_modevalDM @ 500 Hz)
+#
+# Physics & Control Law:
+#   Stage 2 (Vis PyWFS @ 0.75 um) and Stage 3 (H-band Lyot LLOWFS @ 1.65 um) see residual
+#   differential chromatic tip-tilt delta_vh (e.g. +23.5 mas = 1.21 l/D under AO188 H-band LUT
+#   at z = 30 deg, or unknown ADC LUT / PA / bench flexure offsets). With ZPO active, Stage 3
+#   holds u_3 ~ g_opt_2 * (u_ttm - delta_vh) on dm02disp04 to keep the H-band star centered on
+#   the Lyot coronagraph.
+#
+#   Because a Lyot-stop reflection LLOWFS behind a 3.0 l/D focal-plane occulter couples Zernike
+#   tip-tilt with coma in its lowest singular values (the near-null-space Tilt-Coma modes of
+#   Stage 3's SVD), projecting raw 50x50 dm02disp04 can suffer sign-reversing coma contamination.
+#   Projecting aol3_modevalDM through the singular-value-filtered projector aol2_visttM (2xN_m)
+#   isolates the well-conditioned Stage-3 TT subspace cleanly, and integrating:
+#       u_ttm <- clamp(u_ttm - clamp(gain * err_tt, -slew_max, +slew_max), -max_stroke, +max_stroke)
+#   drives BOTH the Visible star onto the pyramid apex AND the H-band star onto the Lyot FPM.
+#
+# Streams read:
+#   aol3_modevalDM   (N_m x 1 f32) : Stage-3 LLOWFS modal DM command (trigger @ 500 Hz)
+#   aol2_visttM      (2 x N_m f32) : Well-conditioned Stage-3 TT projector [um edge / mode]
+#   aol2_vistt_bx    (2 x 1 f32)   : X unit basis vector [1, 0]
+#   aol2_vistt_by    (2 x 1 f32)   : Y unit basis vector [0, 1]
+#
+# Streams written:
+#   aol2_vistt_err   (2 f32)       : Measured Stage-3 well-conditioned TT [um edge mechanical]
+#   dm_vis_pyrwfs_tt (2 x 1 f32)   : Visible PyWFS TTM command [um edge mechanical]
+
+aol2_vistt_err = aol2_visttM @ vec(aol3_modevalDM)
+local ex = aol2_vistt_err[0]
+local ey = aol2_vistt_err[1]
+err_x_mas = ex * mas_per_um
+err_y_mas = ey * mas_per_um
+
+if enable != 0 {
+    local dx = -gain * ex
+    local dy = -gain * ey
+    if dx > slew_max {
+        dx = slew_max
+    }
+    if dx < -slew_max {
+        dx = -slew_max
+    }
+    if dy > slew_max {
+        dy = slew_max
+    }
+    if dy < -slew_max {
+        dy = -slew_max
+    }
+    local nx = cmd_x + dx
+    local ny = cmd_y + dy
+    if nx > max_stroke {
+        nx = max_stroke
+    }
+    if nx < -max_stroke {
+        nx = -max_stroke
+    }
+    if ny > max_stroke {
+        ny = max_stroke
+    }
+    if ny < -max_stroke {
+        ny = -max_stroke
+    }
+    cmd_x = nx
+    cmd_y = ny
+    dm_vis_pyrwfs_tt = aol2_vistt_bx * cmd_x + aol2_vistt_by * cmd_y
+    n_steps = n_steps + 1
+}
+
+cmd_x_mas = cmd_x * mas_per_um
+cmd_y_mas = cmd_y * mas_per_um

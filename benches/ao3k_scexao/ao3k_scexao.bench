@@ -5,36 +5,52 @@
 #
 # Entrance Pupil  : Subaru Nasmyth-IR (D=7.95 m, cobs=0.307, 4 offset-V spiders @ +/-51.75 deg,
 #                   offset=0.08289 D, width=0.02314 D), end-to-end telescope throughput = 20%
-# Stage 1 (AO3k)  : 64x64 DM (D=60 act, dm01disp) + J-band (1.22 um, 20% BW, 2ch) 160x160 PyWFS 1kHz
-# Stage 2 (SCExAO): 50x50 DM (D=46 act, dm02disp) + Vis (0.75 um, 20% BW, 2ch) 120x120 PyWFS @ 2 kHz
-# Stage 3 (LLOWFS): H-band (1.65 um, 18% BW, 3ch) 3.0 l/D Lyot coronagraph with reflective Lyot stop
+# Atmosphere      : Maunakea (4205 m, 615 hPa, 2 C, 20% RH) at default zenith_deg = 30.0 deg,
+#                   refractive dispersion + 3-wl [0.75, 1.22, 1.65] um chromatic turbulence shear
+# Fore-Optics ADC : Subaru AO188 counter-rotating prism ADC (Egner 2009 Table 11, whole-band LUT)
+# Stage 1 (AO3k)  : 64x64 DM (D=60 act, dm01disp) + J-band (1.22 um, 20% BW, 5ch) 160x160 PyWFS 1kHz
+# Stage 2 (SCExAO): 50x50 DM (D=46 act, dm02disp) + Vis PyWFS TTM (dm_vis_pyrwfs_tt) +
+#                   Vis (0.75 um, 20% BW, 5ch) 120x120 PyWFS @ 2 kHz
+# Stage 3 (LLOWFS): H-band (1.65 um, 18% BW, 5ch) 3.0 l/D Lyot coronagraph with reflective Lyot stop
 #                   feeding a defocused (200 nm Z4) 64x64 focal-plane LLOWFS @ 500 Hz (ZPO -> Stg2)
-# Science PSFs    : Simultaneous Visible (0.75 um, 15% BW, 3ch), Near-IR H (1.65 um, 18% BW, 3ch)
-#                   unocculted cameras (Pre-AO, Post-Stg1, Final Stg2) + Post-Lyot H-band Coro Cam.
+# Science PSFs    : Simultaneous Visible (0.75 um, 15% BW, 7-9ch), Near-IR H (1.65 um, 18% BW, 5ch)
+#                   unocculted cameras (Pre-AO/ADC, Post-Stg1, Final Stg2) + Post-Lyot Coro Cam.
 
 [bench]
-name          = "subaru_ao3k_scexao"
-nwf           = 256
-pup_diam      = 0.9375
-cobs          = 0.307
-nspider       = 4
-spider_w      = 0.02314
-spider_deg    = 51.75
-spider_offset = 0.08289
-tel_diam_m    = 7.95
-star_mag      = 6.0
-star_teff     = 9600.0
-tput_tel      = 0.20
-master_hz     = 2000.0
-oversample    = 4
-in_wf         = "outarraypha"
-in_pup        = "csim_pup"
-out_beam      = "b_pup"
-wf_unit       = 1
-ref_lambda    = 0.50
-turb_gain     = 0.0
+name                 = "subaru_ao3k_scexao"
+nwf                  = 256
+pup_diam             = 0.9375
+cobs                 = 0.307
+nspider              = 4
+spider_w             = 0.02314
+spider_deg           = 51.75
+spider_offset        = 0.08289
+tel_diam_m           = 7.95
+star_mag             = 6.0
+star_teff            = 9600.0
+tput_tel             = 0.20
+master_hz            = 2000.0
+oversample           = 4
+in_wf                = "outarraypha"
+in_pup               = "csim_pup"
+out_beam             = "b_pup"
+wf_unit              = 1
+ref_lambda           = 0.50
+turb_gain            = 0.0
+atm_disp_enable      = 1
+zenith_deg           = 30.0
+disp_pa_deg          = 0.0
+imr_mode             = "pupil_track"
+parallactic_rate_dps = 0.0
+site_alt_m           = 4205.0
+atm_pressure_hpa     = 615.0
+atm_temp_c           = 2.0
+atm_rh_pct           = 20.0
+atm_disp_ref_um      = 1.65
+chrom_turb           = 1
+chrom_lambdas        = "0.75,1.22,1.65"
 
-# --- Stage 0: Uncorrected Entrance Pupil PSFs (Visible & Near-IR) ---
+# --- Stage 0: Uncorrected Pre-ADC Entrance Pupil PSFs (Visible & Near-IR) ---
 [fpcam.vis_raw]
 in            = "b_pup"
 out_cam       = "psf_vis_raw"
@@ -43,7 +59,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 0.75
 bw_frac       = 0.15
-nlambda       = 3
+nlambda       = 9
 qe            = 0.85
 pixscale_ld   = 2.20
 use_beam_flux = 1
@@ -60,7 +76,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
-nlambda       = 3
+nlambda       = 5
 qe            = 0.85
 pixscale_ld   = 2.50
 use_beam_flux = 1
@@ -69,9 +85,22 @@ ron_e         = 0.5
 sat_adu       = 1.0e9
 out_dtype     = "float32"
 
+# --- Fore-Optics: Subaru AO188 Atmospheric Dispersion Compensator (Egner 2009 Table 11) ---
+[adc.ao188]
+in            = "b_pup"
+out           = "b_adc"
+preset        = "ao188"
+mode          = "lut"
+opt_band      = "whole"
+ideal_mech    = 1
+tput_enable   = 1
+tput_base     = 0.96
+in_cmd        = "ao188_adc_cmd"
+out_state     = "ao188_adc_state"
+
 # --- Stage 1 (AO3k): 64x64 ALPAO Magnetic DM (Plate PDE, D=60 act) + 160x160 J-Band PyWFS ---
 [dm.ao3k]
-in           = "b_pup"
+in           = "b_adc"
 out          = "b_post_stg1"
 in_cmd       = "dm01disp"
 out_opd      = "csim_dm01_opd"
@@ -102,7 +131,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 0.75
 bw_frac       = 0.15
-nlambda       = 3
+nlambda       = 7
 qe            = 0.85
 pixscale_ld   = 2.20
 use_beam_flux = 1
@@ -119,7 +148,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
-nlambda       = 3
+nlambda       = 5
 qe            = 0.85
 pixscale_ld   = 2.50
 use_beam_flux = 1
@@ -190,12 +219,26 @@ mode      = "gray"
 r_gray    = 0.90
 t_gray    = 0.10
 
+# SCExAO Visible Pyramid WFS 2-axis Tip-Tilt Mount (corrects differential Vis-NIR TT)
+[ttm.vis_pyrwfs]
+in         = "b_vis_wfs"
+out        = "b_vis_wfs_tt"
+in_cmd     = "dm_vis_pyrwfs_tt"
+dm_diam    = 0.9375
+tput       = 0.99
+max_stroke = 5.0
+dac_bits   = 16
+dyn_mode   = "rc"
+tau_us     = 500.0
+delay_us   = 500.0
+
 [pyrwfs.wfs_vis]
-in            = "b_vis_wfs"
+in            = "b_vis_wfs_tt"
 out_cam       = "csim_wfs_vis"
 ncam          = 120
 lambda_um     = 0.75
 bw_frac       = 0.20
+nlambda       = 5
 qe            = 0.85
 use_beam_flux = 1
 rate_hz       = 2000.0
@@ -212,7 +255,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 0.75
 bw_frac       = 0.15
-nlambda       = 3
+nlambda       = 7
 qe            = 0.85
 pixscale_ld   = 2.20
 use_beam_flux = 1
@@ -229,7 +272,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
-nlambda       = 3
+nlambda       = 5
 qe            = 0.85
 pixscale_ld   = 2.50
 use_beam_flux = 1
@@ -248,7 +291,7 @@ out_pre_lyot_long  = "coro_pre_lyot_long"
 mode               = "lyot_spot"
 lambda_um          = 1.65
 bw_frac            = 0.18
-nlambda            = 3
+nlambda            = 5
 fpm_rad_ld         = 3.0
 fpm_amp            = 0.0
 lowfs_mode         = "lyot_refl"
@@ -269,7 +312,7 @@ ncam          = 256
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
-nlambda       = 3
+nlambda       = 5
 qe            = 0.85
 pixscale_ld   = 2.50
 use_beam_flux = 1
@@ -295,7 +338,7 @@ ncam          = 64
 prop_mode     = "mft"
 lambda_um     = 1.65
 bw_frac       = 0.18
-nlambda       = 3
+nlambda       = 5
 qe            = 0.85
 pixscale_ld   = 2.00
 use_beam_flux = 1

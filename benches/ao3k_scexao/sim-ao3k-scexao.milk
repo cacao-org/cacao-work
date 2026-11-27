@@ -40,6 +40,10 @@ MULT_TT=""
 MMULT_FLOOR=""
 MMULT_ALPHA="1.0"
 DMMASK_RMAX=""
+DMMASK_RMIN=""
+DMMASK_COBS_SLAVE="1"
+WFSMASK_DILATE="2"
+WFSMASK_DILATE2="2"
 MGAIN_ALPHA="0.8"
 MGAIN_FLOOR="0.10"
 MGAIN_TT="1.0"
@@ -128,12 +132,35 @@ PYRWFS_TLM="1"
 PYRWFS_STRIDE=""
 PETAL_CTRL="0"
 PETAL_USE_SIGN="auto"
-PETAL_ALPHA="0.0008"
-PETAL_WARMUP="1500"
-PETAL_TH_EVEN="0.58"
-PETAL_TH_SIGN="0.35"
+PETAL_ALPHA="0.0018"
+PETAL_WARMUP="900"
+PETAL_TH_EVEN="0.62"
+PETAL_TH_SIGN="0.65"
+PETAL_FAST_ALPHA="0.0"
+PETAL_FAST_WARMUP="250"
+PETAL_FAST_TH_EVEN="0.85"
+PETAL_FAST_TH_SIGN="0.75"
+PETAL_FAST_TH_CON="1.15"
+PETAL_FAST_DWELL="20"
+PETAL_ABORT_WIN="250"
+PETAL_VERIFY_WIN="500"
 PETAL_ENABLE_AT="warmup"
 PETAL_TEST_INJECT=""
+ZENITH_DEG="30.0"
+DISP_PA_DEG="0.0"
+IMR_MODE="pupil_track"
+PARALLACTIC_RATE_DPS="0.0"
+ADC_MODE="lut"
+ADC_PRESET="ao188"
+ADC_OPT_BAND="whole"
+ADC_ANGLES=""
+ADC_LUT_ERR=""
+ADC_MECH="ideal"
+CHROM_TURB="1"
+CHROM_LAMBDAS="0.75,1.22,1.65"
+ATMTURB_FRESNEL="0"
+VIS_TTM_MODE="closed"
+VIS_TTM_GAIN="0.03"
 
 usage() {
     cat <<EOF
@@ -220,12 +247,17 @@ Options:
   --og1-no-apply      Run Stage-1 modalog in shadow mode without updating mWFSfact
   --live-2wfs1dm-sec <s> Run live Stage-2 2WFS1DM calibration burst [s] before science
   --windlayers1       Enable live Stage-1 mlt-windlayers profiler & EOF physics prior
+  --atmturb-fresnel <m> Atmospheric Fresnel scintillation: 0=geom, 1=split-step, 2=Rytov (def: ${ATMTURB_FRESNEL})
   --pf-zoh-ridge <v>  Stage-1 mkEOFPF ZOH-centered ridge regularization (ON|OFF)
   --pf-zoh-ridge2 <v> Stage-2 mkEOFPF ZOH-centered ridge regularization (ON|OFF)
   --mult-tt <float>   Stage-1 low-order (0..lo-1) leak multiplier override (def: --mult1)
   --mmult-floor <f>   Stage-1 highest-mode leak multiplier floor (unset = flat --mult1)
   --mmult-alpha <f>   Stage-1 per-mode leak rolloff exponent (def: ${MMULT_ALPHA})
   --dmmask-rmax <f>   Stage-1 active DM mask outer radius [act] for rim slaving (unset = auto)
+  --dmmask-rmin <f>   Stage-1 active DM mask inner CO radius [act] for CO rim slaving (unset = auto)
+  --no-dmmask-cobs-slave Disable harmonic central-obstruction & rim DM actuator slaving (default: ON)
+  --wfsmask-dilate <r> Stage-1 PyWFS mask dilation radius [pix] (default: ${WFSMASK_DILATE}, 0 = off)
+  --wfsmask-dilate2 <r> Stage-2 PyWFS mask dilation radius [pix] (default: ${WFSMASK_DILATE2}, 0 = off)
   --pf-mix-tt <float> Stage-1 low-order (0..lo-1) predictive mix override [0..1]
   --pf-lo-nmode <n>   Leading Stage-1 modes receiving --pf-mix-tt / --mult-tt (def: ${PF_LO_NMODE})
   --pf-diff-nmode <n> Stage-1 leading modes solved in difference-space EOF (0=off)
@@ -264,8 +296,31 @@ Options:
   --petal-warmup <n>  Petal averaging warmup frames before jump trigger (default: ${PETAL_WARMUP})
   --petal-th-even <f> Petal Even detection threshold in waves (default: ${PETAL_TH_EVEN})
   --petal-th-sign <f> Petal Odd chromatic sign confirmation threshold (default: ${PETAL_TH_SIGN})
+  --petal-fast-alpha <f> Optional dual-timescale fast-branch EMA alpha (default: ${PETAL_FAST_ALPHA}, 0 = off)
+  --petal-fast-warmup <n> Fast-branch warmup frames before jump trigger (default: ${PETAL_FAST_WARMUP})
+  --petal-fast-th-even <f> Fast-branch Even detection threshold in waves (default: ${PETAL_FAST_TH_EVEN})
+  --petal-fast-th-sign <f> Fast-branch Odd chromatic sign threshold (default: ${PETAL_FAST_TH_SIGN})
+  --petal-fast-th-con <f> Fast-branch 3-other-petal sign contrast threshold (default: ${PETAL_FAST_TH_CON})
+  --petal-fast-dwell <n> Fast-branch consecutive confirmation frames before jump (default: ${PETAL_FAST_DWELL})
+  --petal-abort-win <n> Post-jump early-confirm / wrong-way abort window [frames] (default: ${PETAL_ABORT_WIN})
+  --petal-verify-win <n> Post-jump rollback verification window [frames] (default: ${PETAL_VERIFY_WIN})
   --petal-enable-at <p> When to enable petal jumps: warmup (default) or science (t_phys=0)
-  --petal-test-inject <s> Optional test petal injection spec into dm01disp07 at t_phys=0
+  --petal-test-inject <s> Optional test petal step (petal:waves@t_sec) injected into LWE entrance-pupil input
+  --zenith-deg <f>    Target zenith distance [deg] for atmospheric dispersion (default: ${ZENITH_DEG})
+  --disp-pa-deg <f>   Parallactic / zenith dispersion PA on pupil [deg] (default: ${DISP_PA_DEG})
+  --imr-mode <m>      Image rotator mode: pupil_track (default) or field_track
+  --parallactic-rate-dps <f> Parallactic angle drift rate [deg/s] (default: ${PARALLACTIC_RATE_DPS})
+  --adc-mode <m>      AO188 ADC mode: lut (default), retracted, manual, shm, lut_plus_shm
+  --adc-preset <p>    AO188 ADC optical model: ao188 (default), ao188_nominal, snell_doublet
+  --adc-opt-band <b>  AO188 ADC LUT optimization band: whole (default), H, J, z, K', K, vis
+  --adc-angles <a,b>  Manual prism angles theta1,theta2 [deg] (use with --adc-mode manual)
+  --adc-lut-err <s,p> LUT calibration error: scale_err,pa_err_deg (e.g. 0.15,5.0)
+  --adc-mech <m>      ADC stage mechanics: ideal (default) or realistic (Egner Table 29)
+  --chrom-turb        Enable 3-wl chromatic atmospheric turbulence shear (default: ON)
+  --no-chrom-turb     Disable chromatic atmospheric turbulence shear (achromatic screen)
+  --vis-ttm-mode <m>  SCExAO Vis PyWFS TTM mode: closed (default), ff+closed, feedforward, off
+  --no-vis-ttm        Disable SCExAO Vis PyWFS differential TT mount (same as --vis-ttm-mode off)
+  --vis-ttm-gain <f>  Vis PyWFS TTM closed-loop LLOWFS offload gain (default: ${VIS_TTM_GAIN})
   -h, --help          Show this help message
 EOF
 }
@@ -363,6 +418,10 @@ while (( $# > 0 )); do
         --mmult-floor)        MMULT_FLOOR="$2"; shift 2 ;;
         --mmult-alpha)        MMULT_ALPHA="$2"; shift 2 ;;
         --dmmask-rmax)        DMMASK_RMAX="$2"; shift 2 ;;
+        --dmmask-rmin)        DMMASK_RMIN="$2"; shift 2 ;;
+        --no-dmmask-cobs-slave) DMMASK_COBS_SLAVE="0"; shift ;;
+        --wfsmask-dilate)     WFSMASK_DILATE="$2"; shift 2 ;;
+        --wfsmask-dilate2)    WFSMASK_DILATE2="$2"; shift 2 ;;
         --pf-mix-tt)          PF_MIX_TT="$2"; shift 2 ;;
         --pf-lo-nmode)        PF_LO_NMODE="$2"; shift 2 ;;
         --pf-diff-nmode)      PF_DIFF_NMODE="$2"; shift 2 ;;
@@ -402,8 +461,32 @@ while (( $# > 0 )); do
         --petal-warmup)       PETAL_WARMUP="$2"; shift 2 ;;
         --petal-th-even)      PETAL_TH_EVEN="$2"; shift 2 ;;
         --petal-th-sign)      PETAL_TH_SIGN="$2"; shift 2 ;;
+        --petal-fast-alpha)   PETAL_FAST_ALPHA="$2"; shift 2 ;;
+        --petal-fast-warmup)  PETAL_FAST_WARMUP="$2"; shift 2 ;;
+        --petal-fast-th-even) PETAL_FAST_TH_EVEN="$2"; shift 2 ;;
+        --petal-fast-th-sign) PETAL_FAST_TH_SIGN="$2"; shift 2 ;;
+        --petal-fast-th-con)  PETAL_FAST_TH_CON="$2"; shift 2 ;;
+        --petal-fast-dwell)   PETAL_FAST_DWELL="$2"; shift 2 ;;
+        --petal-abort-win)    PETAL_ABORT_WIN="$2"; shift 2 ;;
+        --petal-verify-win)   PETAL_VERIFY_WIN="$2"; shift 2 ;;
         --petal-enable-at)    PETAL_ENABLE_AT="$2"; shift 2 ;;
         --petal-test-inject)  PETAL_TEST_INJECT="$2"; shift 2 ;;
+        --zenith-deg)         ZENITH_DEG="$2"; shift 2 ;;
+        --disp-pa-deg)        DISP_PA_DEG="$2"; shift 2 ;;
+        --imr-mode)           IMR_MODE="$2"; shift 2 ;;
+        --parallactic-rate-dps) PARALLACTIC_RATE_DPS="$2"; shift 2 ;;
+        --adc-mode)           ADC_MODE="$2"; shift 2 ;;
+        --adc-preset)         ADC_PRESET="$2"; shift 2 ;;
+        --adc-opt-band)       ADC_OPT_BAND="$2"; shift 2 ;;
+        --adc-angles)         ADC_ANGLES="$2"; shift 2 ;;
+        --adc-lut-err)        ADC_LUT_ERR="$2"; shift 2 ;;
+        --adc-mech)           ADC_MECH="$2"; shift 2 ;;
+        --chrom-turb)         CHROM_TURB="$2"; shift 2 ;;
+        --no-chrom-turb)      CHROM_TURB="0"; shift ;;
+        --atmturb-fresnel)    ATMTURB_FRESNEL="$2"; shift 2 ;;
+        --vis-ttm-mode)       VIS_TTM_MODE="$2"; shift 2 ;;
+        --no-vis-ttm)         VIS_TTM_MODE="off"; shift ;;
+        --vis-ttm-gain)       VIS_TTM_GAIN="$2"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "[ao3k-scexao] Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -530,58 +613,121 @@ STG3_ROOT="${WORK_ROOT}/llowfs"
 mkdir -p "${WORK_ROOT}" "${CSIM_DIR}"
 
 BENCH_CFG_SRC="${CACAO_WORK_ROOT}/benches/ao3k_scexao/ao3k_scexao.bench"
-BENCH_CFG="${BENCH_CFG_SRC}"
-if (( EFF_PSF_NAVG != 20 )) || (( WFS1_RATE != 1000 )) || [[ -n "${CLOCK_SKEW_US}" ]] || \
-   [[ -n "${WFS1_MOD_RAD}" ]] || [[ -n "${WFS2_MOD_RAD}" ]] || \
-   [[ -n "${STAR_MAG}" ]] || [[ -n "${DM1_PRESHAPER}" ]]; then
-    BENCH_CFG="${WORK_ROOT}/ao3k_scexao_run.bench"
-    awk -v nv="${EFF_PSF_NAVG}" -v skew="${CLOCK_SKEW_US}" \
-        -v m1="${WFS1_MOD_RAD}" -v m2="${WFS2_MOD_RAD}" -v smag="${STAR_MAG}" \
-        -v dm1ps="${DM1_PRESHAPER}" -v r1="${WFS1_RATE}" '
-        /^\[/ { sec = $0 }
-        sec == "[bench]" && smag != "" && /^star_mag[ \t]*=/ {
-            printf "star_mag      = %s\n", smag; next
-        }
-        sec == "[dm.ao3k]" && dm1ps != "" && /^in_cmd[ \t]*=/ {
-            print "in_cmd       = \"dm01shaped\""; next
-        }
-        sec == "[pyrwfs.wfs_vis]" && /^\[pyrwfs\.wfs_vis\]/ && skew != "" {
-            print; printf "clock_offset_us = %s\n", skew; next
-        }
-        sec == "[pyrwfs.wfs_nir]" && (r1 + 0) != 1000 && /^rate_hz[ \t]*=/ {
-            printf "rate_hz       = %s.0\n", r1; next
-        }
-        sec == "[pyrwfs.wfs_nir]" && m1 != "" && /^mod_rad[ \t]*=/ {
-            printf "mod_rad       = %s\n", m1; next
-        }
-        sec == "[pyrwfs.wfs_nir]" && m1 != "" && (m1 + 0) <= 0 && /^mod_npts[ \t]*=/ {
-            print "mod_npts      = 1"; next
-        }
-        sec == "[pyrwfs.wfs_vis]" && m2 != "" && /^mod_rad[ \t]*=/ {
-            printf "mod_rad       = %s\n", m2; next
-        }
-        sec == "[pyrwfs.wfs_vis]" && m2 != "" && (m2 + 0) <= 0 && /^mod_npts[ \t]*=/ {
-            print "mod_npts      = 1"; next
-        }
-        (sec == "[fpcam.vis_stg1]" || sec == "[fpcam.nir_stg1]" ||
-         sec == "[fpcam.vis_final]" || sec == "[fpcam.nir_final]" ||
-         sec == "[fpcam.nir_coro]") &&
-        nv != 20 && /^(navg|rate_hz)[ \t]*=/ {
-            printf "rate_hz       = %.4f\n", 2000.0 / nv; next
-        }
-        { print }
-    ' "${BENCH_CFG_SRC}" > "${BENCH_CFG}"
+BENCH_CFG="${WORK_ROOT}/ao3k_scexao_run.bench"
+ADC_IDEAL_MECH="1"
+[[ "${ADC_MECH}" == "real" || "${ADC_MECH}" == "0" ]] && ADC_IDEAL_MECH="0"
+ADC_ANG1=""
+ADC_ANG2=""
+if [[ -n "${ADC_ANGLES}" ]]; then
+    IFS=',' read -r ADC_ANG1 ADC_ANG2 <<< "${ADC_ANGLES}"
 fi
+ADC_LUT_SC_ERR=""
+ADC_LUT_PA_ERR=""
+if [[ -n "${ADC_LUT_ERR}" ]]; then
+    IFS=',' read -r ADC_LUT_SC_ERR ADC_LUT_PA_ERR <<< "${ADC_LUT_ERR}"
+fi
+if [[ "${ATMTURB_FRESNEL}" != "0" && "${ATMTURB_FRESNEL}" != "1" && "${ATMTURB_FRESNEL}" != "2" ]]; then
+    echo "[ao3k-scexao] Invalid --atmturb-fresnel '${ATMTURB_FRESNEL}' (expected 0, 1, or 2)" >&2
+    exit 2
+fi
+if (( ATMTURB_FRESNEL > 0 )); then
+    # Multi-wavelength chrom_lambdas forces geometric extrusion in milkatmturb;
+    # disable chrom_turb so CUDA/CPU Fresnel/Rytov generates physical outarrayamp scintillation.
+    CHROM_TURB="0"
+fi
+awk -v nv="${EFF_PSF_NAVG}" -v skew="${CLOCK_SKEW_US}" \
+    -v m1="${WFS1_MOD_RAD}" -v m2="${WFS2_MOD_RAD}" -v smag="${STAR_MAG}" \
+    -v dm1ps="${DM1_PRESHAPER}" -v r1="${WFS1_RATE}" \
+    -v zdeg="${ZENITH_DEG}" -v dpa="${DISP_PA_DEG}" \
+    -v imr="${IMR_MODE}" -v prate="${PARALLACTIC_RATE_DPS}" \
+    -v cturb="${CHROM_TURB}" -v clams="${CHROM_LAMBDAS}" -v afres="${ATMTURB_FRESNEL}" \
+    -v amode="${ADC_MODE}" -v apreset="${ADC_PRESET}" -v aband="${ADC_OPT_BAND}" \
+    -v amech="${ADC_IDEAL_MECH}" -v ang1="${ADC_ANG1}" -v ang2="${ADC_ANG2}" \
+    -v lsc="${ADC_LUT_SC_ERR}" -v lpa="${ADC_LUT_PA_ERR}" '
+    /^\[/ { sec = $0 }
+    sec == "[bench]" && afres + 0 > 0 && /^in_wf[ \t]*=/ {
+        print; print "in_amp               = \"outarrayamp\""; next
+    }
+    sec == "[bench]" && smag != "" && /^star_mag[ \t]*=/ {
+        printf "star_mag             = %s\n", smag; next
+    }
+    sec == "[bench]" && /^zenith_deg[ \t]*=/ {
+        printf "zenith_deg           = %s\n", zdeg; next
+    }
+    sec == "[bench]" && /^disp_pa_deg[ \t]*=/ {
+        printf "disp_pa_deg          = %s\n", dpa; next
+    }
+    sec == "[bench]" && /^imr_mode[ \t]*=/ {
+        printf "imr_mode             = \"%s\"\n", imr; next
+    }
+    sec == "[bench]" && /^parallactic_rate_dps[ \t]*=/ {
+        printf "parallactic_rate_dps = %s\n", prate; next
+    }
+    sec == "[bench]" && /^chrom_turb[ \t]*=/ {
+        printf "chrom_turb           = %s\n", cturb; next
+    }
+    sec == "[bench]" && /^chrom_lambdas[ \t]*=/ {
+        printf "chrom_lambdas        = \"%s\"\n", clams; next
+    }
+    sec == "[adc.ao188]" && /^preset[ \t]*=/ {
+        printf "preset        = \"%s\"\n", apreset; next
+    }
+    sec == "[adc.ao188]" && /^mode[ \t]*=/ {
+        printf "mode          = \"%s\"\n", amode; next
+    }
+    sec == "[adc.ao188]" && /^opt_band[ \t]*=/ {
+        printf "opt_band      = \"%s\"\n", aband; next
+    }
+    sec == "[adc.ao188]" && /^ideal_mech[ \t]*=/ {
+        printf "ideal_mech    = %s\n", amech
+        if (ang1 != "") printf "angle1_deg    = %s\n", ang1
+        if (ang2 != "") printf "angle2_deg    = %s\n", ang2
+        if (lsc != "")  printf "lut_scale_err = %s\n", lsc
+        if (lpa != "")  printf "lut_pa_err_deg = %s\n", lpa
+        next
+    }
+    sec == "[dm.ao3k]" && dm1ps != "" && /^in_cmd[ \t]*=/ {
+        print "in_cmd       = \"dm01shaped\""; next
+    }
+    sec == "[pyrwfs.wfs_vis]" && /^\[pyrwfs\.wfs_vis\]/ && skew != "" {
+        print; printf "clock_offset_us = %s\n", skew; next
+    }
+    sec == "[pyrwfs.wfs_nir]" && (r1 + 0) != 1000 && /^rate_hz[ \t]*=/ {
+        printf "rate_hz       = %s.0\n", r1; next
+    }
+    sec == "[pyrwfs.wfs_nir]" && m1 != "" && /^mod_rad[ \t]*=/ {
+        printf "mod_rad       = %s\n", m1; next
+    }
+    sec == "[pyrwfs.wfs_nir]" && m1 != "" && (m1 + 0) <= 0 && /^mod_npts[ \t]*=/ {
+        print "mod_npts      = 1"; next
+    }
+    sec == "[pyrwfs.wfs_vis]" && m2 != "" && /^mod_rad[ \t]*=/ {
+        printf "mod_rad       = %s\n", m2; next
+    }
+    sec == "[pyrwfs.wfs_vis]" && m2 != "" && (m2 + 0) <= 0 && /^mod_npts[ \t]*=/ {
+        print "mod_npts      = 1"; next
+    }
+    (sec == "[fpcam.vis_stg1]" || sec == "[fpcam.nir_stg1]" ||
+     sec == "[fpcam.vis_final]" || sec == "[fpcam.nir_final]" ||
+     sec == "[fpcam.nir_coro]") &&
+    nv != 20 && /^(navg|rate_hz)[ \t]*=/ {
+        printf "rate_hz       = %.4f\n", 2000.0 / nv; next
+    }
+    { print }
+' "${BENCH_CFG_SRC}" > "${BENCH_CFG}"
 ACTIVE_BENCH="${BENCH_CFG}"
 LOOP_CTRL="${CACAO_WORK_ROOT}/benches/ao3k_scexao/cacaoloop-ao3k-scexao.milk"
 WFSTAT_LINK="/tmp/.wfstat_$$"
 WFSTAT_CPU_LINK="/tmp/.wfstat_cpu_$$"
 TLM_LINK="/tmp/.tlm_$$"
 PYRTLM_LINK="/tmp/.pyrtlm_$$"
+WL1_LINK="/tmp/.wl1_$$"
 PYRWFS_TLM_ACTIVE="0"
 PETAL_CALC_LINK="/tmp/.petal_$$.calc"
 PETAL_CTRL_ACTIVE="0"
 PETAL_USE_SIGN_EFF="1"
+VISTT_CALC_LINK="/tmp/.vistt_$$.calc"
+VIS_TTM_ACTIVE="0"
 declare -a TLM_UNITS=()
 declare -a TLM_SAVED_STREAMS=()
 
@@ -670,6 +816,7 @@ start_tlm_loggers() {
         specs+=(
             "aol1_petal_raw:${n_s1}:-1"
             "aol1_petal_ema:${n_s1}:-1"
+            "aol1_petal_cmd:${n_s1}:-1"
         )
     fi
     if [[ "${SAVE_TELEMETRY}" == "truth" ]]; then
@@ -721,9 +868,9 @@ start_tlm_loggers() {
 cleanup_sim() {
     sysmon.stop >/dev/null 2>&1 || true
     cleanup_tlm_loggers
-    milk-fps-runstop -q petal-1 mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
+    milk-fps-runstop -q petal-1 vis_tt-2 mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
         pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
-    milk-fps-rm -f -q --ignore-missing petal-1 mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
+    milk-fps-rm -f -q --ignore-missing petal-1 vis_tt-2 mvalpacer-1 dmpreshaper-01 modalog-1 wl-1 csim_wfstat \
         pyrwfstlm-1 pyrwfstlm-2 >/dev/null 2>&1 || true
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 teardown \
         >/dev/null 2>&1 || true
@@ -732,19 +879,21 @@ cleanup_sim() {
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 teardown --purge-dm \
         >/dev/null 2>&1 || true
     cacaosim.teardown "${CSIM_DIR}" >/dev/null 2>&1 || true
-    milk-stream-rm -q --ignore-missing b_pup b_post_stg1 b_post_stg2 dm01shaped \
-        aol1_petalM aol1_petalDM aol1_petal_raw aol1_petal_ema \
+    milk-stream-rm -q --ignore-missing b_pup b_adc b_post_stg1 b_post_stg2 dm01shaped \
+        ao188_adc_cmd ao188_adc_state dm_vis_pyrwfs_tt \
+        aol2_visttM aol2_vistt_bx aol2_vistt_by aol2_vistt_err \
+        aol1_petalM aol1_petalDM aol1_petal_raw aol1_petal_ema aol1_petal_cmd aol1_petal_eye \
         aol1_modevalPF_eof aol1_outPFstat_eof aol1_selflearn_tweak \
         aol2_modevalPF_eof aol2_outPFstat_eof aol2_selflearn_tweak \
-        wl1_layers wl1_vmapk wl1_vmapi wl1_vmapx \
+        wl1_layers wl1_vmapk wl1_vmapi wl1_vmapx wl1_pupgeom outarrayamp \
         aol1_pyr_ref aol1_pyr_tlm aol1_pyr_pupgeom aol1_pyr_pupdof \
         aol1_pyr_isum aol1_pyr_isum_avg aol1_pyr_sx aol1_pyr_sy \
-        aol1_pyr_scint aol1_pyr_lvar aol1_pyr_zones \
+        aol1_pyr_scint aol1_pyr_scint_debias aol1_pyr_lvar aol1_pyr_zones \
         aol2_pyr_ref aol2_pyr_tlm aol2_pyr_pupgeom aol2_pyr_pupdof \
         aol2_pyr_isum aol2_pyr_isum_avg aol2_pyr_sx aol2_pyr_sy \
-        aol2_pyr_scint aol2_pyr_lvar aol2_pyr_zones >/dev/null 2>&1 || true
-    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" "${PYRTLM_LINK}" \
-        "${PETAL_CALC_LINK}" "/tmp/.p15_ps_${$}.fits" "/tmp/.p15_ogk_${$}.fits" >/dev/null 2>&1 || true
+        aol2_pyr_scint aol2_pyr_scint_debias aol2_pyr_lvar aol2_pyr_zones >/dev/null 2>&1 || true
+    rm -rf "${WFSTAT_LINK}" "${WFSTAT_CPU_LINK}" "${TLM_LINK}" "${PYRTLM_LINK}" "${WL1_LINK}" \
+        "${PETAL_CALC_LINK}" "${VISTT_CALC_LINK}" "/tmp/.p15_ps_${$}.fits" "/tmp/.p15_ogk_${$}.fits" >/dev/null 2>&1 || true
 }
 @defer --exit cleanup_sim
 
@@ -825,6 +974,9 @@ echo "   Perturb.    : wind_var=${WIND_VAR}(x${WIND_VAR_SCALE}) |" \
      "wind_burst=${WIND_BURST}(x${WIND_BURST_SCALE}) |" \
      "vib=${VIB_ENABLE}(${VIB_RMS_NM}nm) |" \
      "petal=${PETAL_ENABLE}(${PETAL_RMS_NM}nm,tau=${PETAL_TAU_S}s)"
+echo "   Atm & ADC   : zenith=${ZENITH_DEG} deg, PA=${DISP_PA_DEG} deg (IMR=${IMR_MODE})," \
+     "chrom_turb=${CHROM_TURB} | AO188 ADC=${ADC_PRESET}/${ADC_MODE}(band=${ADC_OPT_BAND}," \
+     "mech=${ADC_MECH}${ADC_LUT_ERR:+, lut_err=${ADC_LUT_ERR}}) | Vis-TTM=${VIS_TTM_MODE}(g=${VIS_TTM_GAIN})"
 if (( PETAL_CTRL )); then
     echo "   Petal Ctrl  : Stage-1 passive JIT (petal-1 -> dm01disp06, sign=${PETAL_USE_SIGN}," \
          "alpha=${PETAL_ALPHA}, warmup=${PETAL_WARMUP}fr, th=${PETAL_TH_EVEN}/${PETAL_TH_SIGN}, at=${PETAL_ENABLE_AT})"
@@ -860,6 +1012,11 @@ milk-fps-set -q \
     "${MASTER_UNIT}.turb_gain=0.0" \
     "${MASTER_UNIT}.vib_enable=OFF" \
     "${MASTER_UNIT}.petal_enable=OFF" \
+    "${MASTER_UNIT}.petal_off0_nm=0.0" \
+    "${MASTER_UNIT}.petal_off1_nm=0.0" \
+    "${MASTER_UNIT}.petal_off2_nm=0.0" \
+    "${MASTER_UNIT}.petal_off3_nm=0.0" \
+    "${MASTER_UNIT}.atm_disp_enable=OFF" \
     "${MASTER_UNIT}.frame_rate=${CAL_MASTER_RATE}" \
     "${MASTER_UNIT}.procinfo.triggermode=0"
 if [[ "${BENCH_MODE}" == "fused" ]]; then
@@ -868,13 +1025,19 @@ if [[ "${BENCH_MODE}" == "fused" ]]; then
         milk-fps-set -q "csim_htsim.export_beams=b_pup,b_post_stg1,b_post_stg2"
     fi
     milk-fps-set -q \
+        "csim_htsim.adc_mode=0" \
         "csim_htsim.export_enable=OFF" \
         "csim_htsim.wfstat_enable=OFF"
+elif @exists "f.csim_ao188"; then
+    milk-fps-set -q "csim_ao188.mode=retracted"
 fi
 milk-fps-runstart -q "${MASTER_UNIT}"
 milk-stream-wait -q -t 20 \
     csim_wfs_nir csim_wfs_vis csim_wfs_lowfs \
     psf_vis_final_long psf_nir_final_long psf_nir_coro_long
+if @exists "s.dm_vis_pyrwfs_tt"; then
+    @calc "s.dm_vis_pyrwfs_tt = s.dm_vis_pyrwfs_tt * 0.0"
+fi
 
 sysmon.mark "dl_reference" "Acquire diffraction-limited reference PSFs & coronagraph dark hole"
 echo "[ao3k-scexao] Step 2/7: Acquiring diffraction-limited & coronagraph reference PSFs..."
@@ -937,6 +1100,9 @@ CACAO_LOOPMULT_TT="${MULT_TT}" \
 CACAO_MMULT_FLOOR="${MMULT_FLOOR}" \
 CACAO_MMULT_ALPHA="${MMULT_ALPHA}" \
 CACAO_DMMASK_RMAX="${DMMASK_RMAX}" \
+CACAO_DMMASK_RMIN="${DMMASK_RMIN}" \
+CACAO_DMMASK_COBS_SLAVE="${DMMASK_COBS_SLAVE}" \
+CACAO_WFSMASK_DILATE="${WFSMASK_DILATE}" \
 CACAO_PF_LO_NMODE="${PF_LO_NMODE}" \
 CACAO_PF_MODE="${PF_MODE}" \
 CACAO_PF_BLOCKSIZE="${PF_BLOCKSIZE}" \
@@ -1037,24 +1203,50 @@ export CACAO_SELFLEARN_MODES="${SELFLEARN_MODES}"
 export CACAO_SELFLEARN_KMAX="${SELFLEARN_KMAX}"
 
 USE_FAST_CALIB1="${USE_FAST_CALIB}"
-if [[ -n "${DM1_PRESHAPER}" ]]; then
-    USE_FAST_CALIB1=0
+CALIB_TRIG1="dm01disp"
+if [[ -n "${DM1_PRESHAPER}" ]] && @exists "f.dmpreshaper-01"; then
+    CALIB_TRIG1="dm01shaped"
+    if (( USE_FAST_CALIB1 )); then
+        # Temporarily put dmpreshaper-01 into zero-latency streamin-triggered passthrough
+        # so lockstep .calib_fast RM calibration pokes dm01disp -> dm01shaped -> csim_htsim
+        # with exact 1:1 frame lock (unity DC gain, zero wall-clock drift or plate ringing).
+        milk-fps-runstop -q dmpreshaper-01
+        milk-fps-wait -q -t 10 dmpreshaper-01 >/dev/null 2>&1 || true
+        milk-fps-set -q \
+            "dmpreshaper-01.trigstream=none" \
+            "dmpreshaper-01.enable=OFF"
+        milk-fps-runstart -q dmpreshaper-01
+        sleep 0.08
+    fi
 fi
 
 CACAO_LOOPROOTDIR="${STG1_ROOT}" \
 CACAO_WFSFRATE="${CAL_WFS1_RATE}" \
 CACAO_FAST_CALIB="${USE_FAST_CALIB1}" \
+CACAO_CALIB_TRIG="${CALIB_TRIG1}" \
 CACAO_LOOPMULT="${MULT1}" \
 CACAO_LOOPMULT_TT="${MULT_TT}" \
 CACAO_MMULT_FLOOR="${MMULT_FLOOR}" \
 CACAO_MMULT_ALPHA="${MMULT_ALPHA}" \
 CACAO_DMMASK_RMAX="${DMMASK_RMAX}" \
+CACAO_DMMASK_RMIN="${DMMASK_RMIN}" \
+CACAO_DMMASK_COBS_SLAVE="${DMMASK_COBS_SLAVE}" \
+CACAO_WFSMASK_DILATE="${WFSMASK_DILATE}" \
 CACAO_PF_LO_NMODE="${PF_LO_NMODE}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
     "${LOOP_CTRL}" --stage 1 calibrate "${CAL1_ARGS[@]}"
 CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 zero
+if [[ -n "${DM1_PRESHAPER}" ]] && (( USE_FAST_CALIB1 )) && @exists "f.dmpreshaper-01"; then
+    milk-fps-runstop -q dmpreshaper-01
+    milk-fps-wait -q -t 10 dmpreshaper-01 >/dev/null 2>&1 || true
+    milk-fps-set -q \
+        "dmpreshaper-01.trigstream=csim_wfs_vis" \
+        "dmpreshaper-01.enable=ON"
+    milk-fps-runstart -q dmpreshaper-01
+    sleep 0.12
+fi
 milk-stream-wait -q -t 20 "csim_wfs_vis+20"
 t_cal1_1="$(date +%s)"
 echo "[ao3k-scexao]      Stage-1 calibration done in $(( t_cal1_1 - t_cal1_0 )) s."
@@ -1065,14 +1257,19 @@ if (( PETAL_CTRL )); then
     echo "[ao3k-scexao]   -> Calibrating Stage-1 passive petal-unwrap filter (calib_petal_ctrl.py)..."
     PETAL_CM_ARG=()
     if [[ -f "${STG1_ROOT}/conf/CMmodesWFS.fits" ]]; then
-        PETAL_CM_ARG=(--cm-wfs "${STG1_ROOT}/conf/CMmodesWFS.fits")
+        PETAL_CM_ARG+=(--cm-wfs "${STG1_ROOT}/conf/CMmodesWFS.fits")
     fi
+    if [[ -f "${STG1_ROOT}/conf/CMmodesDM.fits" ]]; then
+        PETAL_CM_ARG+=(--cm-dm "${STG1_ROOT}/conf/CMmodesDM.fits")
+    fi
+    PETAL_GOPT_EFF="${PSOL_OG1:-1.0}"
     "${PYTHON_BIN:-python3}" "${CACAO_WORK_ROOT}/benches/ao3k_scexao/calib_petal_ctrl.py" \
         --bench "${ACTIVE_BENCH}" \
         --pup "${OUT_DIR}/csim_pup.fits" \
         --wfsref "${STG1_ROOT}/conf/wfsref.fits" \
         --wfsmask "${STG1_ROOT}/conf/wfsmask.fits" \
         "${PETAL_CM_ARG[@]}" \
+        --gopt "${PETAL_GOPT_EFF}" \
         --outdir "${PETAL_CAL_DIR}"
     if [[ "${PETAL_USE_SIGN}" == "auto" ]]; then
         PETAL_USE_SIGN_EFF="$("${PYTHON_BIN:-python3}" -c \
@@ -1082,7 +1279,9 @@ if (( PETAL_CTRL )); then
     fi
     fpspipe.loadfits aol1_petalM "${PETAL_CAL_DIR}/petal_wfs_M.fits"
     fpspipe.loadfits aol1_petalDM "${PETAL_CAL_DIR}/petal_dm_modes.fits"
-    @calc "@S:aol1_petal_raw = zeros(7); @S:aol1_petal_ema = zeros(7)"
+    "${PYTHON_BIN:-python3}" -c "import numpy as np; from astropy.io import fits; fits.writeto('${PETAL_CAL_DIR}/petal_eye8.fits', np.eye(8, dtype=np.float32), overwrite=True)"
+    fpspipe.loadfits aol1_petal_eye "${PETAL_CAL_DIR}/petal_eye8.fits"
+    @calc "@S:aol1_petal_raw = zeros(7); @S:aol1_petal_ema = zeros(7); @S:aol1_petal_cmd = zeros(8)"
     if @exists "s.dm01disp06"; then
         @calc "s.dm01disp06 = s.dm01disp06 * 0.0"
     fi
@@ -1095,6 +1294,8 @@ echo "[ao3k-scexao]   -> Stage 2 (SCExAO, 50x50 DM D=46, 120x120 Vis PyWFS + ZPO
 CACAO_LOOPROOTDIR="${STG2_ROOT}" \
 CACAO_WFSFRATE="${CAL_RATE}" \
 CACAO_FAST_CALIB="${USE_FAST_CALIB}" \
+CACAO_DMMASK_COBS_SLAVE="${DMMASK_COBS_SLAVE}" \
+CACAO_WFSMASK_DILATE="${WFSMASK_DILATE2}" \
 CACAO_MGAIN_ALPHA="${MGAIN_ALPHA}" \
 CACAO_MGAIN_FLOOR="${MGAIN_FLOOR}" \
 CACAO_MGAIN_TT="${MGAIN_TT}" \
@@ -1345,12 +1546,44 @@ if [[ "${BENCH_MODE}" == "modular" ]] && (( EFF_OV > 1 )); then
     ATM_LOCK_STREAM="b_pup"
 fi
 if [[ "${BENCH_MODE}" == "fused" ]]; then
-    milk-fps-set -q "csim_htsim.enable_fpcam=ON"
+    milk-fps-set -q \
+        "csim_htsim.enable_fpcam=ON" \
+        "csim_htsim.atm_disp_enable=ON" \
+        "csim_htsim.zenith_deg=${ZENITH_DEG}" \
+        "csim_htsim.disp_pa_deg=${DISP_PA_DEG}" \
+        "csim_htsim.adc_mode=-1"
+elif @exists "f.csim_ao188"; then
+    milk-fps-set -q \
+        "csim_mkbeam.atm_disp_enable=ON" \
+        "csim_mkbeam.zenith_deg=${ZENITH_DEG}" \
+        "csim_mkbeam.disp_pa_deg=${DISP_PA_DEG}" \
+        "csim_ao188.mode=${ADC_MODE}" \
+        "csim_ao188.zenith_deg=${ZENITH_DEG}" \
+        "csim_ao188.disp_pa_deg=${DISP_PA_DEG}"
+fi
+ZENITH_RAD="$(awk -v z="${ZENITH_DEG}" 'BEGIN { printf "%.7f", z * 3.14159265358979323846 / 180.0 }')"
+DISP_PA_RAD="$(awk -v p="${DISP_PA_DEG}" 'BEGIN { printf "%.7f", p * 3.14159265358979323846 / 180.0 }')"
+CHROM_LAM_SET_ARGS=()
+CHROM_OPD_ARG="0"
+ATMTURB_AMP_ARG="0"
+if (( ATMTURB_FRESNEL > 0 )); then
+    ATMTURB_AMP_ARG="1"
+    milk-stream-rm -q --ignore-missing outarrayamp >/dev/null 2>&1 || true
+elif (( CHROM_TURB )); then
+    CHROM_LAM_SET_ARGS=("csim_atmturb.chrom_lambdas=${CHROM_LAMBDAS}")
+    CHROM_OPD_ARG="1"
 fi
 VIB_STR="OFF"; (( VIB_ENABLE )) && VIB_STR="ON"
 PETAL_STR="OFF"; (( PETAL_ENABLE )) && PETAL_STR="ON"
 milk-fps-set -q \
     "csim_atmturb.seeing=${SEEING}" \
+    "csim_atmturb.zenith_angle=${ZENITH_RAD}" \
+    "csim_atmturb.parallactic_angle=${DISP_PA_RAD}" \
+    "csim_atmturb.site_alt=4205.0" \
+    "csim_atmturb.amplitude=${ATMTURB_AMP_ARG}" \
+    "csim_atmturb.fresnel=${ATMTURB_FRESNEL}" \
+    "${CHROM_LAM_SET_ARGS[@]}" \
+    "csim_atmturb.chrom_opd_um=${CHROM_OPD_ARG}" \
     "csim_atmturb.time_step=${ATM_STEP_S}" \
     "csim_atmturb.wind_var=${WIND_VAR}" \
     "csim_atmturb.wind_var_scale=${WIND_VAR_SCALE}" \
@@ -1366,6 +1599,10 @@ milk-fps-set -q \
     "${MASTER_UNIT}.petal_enable=${PETAL_STR}" \
     "${MASTER_UNIT}.petal_rms_nm=${PETAL_RMS_NM}" \
     "${MASTER_UNIT}.petal_tau_s=${PETAL_TAU_S}" \
+    "${MASTER_UNIT}.petal_off0_nm=0.0" \
+    "${MASTER_UNIT}.petal_off1_nm=0.0" \
+    "${MASTER_UNIT}.petal_off2_nm=0.0" \
+    "${MASTER_UNIT}.petal_off3_nm=0.0" \
     "${MASTER_UNIT}.frame_rate=0.0" \
     "${MASTER_UNIT}.procinfo.triggermode=3" \
     "${MASTER_UNIT}.procinfo.triggersname=outarraypha"
@@ -1387,6 +1624,145 @@ if [[ -n "${PSOL_OG1}" ]]; then
     echo "[ao3k-scexao]   -> Scaling Stage-1 PSOL WFSfact for on-sky optical gain g_opt=${PSOL_OG1}"
     CACAO_LOOPROOTDIR="${STG1_ROOT}" "${LOOP_CTRL}" --stage 1 setog "${PSOL_OG1}"
 fi
+# Precompute SCExAO Visible Pyramid WFS Tip-Tilt Mount projector & optional feedforward
+VIS_TTM_FF_X="0.0"
+VIS_TTM_FF_Y="0.0"
+if [[ "${VIS_TTM_MODE}" != "off" ]] && @exists "s.dm_vis_pyrwfs_tt"; then
+    VISTT_DIR="${WORK_ROOT}/vis_ttm"
+    mkdir -p "${VISTT_DIR}"
+    VISTT_FF_OUT="$("${PYTHON_BIN:-python3}" - "${VISTT_DIR}" "${VIS_TTM_MODE}" \
+        "${ZENITH_DEG}" "${DISP_PA_DEG}" "${ADC_PRESET}" "${ADC_MODE}" "${ADC_OPT_BAND}" \
+        "${STG3_ROOT}/conf/CMmodesDM.fits" "${STG3_ROOT}/conf/CMmodesWFS.fits" <<'PY'
+import math, os, sys
+import numpy as np
+from astropy.io import fits
+
+out_dir, mode = sys.argv[1], sys.argv[2].lower()
+z_deg, pa_deg = float(sys.argv[3]), float(sys.argv[4])
+preset, adc_mode, opt_band = sys.argv[5], sys.argv[6].lower(), sys.argv[7].lower()
+cm3_dm_path, cm3_wfs_path = sys.argv[8], sys.argv[9]
+
+# Build well-conditioned Stage-3 modal TT projector (2 x N_m) [um edge mechanical / mode]:
+# Exclude ill-conditioned Lyot-stop (Tilt - Coma) near-null-space modes whose WFS-to-DM
+# sensitivity sigma_k = ||CMmodesWFS[k]|| / ||CMmodesDM[k]|| drops below 65% of the peak TT
+# mode sensitivity, preventing sign-reversing coma contamination in the TTM offload loop.
+yy, xx = np.indices((50, 50), dtype=np.float64)
+ux = (xx - 24.5) / 23.0
+uy = (yy - 24.5) / 23.0
+rr = np.hypot(ux, uy)
+mask = (rr >= 0.307) & (rr <= 0.98)
+Z = np.column_stack([
+    np.ones(mask.sum()),
+    ux[mask],
+    uy[mask],
+    (3.0 * rr[mask] ** 2 - 2.0) * ux[mask],
+    (3.0 * rr[mask] ** 2 - 2.0) * uy[mask],
+])
+pinvZ = np.linalg.pinv(Z)
+
+n_modes = 14
+if os.path.isfile(cm3_dm_path):
+    cm_dm = np.asarray(fits.getdata(cm3_dm_path), dtype=np.float64)
+    if cm_dm.ndim == 3:
+        n_modes = int(cm_dm.shape[0])
+        tx_m = np.zeros(n_modes, dtype=np.float64)
+        ty_m = np.zeros(n_modes, dtype=np.float64)
+        dm_rms = np.zeros(n_modes, dtype=np.float64)
+        for k in range(n_modes):
+            c = pinvZ @ cm_dm[k][mask]
+            tx_m[k] = c[1]
+            ty_m[k] = c[2]
+            dm_rms[k] = float(np.sqrt(np.mean(cm_dm[k][mask] ** 2))) + 1e-12
+        keep = np.ones(n_modes, dtype=bool)
+        if os.path.isfile(cm3_wfs_path):
+            cm_wfs = np.asarray(fits.getdata(cm3_wfs_path), dtype=np.float64)
+            if cm_wfs.ndim == 3 and cm_wfs.shape[0] == n_modes:
+                w_norm = np.sqrt(np.sum(cm_wfs ** 2, axis=(1, 2)))
+                sigma = w_norm / dm_rms
+                tt_mag = np.hypot(tx_m, ty_m)
+                tt_sel = tt_mag > 0.25 * float(np.max(tt_mag) + 1e-12)
+                if np.any(tt_sel):
+                    sig_ref = float(np.max(sigma[tt_sel]))
+                    keep = sigma >= (0.65 * sig_ref)
+                    if not np.any(keep & tt_sel):
+                        keep = np.ones(n_modes, dtype=bool)
+        w_mat = np.vstack([
+            np.where(keep, tx_m, 0.0),
+            np.where(keep, ty_m, 0.0),
+        ]).astype(np.float32)  # (2, N_m)
+    else:
+        w_mat = np.zeros((2, n_modes), dtype=np.float32)
+else:
+    w_mat = np.zeros((2, n_modes), dtype=np.float32)
+
+# MILK FITS convention: NumPy (N_m, 2) -> MILK (2, N_m), so M @ vec(aol3_modevalDM) = (2,)
+fits.writeto(os.path.join(out_dir, "vistt_M.fits"), np.ascontiguousarray(w_mat.T), overwrite=True)
+fits.writeto(os.path.join(out_dir, "vistt_bx.fits"), np.array([[1.0, 0.0]], dtype=np.float32), overwrite=True)
+fits.writeto(os.path.join(out_dir, "vistt_by.fits"), np.array([[0.0, 1.0]], dtype=np.float32), overwrite=True)
+
+ff_x, ff_y = 0.0, 0.0
+if mode in ("feedforward", "ff+closed") and z_deg > 1e-6:
+    rad2mas = 206264806.24709636
+    def ciddor_nm1(lam):
+        s2 = 1.0 / (lam * lam)
+        tk, ppa, tc, rh = 275.15, 61500.0, 2.0, 20.0
+        n_as = (5792105.0 / (238.0185 - s2) + 167917.0 / (57.362 - s2)) * 1e-8
+        n_ax = n_as * (1.0 + 0.534e-6 * (415.0 - 450.0))
+        n_ws = 1.022 * (295.235 + s2 * (2.6422 + s2 * (-0.03238 + s2 * 0.004028))) * 1e-8
+        svp = math.exp(1.2378847e-5 * tk * tk - 1.9121316e-2 * tk + 33.93711047 - 6343.1645 / tk)
+        pv = min(ppa, 0.01 * rh * (1.00062 + 3.14e-8 * ppa + 5.6e-7 * tc * tc) * svp)
+        xw = pv / ppa
+        pt = ppa / tk
+        zc = 1.0 - pt * (1.58123e-6 - 2.9331e-8 * tc + 1.1043e-10 * tc * tc + (5.707e-6 - 2.051e-8 * tc) * xw + (1.9898e-4 - 2.376e-6 * tc) * xw * xw) + pt * pt * (1.83e-11 - 0.765e-8 * xw * xw)
+        ma = 1e-3 * (28.9635 + 12.011e-6 * 15.0)
+        mw = 0.018015
+        rho_axs = (101325.0 * ma) / (0.9995922115 * 8.31451 * 288.15)
+        rho_ws = (1333.0 * mw) / (0.999621 * 8.31451 * 293.15)
+        return (((ppa * ma) / (zc * 8.31451 * tk)) * (1.0 - xw) / rho_axs) * n_ax + (((ppa * mw) / (zc * 8.31451 * tk)) * xw / rho_ws) * n_ws
+    tz = math.tan(math.radians(min(80.0, z_deg)))
+    fac = tz * (1.0 - 0.001254 * (1.0 + tz * tz))
+    def atm_mas(lam):
+        return (ciddor_nm1(lam) - ciddor_nm1(1.65)) * fac * rad2mas
+    c_eg = (336.8307, 13.2420, 2.9890, -2.1854) if "nom" in preset else (317.5423, 15.9328, -2.6620, -1.8637)
+    def dmax_mas(lam):
+        l2, il2 = lam * lam, 1.0 / (lam * lam)
+        return c_eg[0] * (il2 - 1.0 / 0.49) + c_eg[1] * (il2 * il2 - 1.0 / (0.49 * 0.49)) + c_eg[2] * (l2 - 0.49) + c_eg[3] * (l2 * l2 - 0.49 * 0.49)
+    ax = atm_mas(0.75) * math.sin(math.radians(pa_deg))
+    ay = atm_mas(0.75) * math.cos(math.radians(pa_deg))
+    dx, dy = 0.0, 0.0
+    if adc_mode not in ("retracted", "off", "bypass", "0"):
+        w5 = (1.0 / 6.0, 1.0 / 6.0, 2.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0)
+        grids = [(0.997, 1.015, 1.033, 1.051, 1.070), (1.170, 1.210, 1.250, 1.290, 1.330), (1.480, 1.555, 1.630, 1.705, 1.780), (1.480, 1.685, 1.890, 2.095, 2.300), (1.945, 2.033, 2.120, 2.208, 2.295), (2.030, 2.115, 2.200, 2.285, 2.370), (0.450, 0.563, 0.700, 0.813, 0.900)] if opt_band == "whole" else [(1.500, 1.570, 1.640, 1.710, 1.780)]
+        num, den = 0.0, 0.0
+        for g in grids:
+            av = [atm_mas(l) for l in g]
+            dv = [dmax_mas(l) for l in g]
+            ma = sum(w * a for w, a in zip(w5, av))
+            md = sum(w * d for w, d in zip(w5, dv))
+            for w, a, d in zip(w5, av, dv):
+                num += w * (a - ma) * (d - md)
+                den += w * (d - md) * (d - md)
+        s_opt = max(-1.0, min(1.0, (num / den if den > 1e-30 else 0.0)))
+        eff_pa = math.radians(pa_deg)
+        drel = dmax_mas(0.75) - dmax_mas(1.65)
+        dx = -drel * s_opt * math.sin(eff_pa)
+        dy = -drel * s_opt * math.cos(eff_pa)
+    mas_per_um = (4.0e-6 / 7.95) * rad2mas
+    ff_x = max(-4.8, min(4.8, (ax + dx) / mas_per_um))
+    ff_y = max(-4.8, min(4.8, (ay + dy) / mas_per_um))
+print(f"{ff_x:.6f} {ff_y:.6f}")
+PY
+    )"
+    read -r VIS_TTM_FF_X VIS_TTM_FF_Y <<< "${VISTT_FF_OUT}"
+    fpspipe.loadfits aol2_visttM "${VISTT_DIR}/vistt_M.fits"
+    fpspipe.loadfits aol2_vistt_bx "${VISTT_DIR}/vistt_bx.fits"
+    fpspipe.loadfits aol2_vistt_by "${VISTT_DIR}/vistt_by.fits"
+    @calc "@S:aol2_vistt_err = zeros(2)"
+    if [[ "${VIS_TTM_MODE}" == "feedforward" || "${VIS_TTM_MODE}" == "ff+closed" ]]; then
+        @calc "s.dm_vis_pyrwfs_tt = s.aol2_vistt_bx * ${VIS_TTM_FF_X} + s.aol2_vistt_by * ${VIS_TTM_FF_Y}"
+        milk-stream-wait -q -t 20 "csim_wfs_vis+20"
+    fi
+fi
 if (( ENABLE_STAGE2 )); then
     CACAO_LOOPROOTDIR="${STG2_ROOT}" "${LOOP_CTRL}" --stage 2 close "${GAIN2}"
     milk-stream-wait -q -t 30 "csim_wfs_vis+200"
@@ -1398,20 +1774,44 @@ fi
 if (( ENABLE_LOWFS )) && (( ENABLE_STAGE2 )); then
     CACAO_LOOPROOTDIR="${STG3_ROOT}" "${LOOP_CTRL}" --stage 3 close "${GAIN3}"
 fi
+if [[ "${VIS_TTM_MODE}" != "off" ]] && @exists "s.dm_vis_pyrwfs_tt"; then
+    if [[ "${VIS_TTM_MODE}" == "closed" || "${VIS_TTM_MODE}" == "ff+closed" ]] && \
+       (( ENABLE_LOWFS )) && (( ENABLE_STAGE2 )) && @exists "s.aol3_modevalDM"; then
+        ln -sfn "${CACAO_WORK_ROOT}/benches/ao3k_scexao/vis_pyrwfs_tt.calc" "${VISTT_CALC_LINK}"
+        VISTT_PARAMS="enable:int=1 gain:float=${VIS_TTM_GAIN} slew_max:float=0.015 max_stroke:float=4.8 mas_per_um:float=103.7805 cmd_x:float=${VIS_TTM_FF_X} cmd_y:float=${VIS_TTM_FF_Y} err_x_mas:float=0 err_y_mas:float=0 cmd_x_mas:float=0 cmd_y_mas:float=0 n_steps:int=0"
+        milk-fps-rm -f -q --ignore-missing vis_tt-2 >/dev/null 2>&1 || true
+        milk-fpsexec-milk-calc -n vis_tt-2 -t aol3_modevalDM -p "${VISTT_PARAMS}" -f "${VISTT_CALC_LINK}" fpsinit >/dev/null
+        milk-fpsexec-milk-calc -n vis_tt-2 runstart >/dev/null
+        VIS_TTM_ACTIVE="1"
+        echo "[ao3k-scexao]   -> SCExAO Vis PyWFS TTM offload ACTIVE (vis_tt-2: aol3_modevalDM -> dm_vis_pyrwfs_tt, mode=${VIS_TTM_MODE}, g=${VIS_TTM_GAIN})"
+        # Allow differential TT offload (~0.25 s time constant) to converge before science integration
+        milk-stream-wait -q -t 45 "csim_wfs_vis+1200"
+    elif [[ "${VIS_TTM_MODE}" == "feedforward" ]]; then
+        echo "[ao3k-scexao]   -> SCExAO Vis PyWFS TTM feedforward preset: cmd=(${VIS_TTM_FF_X}, ${VIS_TTM_FF_Y}) um"
+        milk-stream-wait -q -t 30 "csim_wfs_vis+100"
+    fi
+fi
 
 # Optional Stage-1 Passive Petal-Unwrap JIT Compute Unit (petal-1 -> dm01disp06)
+PETAL_WAIT_EOF="0"
 if (( PETAL_CTRL )) && @exists "s.aol1_petalM" && @exists "s.aol1_petalDM" && @exists "s.dm01disp06"; then
     @calc "s.dm01disp06 = s.dm01disp06 * 0.0; s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
     ln -sfn "${CACAO_WORK_ROOT}/benches/ao3k_scexao/petal_unwrap.calc" "${PETAL_CALC_LINK}"
     PETAL_INIT_EN=1
-    [[ "${PETAL_ENABLE_AT}" == "science" ]] && PETAL_INIT_EN=0
-    PETAL_PARAMS="enable:int=${PETAL_INIT_EN} use_sign:int=${PETAL_USE_SIGN_EFF} alpha:float=${PETAL_ALPHA} min_warmup:int=${PETAL_WARMUP} settle_fr:int=20 th_even:float=${PETAL_TH_EVEN} th_sign:float=${PETAL_TH_SIGN} th_abort:float=1.90 abort_win:int=400 verify_win:int=800 max_waves:int=4 step_scale:float=1.0 age_fr:int=0 n_jumps:int=0 n_aborts:int=0 n_rollbacks:int=0 last_petal:int=-1 last_dir:int=0 trial_p:int=-1 trial_dir:int=0 trial_ev0:float=0 ev_sn:float=0 ev_ew:float=0 ev_adj:float=0 sg_e:float=0 sg_n:float=0 sg_w:float=0 sg_s:float=0 w_e:float=0 w_n:float=0 w_w:float=0 w_s:float=0"
+    if [[ "${PETAL_ENABLE_AT}" == "science" ]]; then
+        PETAL_INIT_EN=0
+    elif (( PREDICTIVE )) && awk -v s="${PF_WARMUP_SEC:-0}" 'BEGIN { exit !(s > 0) }'; then
+        # Defer arming during cold-start pure-integrator training until Stage-1 EOF engages (state=2)
+        PETAL_INIT_EN=0
+        PETAL_WAIT_EOF="1"
+    fi
+    PETAL_PARAMS="enable:int=${PETAL_INIT_EN} use_sign:int=${PETAL_USE_SIGN_EFF} alpha:float=${PETAL_ALPHA} min_warmup:int=${PETAL_WARMUP} settle_fr:int=20 th_even:float=${PETAL_TH_EVEN} th_adj:float=1.15 th_waf:float=1.45 th_sign:float=${PETAL_TH_SIGN} alpha_fast:float=${PETAL_FAST_ALPHA} fast_warmup:int=${PETAL_FAST_WARMUP} fast_th_even:float=${PETAL_FAST_TH_EVEN} fast_th_sign:float=${PETAL_FAST_TH_SIGN} fast_th_con:float=${PETAL_FAST_TH_CON} fast_dwell:int=${PETAL_FAST_DWELL} th_abort:float=2.90 abort_win:int=${PETAL_ABORT_WIN} verify_win:int=${PETAL_VERIFY_WIN} max_waves:int=4 step_scale:float=1.0 age_fr:int=0 n_jumps:int=0 n_aborts:int=0 n_rollbacks:int=0 last_petal:int=-1 last_dir:int=0 trial_p:int=-1 trial_dir:int=0 trial_ev0:float=0 fast_cand:int=-1 fast_streak:int=0 ev_sn:float=0 ev_ew:float=0 ev_adj:float=0 sg_e:float=0 sg_n:float=0 sg_w:float=0 sg_s:float=0 fev_sn:float=0 fev_ew:float=0 fsg_e:float=0 fsg_n:float=0 fsg_w:float=0 fsg_s:float=0 w_e:float=0 w_n:float=0 w_w:float=0 w_s:float=0"
     milk-fps-rm -f -q --ignore-missing petal-1 >/dev/null 2>&1 || true
     milk-fpsexec-milk-calc -n petal-1 -t aol1_imWFS2 -p "${PETAL_PARAMS}" -f "${PETAL_CALC_LINK}" fpsinit >/dev/null
     milk-fpsexec-milk-calc -n petal-1 runstart >/dev/null
     PETAL_CTRL_ACTIVE="1"
     echo "[ao3k-scexao]   -> Stage-1 Passive Petal Unwrapper ARMED (petal-1 -> dm01disp06," \
-         "enable=${PETAL_INIT_EN}, use_sign=${PETAL_USE_SIGN_EFF}, warmup=${PETAL_WARMUP}fr, alpha=${PETAL_ALPHA})"
+         "enable=${PETAL_INIT_EN}, wait_eof=${PETAL_WAIT_EOF}, use_sign=${PETAL_USE_SIGN_EFF}, warmup=${PETAL_WARMUP}fr, alpha=${PETAL_ALPHA})"
 fi
 
 # Optional Phase 3: Stage-1 live online optical gain via closed-loop DM pokes (modalog-1)
@@ -1462,17 +1862,59 @@ fi
 # Optional Phase 5a: Live mlt-windlayers on Stage-1 NIR PyWFS + DM1 OPD
 WL1_STREAM=""
 if (( WINDLAYERS1 )); then
+    ln -sfn "${OUT_DIR}" "${WL1_LINK}"
+    WL1_PUP_ARG=""
+    if (( PYRWFS_TLM )); then
+        WL1_PUP_ARG="wl-1.in_pupgeom=aol1_pyr_pupgeom"
+    fi
+    WL1_BG_ARG="${WFS_DARK_ADU:-100.0}"
+    WL1_LAM="1.22"
+    if (( ATMTURB_FRESNEL > 0 )); then
+        # milkatmturb Rytov/Fresnel propagates outarrayamp at ref_lambda = 0.50 um
+        WL1_LAM="0.50"
+    fi
+    # Extract Stage-1 force-driven plate DM stiffness (k2, k4) from active bench [dm.ao3k]
+    read -r WL1_PLATE_K2 WL1_PLATE_K4 < <(awk '
+        /^\[dm\.ao3k\]/ { in_dm=1; next }
+        /^\[/ { in_dm=0 }
+        in_dm {
+            gsub(/[[:space:]"]/, "", $0)
+            split($0, kv, "=")
+            if (kv[1]=="dyn_mode") dyn=kv[2]
+            else if (kv[1]=="plate_drive") drv=kv[2]
+            else if (kv[1]=="f0_hz") f0=kv[2]+0
+            else if (kv[1]=="act_pitch_mm") pitch_mm=kv[2]+0
+            else if (kv[1]=="wave_c") wc=kv[2]+0
+            else if (kv[1]=="bend_beta") bb=kv[2]+0
+        }
+        END {
+            if ((dyn=="plate" || dyn=="3") && (drv=="force" || drv=="1")) {
+                if (f0<=0) f0=1000.0
+                if (pitch_mm<=0) pitch_mm=1.5
+                p = pitch_mm * 1e-3
+                w0 = 2.0 * 3.14159265358979323846 * f0
+                k2 = (wc / (p * w0))^2
+                k4 = (bb / (p * p * w0))^2
+                printf "%.6f %.6f\n", k2, k4
+            } else {
+                printf "0.0 0.0\n"
+            }
+        }
+    ' "${ACTIVE_BENCH}")
     milk-fps-rm -f -q --ignore-missing wl-1 >/dev/null 2>&1 || true
     milk-fps-init -q wl-1 milk-fpsexec-mlt-windlayers >/dev/null
     milk-fps-set -q \
         "wl-1.wfs=csim_wfs_nir" \
         "wl-1.pha=aol1_dmC" \
+        ${WL1_PUP_ARG} \
+        "wl-1.autocal_pup=ON" \
+        "wl-1.bg=${WL1_BG_ARG}" \
         "wl-1.outname=wl1" \
         "wl-1.wfsmode=0" \
         "wl-1.frate=${WFS1_RATE}.0" \
         "wl-1.tbin=2" \
         "wl-1.diam=7.95" \
-        "wl-1.diampix=75.0" \
+        "wl-1.diampix=0.0" \
         "wl-1.phapitch=0.1325" \
         "wl-1.twarm=0.4" \
         "wl-1.tmean=2.0" \
@@ -1481,18 +1923,22 @@ if (( WINDLAYERS1 )); then
         "wl-1.dv=0.75" \
         "wl-1.nsigma=6.0" \
         "wl-1.tupdate=0.75" \
-        "wl-1.tavg=1.25" \
+        "wl-1.tavg=2.5" \
         "wl-1.modrad=${WFS1_MOD_RAD:-3.0}" \
-        "wl-1.lambda=1.22" \
+        "wl-1.lambda=${WL1_LAM}" \
         "wl-1.phaunit=2e-6" \
+        "wl-1.phaifc=0.08" \
+        "wl-1.dm_plate_k2=${WL1_PLATE_K2}" \
+        "wl-1.dm_plate_k4=${WL1_PLATE_K4}" \
         "wl-1.phasign=0" \
+        "wl-1.report=${WL1_LINK}/wl1_report.txt" \
         "wl-1.nthread=4" \
         "wl-1.procinfo.loopcntMax=-1" \
         "wl-1.procinfo.triggermode=3" \
         "wl-1.procinfo.triggersname=csim_wfs_nir"
     milk-fps-runstart -q wl-1
     WL1_STREAM="wl1_layers"
-    echo "[ao3k-scexao]   -> Phase 5a live mlt-windlayers ON (csim_wfs_nir + aol1_dmC -> wl1_layers)"
+    echo "[ao3k-scexao]   -> Phase 5a live mlt-windlayers ON (csim_wfs_nir + aol1_dmC -> wl1_layers, bg=${WL1_BG_ARG}, autocal=ON, in_pupgeom=${WL1_PUP_ARG#*=}, lam=${WL1_LAM}um, plate_k=${WL1_PLATE_K2}/${WL1_PLATE_K4})"
 fi
 
 if (( PREDICTIVE )); then
@@ -1677,6 +2123,15 @@ if (( PREDICTIVE )); then
                 echo "[ao3k-scexao]      warmup t=${w_sec}/${PF_WARMUP_SEC}s |" \
                      "Stg1: N=${ns1} dVar=${vr1}% | Stg2: N=${ns2} dVar=${vr2}%"
             fi
+            if (( PETAL_CTRL_ACTIVE )) && (( PETAL_WAIT_EOF )); then
+                _ns1_int="${ns1%.*}"
+                if [[ "${PF_MODE}" != "eof" ]] || { [[ "${ea1}" == "2" ]] && (( ${_ns1_int:-0} >= 3000 )); }; then
+                    @calc "s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
+                    milk-fps-set -q "petal-1.age_fr=0" "petal-1.enable=1"
+                    PETAL_WAIT_EOF="0"
+                    echo "[ao3k-scexao]      -> Stage-1 Passive Petal Unwrapper ENABLED (EOF converged N=${ns1}, warmup t=${w_sec}/${PF_WARMUP_SEC}s)"
+                fi
+            fi
         done
         if [[ "${PF_MODE}" == "eof" ]]; then
             for _wait_i in $(seq 1 30); do
@@ -1688,6 +2143,12 @@ if (( PREDICTIVE )); then
                 fi
                 milk-stream-wait -q -t 30 "csim_wfs_vis+256"
             done
+        fi
+        if (( PETAL_CTRL_ACTIVE )) && (( PETAL_WAIT_EOF )); then
+            @calc "s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
+            milk-fps-set -q "petal-1.age_fr=0" "petal-1.enable=1"
+            PETAL_WAIT_EOF="0"
+            echo "[ao3k-scexao]      -> Stage-1 Passive Petal Unwrapper ENABLED (post-warmup)"
         fi
         milk-stream-wait -q -t 30 "csim_wfs_vis+160"
     fi
@@ -1845,13 +2306,35 @@ cnt_pha_0=0 cnt_wfs1_0=0 cnt_wfs2_0=0 cnt_wfs3_0=0 cnt_long_0=0
      cnt_wfs2_0="s.csim_wfs_vis.cnt0" cnt_wfs3_0="s.csim_wfs_lowfs.cnt0" \
      cnt_long_0="s.psf_vis_final_long.cnt0"
 
-if [[ -n "${PETAL_TEST_INJECT}" ]] && @exists "s.aol1_petalDM" && @exists "s.dm01disp07"; then
-    _pinj_p="${PETAL_TEST_INJECT%%:*}"
-    _pinj_w="${PETAL_TEST_INJECT#*:}"
-    _pinj_c="$(awk -v w="${_pinj_w}" 'BEGIN { printf "%.6f", -w }')"
-    # wf_stg1 = wf_raw - 2*dm_cmd -> writing (-w)*aol1_petalDM[:,:,p] to dm01disp07 injects +w lambda_J wrap!
-    @calc "s.dm01disp07 = (${_pinj_c}) * s.aol1_petalDM[:, :, ${_pinj_p}]"
-    echo "[ao3k-scexao]      Injected deterministic ${_pinj_w} lambda_J test petal wrap on petal ${_pinj_p} via dm01disp07"
+PETAL_INJ_DONE="0"
+PETAL_INJ_P=""
+PETAL_INJ_W=""
+PETAL_INJ_NM="0.0"
+PETAL_INJ_T="0.0"
+if [[ -n "${PETAL_TEST_INJECT}" ]]; then
+    _pinj_pw="${PETAL_TEST_INJECT%%@*}"
+    if [[ "${PETAL_TEST_INJECT}" == *@* ]]; then
+        PETAL_INJ_T="${PETAL_TEST_INJECT#*@}"
+    fi
+    PETAL_INJ_P="${_pinj_pw%%:*}"
+    PETAL_INJ_W="${_pinj_pw#*:}"
+    _peq_nm="1205.362"
+    if [[ -n "${PETAL_CAL_DIR:-}" && -f "${PETAL_CAL_DIR}/petal_ctrl_meta.json" ]]; then
+        _peq_nm="$("${PYTHON_BIN:-python3}" -c \
+            "import json; print(f\"{float(json.load(open('${PETAL_CAL_DIR}/petal_ctrl_meta.json')).get('p_eq_um', 1.205362))*1000.0:.3f}\")" 2>/dev/null || echo "1205.362")"
+    fi
+    PETAL_INJ_NM="$(awk -v w="${PETAL_INJ_W}" -v peq="${_peq_nm}" 'BEGIN { printf "%.3f", w * peq }')"
+fi
+if [[ -n "${PETAL_INJ_P}" ]] && \
+   awk -v t="${PETAL_INJ_T}" 'BEGIN { exit !(t <= 1e-6) }'; then
+    # Inject +w * p_eq directly onto the entrance-pupil thermal LWE engine (csim_htsim/csim_mkbeam)
+    @set "f.${MASTER_UNIT}.petal_off${PETAL_INJ_P}_nm=${PETAL_INJ_NM}"
+    if (( PETAL_CTRL_ACTIVE )); then
+        @calc "s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
+        milk-fps-set -q "petal-1.age_fr=0"
+    fi
+    PETAL_INJ_DONE="1"
+    echo "[ao3k-scexao]      Injected deterministic ${PETAL_INJ_W} lambda_J (${PETAL_INJ_NM} nm) LWE petal step on petal ${PETAL_INJ_P} at t_phys = 0.00 s via ${MASTER_UNIT}.petal_off${PETAL_INJ_P}_nm"
 fi
 if (( PETAL_CTRL_ACTIVE )) && [[ "${PETAL_ENABLE_AT}" == "science" ]]; then
     @calc "s.aol1_petal_ema = s.aol1_petal_ema * 0.0"
@@ -1876,6 +2359,12 @@ while (( rem > 0 )); do
     done_rd=$(( done_rd + step ))
     phys_done="$(awk -v d="${done_rd}" -v nv="${EFF_PSF_NAVG}" \
         'BEGIN { printf "%.2f", d * nv * 0.0005 }')"
+    if (( ! PETAL_INJ_DONE )) && [[ -n "${PETAL_INJ_P}" ]] && \
+       awk -v p="${phys_done}" -v tinj="${PETAL_INJ_T}" 'BEGIN { exit !(tinj > 0 && p + 0.01 >= tinj) }'; then
+        @set "f.${MASTER_UNIT}.petal_off${PETAL_INJ_P}_nm=${PETAL_INJ_NM}"
+        PETAL_INJ_DONE="1"
+        echo "[ao3k-scexao]   -> SUDDEN LWE PETAL STEP INJECTED: ${PETAL_INJ_W} lambda_J (${PETAL_INJ_NM} nm) on petal ${PETAL_INJ_P} at t_phys=${phys_done} s via ${MASTER_UNIT}.petal_off${PETAL_INJ_P}_nm"
+    fi
     if (( ! WIND_SWITCHED )) && \
        awk -v p="${phys_done}" -v sw="${WIND_SWITCH_SEC}" 'BEGIN { exit !(sw > 0 && p + 0.01 >= sw) }'; then
         @set "f.csim_atmturb.wind_rot_deg=${WIND_SWITCH_DEG}"
@@ -1938,6 +2427,91 @@ if [[ "${BENCH_MODE}" == "fused" ]]; then
     @set "f.csim_htsim.wfstat_enable=OFF"
     (( EXPORT_BEAMS_NEEDED )) && @set "f.csim_htsim.export_enable=OFF"
 fi
+VTT_CMD_X_MAS="0.0"
+VTT_CMD_Y_MAS="0.0"
+VTT_ERR_X_MAS="0.0"
+VTT_ERR_Y_MAS="0.0"
+VTT_N_STEPS="0"
+if (( VIS_TTM_ACTIVE )); then
+    @set "f.vis_tt-2.enable=0" >/dev/null 2>&1 || true
+    milk-fps-runstop -q vis_tt-2 >/dev/null 2>&1 || true
+    milk-fps-wait -q -t 15 vis_tt-2 >/dev/null 2>&1 || true
+    @get VTT_CMD_X_MAS="f.vis_tt-2.cmd_x_mas" VTT_CMD_Y_MAS="f.vis_tt-2.cmd_y_mas" \
+         VTT_ERR_X_MAS="f.vis_tt-2.err_x_mas" VTT_ERR_Y_MAS="f.vis_tt-2.err_y_mas" \
+         VTT_N_STEPS="f.vis_tt-2.n_steps" 2>/dev/null || true
+fi
+if @exists "s.dm_vis_pyrwfs_tt"; then
+    fpspipe.savefits "dm_vis_pyrwfs_tt" "${OUT_DIR}/dm_vis_pyrwfs_tt.fits"
+fi
+if @exists "s.ao188_adc_state"; then
+    fpspipe.savefits "ao188_adc_state" "${OUT_DIR}/ao188_adc_state.fits"
+    "${PYTHON_BIN:-python3}" - "${OUT_DIR}/ao188_adc_state.fits" "${OUT_DIR}/adc_meta.json" \
+        "${ZENITH_DEG}" "${DISP_PA_DEG}" "${IMR_MODE}" "${PARALLACTIC_RATE_DPS}" \
+        "${ADC_PRESET}" "${ADC_MODE}" "${ADC_OPT_BAND}" "${ADC_MECH}" \
+        "${ADC_LUT_SC_ERR:-0.0}" "${ADC_LUT_PA_ERR:-0.0}" \
+        "${CHROM_TURB}" "${CHROM_LAMBDAS}" \
+        "${OUT_DIR}/dm_vis_pyrwfs_tt.fits" "${VIS_TTM_MODE}" "${VIS_TTM_GAIN}" "${VIS_TTM_ACTIVE}" \
+        "${VTT_ERR_X_MAS}" "${VTT_ERR_Y_MAS}" "${VTT_N_STEPS}" <<'PY'
+import json, math, os, sys
+import numpy as np
+from astropy.io import fits
+
+vec = np.asarray(fits.getdata(sys.argv[1]), dtype=np.float64).ravel().tolist()
+while len(vec) < 10:
+    vec.append(0.0)
+ttm_um = [0.0, 0.0]
+if os.path.isfile(sys.argv[15]):
+    tv = np.asarray(fits.getdata(sys.argv[15]), dtype=np.float64).ravel().tolist()
+    if len(tv) >= 2:
+        ttm_um = [float(tv[0]), float(tv[1])]
+mas_per_um = (4.0e-6 / 7.95) * 206264806.24709636
+tx_mas = ttm_um[0] * mas_per_um
+ty_mas = ttm_um[1] * mas_per_um
+meta = {
+    "schema_version": 1,
+    "zenith_deg": float(sys.argv[3]),
+    "disp_pa_deg": float(sys.argv[4]),
+    "imr_mode": sys.argv[5],
+    "parallactic_rate_dps": float(sys.argv[6]),
+    "preset": sys.argv[7],
+    "mode": sys.argv[8],
+    "opt_band": sys.argv[9],
+    "mech": sys.argv[10],
+    "lut_scale_err": float(sys.argv[11]),
+    "lut_pa_err_deg": float(sys.argv[12]),
+    "chrom_turb": int(sys.argv[13]),
+    "chrom_lambdas": sys.argv[14],
+    "state": {
+        "theta1_deg": vec[0],
+        "theta2_deg": vec[1],
+        "psi_deg": vec[2],
+        "pa_deg": vec[3],
+        "zenith_deg": vec[4],
+        "deployed": int(round(vec[5])),
+        "res_vis_mas": vec[6],
+        "res_j_mas": vec[7],
+        "res_h_mas": vec[8],
+        "res_vis_h_mas": vec[9],
+    },
+    "vis_pyrwfs_ttm": {
+        "mode": sys.argv[16],
+        "gain": float(sys.argv[17]),
+        "active": int(sys.argv[18]),
+        "cmd_x_um": round(ttm_um[0], 6),
+        "cmd_y_um": round(ttm_um[1], 6),
+        "cmd_x_mas": round(tx_mas, 3),
+        "cmd_y_mas": round(ty_mas, 3),
+        "cmd_tot_mas": round(math.hypot(tx_mas, ty_mas), 3),
+        "res_dm02_tt_x_mas": round(float(sys.argv[19]), 3),
+        "res_dm02_tt_y_mas": round(float(sys.argv[20]), 3),
+        "n_steps": int(float(sys.argv[21])),
+    },
+}
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(meta, fh, indent=2)
+    fh.write("\n")
+PY
+fi
 if (( CPU_WFSTAT )); then
     milk-fps-runstop -q csim_wfstat >/dev/null 2>&1 || true
     milk-fps-wait -q -t 30 csim_wfstat >/dev/null 2>&1 || true
@@ -1962,6 +2536,9 @@ if (( PETAL_CTRL_ACTIVE )); then
     if @exists "s.aol1_petal_ema"; then
         fpspipe.savefits "aol1_petal_ema" "${OUT_DIR}/aol1_petal_ema.fits"
     fi
+    if @exists "s.aol1_petal_cmd"; then
+        fpspipe.savefits "aol1_petal_cmd" "${OUT_DIR}/aol1_petal_cmd.fits"
+    fi
     cat > "${OUT_DIR}/petal_stats.json" <<EOF
 {
   "enabled": true,
@@ -1970,7 +2547,10 @@ if (( PETAL_CTRL_ACTIVE )); then
   "min_warmup": ${PETAL_WARMUP},
   "th_even": ${PETAL_TH_EVEN},
   "th_sign": ${PETAL_TH_SIGN},
+  "th_adj": 1.15,
+  "g_opt_scale": ${PETAL_GOPT_EFF:-1.0},
   "enable_at": "${PETAL_ENABLE_AT}",
+  "test_inject": "${PETAL_TEST_INJECT}",
   "n_jumps": ${p_nj:-0},
   "n_aborts": ${p_na:-0},
   "n_rollbacks": ${p_nr:-0},
@@ -2003,7 +2583,7 @@ if (( PYRWFS_TLM_ACTIVE )); then
          pyr2_fp0="f.pyrwfstlm-2.flux.pup0" pyr2_nf="f.pyrwfstlm-2.health.nframes" \
          pyr2_nt="f.pyrwfstlm-2.health.ntorn" 2>/dev/null || true
     for _sn in 1 2; do
-        for _mp in "isum_avg:isum" "scint:scint" "lvar:lvar" "zones:zones" "pupgeom:pupgeom"; do
+        for _mp in "isum_avg:isum" "scint:scint" "scint_debias:scint_debias" "lvar:lvar" "zones:zones" "pupgeom:pupgeom"; do
             _ss="${_mp%%:*}"
             _fo="${_mp#*:}"
             if @exists "s.aol${_sn}_pyr_${_ss}"; then
@@ -2464,9 +3044,153 @@ fi
 if @exists "s.aol2_mWFSfact"; then
     fpspipe.savefits "aol2_mWFSfact" "${OUT_DIR}/aol2_mWFSfact.fits"
 fi
-if (( WINDLAYERS1 )) && @exists "s.wl1_layers"; then
-    fpspipe.savefits "wl1_layers" "${OUT_DIR}/wl1_layers.fits"
+if (( WINDLAYERS1 )); then
+    milk-fps-runstop -q wl-1 >/dev/null 2>&1 || true
+    milk-fps-wait -q -t 10 wl-1 >/dev/null 2>&1 || true
+    for _wls in wl1_layers wl1_vmapk wl1_vmapi wl1_vmapx wl1_pupgeom; do
+        if @exists "s.${_wls}"; then
+            fpspipe.savefits "${_wls}" "${OUT_DIR}/${_wls}.fits"
+        fi
+    done
     milk-fps-info wl-1 > "${OUT_DIR}/wl1_info.txt" 2>/dev/null || true
+    rm -f "${WL1_LINK}" >/dev/null 2>&1 || true
+fi
+
+if (( RUN_MODALWHITE )) && command -v cacao-fpsexec-modalwhite >/dev/null 2>&1; then
+    sysmon.mark "modalwhite" "Run closed-loop modal whiteness monitor (cacao-fpsexec-modalwhite)"
+    echo "[ao3k-scexao]   -> Running closed-loop modal whiteness audit (modalwhite)..."
+    _mw_run_stage() {
+        local _stg="$1" _lat="$2" _outjson="$3"
+        local _wfs="aol${_stg}_modevalWFS_buff" _dm="aol${_stg}_modevalDM_buff"
+        local _unit="mw-${_stg}" _nbwin=4096 _tmp_loaded=0
+        if [[ "${SAVE_TELEMETRY}" != "none" && -d "${TELEM_DIR}" ]]; then
+            local _mw_wfs_f="${WORK_ROOT}/mw${_stg}_wfs.fits"
+            local _mw_dm_f="${WORK_ROOT}/mw${_stg}_dm.fits"
+            local _mw_n=""
+            _mw_n="$("${PYTHON_BIN:-python3}" - "${TELEM_DIR}" "${_stg}" "${_mw_wfs_f}" "${_mw_dm_f}" <<'PY'
+import glob, os, sys
+import numpy as np
+from astropy.io import fits
+tdir, stg, out_w, out_d = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+wf = sorted(glob.glob(os.path.join(tdir, f"aol{stg}_modevalWFS_*.fits")))
+df = sorted(glob.glob(os.path.join(tdir, f"aol{stg}_modevalDM_*.fits")))
+if not wf:
+    print("0"); raise SystemExit(0)
+def load_cat(paths):
+    cs = []
+    for p in paths:
+        a = np.asarray(fits.getdata(p), dtype=np.float32)
+        if a.ndim == 3:
+            a = a.reshape(a.shape[0], -1)
+        if a.ndim == 2 and a.shape[0] > 0:
+            cs.append(a)
+    return np.concatenate(cs, axis=0) if cs else None
+wc = load_cat(wf)
+if wc is None or wc.shape[0] < 64:
+    print("0"); raise SystemExit(0)
+n_fr = min(int(wc.shape[0]), 4096)
+n_m = min(int(wc.shape[1]), 256)
+fits.writeto(out_w, np.ascontiguousarray(wc[-n_fr:, :n_m], dtype=np.float32), overwrite=True)
+dc = load_cat(df) if df else None
+if dc is not None and dc.shape[0] >= n_fr:
+    fits.writeto(out_d, np.ascontiguousarray(dc[-n_fr:, :n_m], dtype=np.float32), overwrite=True)
+print(n_fr)
+PY
+            )"
+            if [[ -n "${_mw_n}" && "${_mw_n}" -ge 64 && -f "${_mw_wfs_f}" ]]; then
+                fpspipe.loadfits "mw${_stg}_wfs" "${_mw_wfs_f}" .force=1
+                _wfs="mw${_stg}_wfs"
+                _nbwin="${_mw_n}"
+                _dm="none"
+                if [[ -f "${_mw_dm_f}" ]]; then
+                    fpspipe.loadfits "mw${_stg}_dm" "${_mw_dm_f}" .force=1
+                    _dm="mw${_stg}_dm"
+                fi
+                _tmp_loaded=1
+            fi
+        fi
+        if ! @exists "s.${_wfs}"; then
+            return 0
+        fi
+        local _dm_arg="none"
+        if [[ "${_dm}" != "none" ]] && @exists "s.${_dm}"; then
+            _dm_arg="${_dm}"
+        fi
+        milk-fps-rm -f -q --ignore-missing "${_unit}" >/dev/null 2>&1 || true
+        milk-fps-init -q "${_unit}" cacao-fpsexec-modalwhite >/dev/null
+        milk-fps-set -q \
+            "${_unit}.AOloopindex=${_stg}" \
+            "${_unit}.inWFSbuff=${_wfs}" \
+            "${_unit}.inDMbuff=${_dm_arg}" \
+            "${_unit}.latency_fr=${_lat}" \
+            "${_unit}.NBwin=${_nbwin}" \
+            "${_unit}.K_lags=16" \
+            "${_unit}.P_recov=8" \
+            "${_unit}.P_ctrl=${PF_ORDER:-14}" \
+            "${_unit}.blocksize=${PF_BLOCKSIZE:-128}" \
+            "${_unit}.procinfo.triggermode=0" \
+            "${_unit}.procinfo.loopcntMax=1"
+        milk-fps-runstart -q "${_unit}"
+        milk-fps-wait -q -t 25 "${_unit}" >/dev/null 2>&1 || true
+        local _ns=0 _dc=0 _wrms=0 _rwfe=0 _rvar=0 _b0r=0 _qall=0 _qb0=0 _qlo=0 _qby=0 _qxm=0 _qxb=0 _rhod=0 _clf=0 _rwu=0 _qwu=0 _wur=0 _af=0
+        @get _ns="f.${_unit}.out.n_samples" _dc="f.${_unit}.out.d_ceil" \
+             _wrms="f.${_unit}.out.wfs_rms_nm" _rwfe="f.${_unit}.out.recov_wfe_nm" \
+             _rvar="f.${_unit}.out.recov_var_pct" _b0r="f.${_unit}.out.b0_recov_wfe_nm" \
+             _qall="f.${_unit}.out.Q_vw_all" _qb0="f.${_unit}.out.Q_vw_b0" \
+             _qlo="f.${_unit}.out.Q_lo20" _qby="f.${_unit}.out.Q_beyond_b0" \
+             _qxm="f.${_unit}.out.Q_xmode_b0" _qxb="f.${_unit}.out.Q_xblk_b01" \
+             _rhod="f.${_unit}.out.rho_d_b0" _clf="f.${_unit}.out.cliff_ratio_b0" \
+             _rwu="f.${_unit}.out.rwu_d_lo20" _qwu="f.${_unit}.out.Q_wu_lo20" \
+             _wur="f.${_unit}.out.wu_recov_wfe_nm" _af="f.${_unit}.out.alert_flags" \
+             2>/dev/null || true
+        milk-fps-info "${_unit}" > "${OUT_DIR}/modalwhite_stg${_stg}_info.txt" 2>/dev/null || true
+        milk-fps-rm -f -q --ignore-missing "${_unit}" >/dev/null 2>&1 || true
+        if (( _tmp_loaded )); then
+            milk-stream-rm -f -q --ignore-missing "mw${_stg}_wfs" "mw${_stg}_dm" >/dev/null 2>&1 || true
+        fi
+        cat > "${_outjson}" <<MWEOF
+{
+  "stage": ${_stg},
+  "latency_fr": ${_lat},
+  "n_samples": ${_ns:-0},
+  "d_ceil": ${_dc:-0},
+  "wfs_rms_nm": ${_wrms:-0},
+  "recov_wfe_nm": ${_rwfe:-0},
+  "recov_var_pct": ${_rvar:-0},
+  "b0_recov_wfe_nm": ${_b0r:-0},
+  "Q_vw_all": ${_qall:-0},
+  "Q_vw_b0": ${_qb0:-0},
+  "Q_lo20": ${_qlo:-0},
+  "Q_beyond_b0": ${_qby:-0},
+  "Q_xmode_b0": ${_qxm:-0},
+  "Q_xblk_b01": ${_qxb:-0},
+  "rho_d_b0": ${_rhod:-0},
+  "cliff_ratio_b0": ${_clf:-0},
+  "rwu_d_lo20": ${_rwu:-0},
+  "Q_wu_lo20": ${_qwu:-0},
+  "wu_recov_wfe_nm": ${_wur:-0},
+  "alert_flags": ${_af:-0}
+}
+MWEOF
+        echo "[ao3k-scexao]      modalwhite Stg${_stg}: N=${_ns} d=${_dc} Q_vw_b0=${_qb0} Q_xmode_b0=${_qxm} rho_d=${_rhod} recov=${_rwfe}nm (${_rvar}%) Q_wu_lo20=${_qwu} alerts=${_af}"
+    }
+    _mw_run_stage 1 "${tol1_lat:-2.5}" "${WORK_ROOT}/mw_stg1.json"
+    if (( ENABLE_STAGE2 )); then
+        _mw_run_stage 2 "${tol2_lat:-2.0}" "${WORK_ROOT}/mw_stg2.json"
+    fi
+    "${PYTHON_BIN:-python3}" - "${OUT_DIR}/modalwhite_stats.json" \
+        "${WORK_ROOT}/mw_stg1.json" "${WORK_ROOT}/mw_stg2.json" <<'PY'
+import json, os, sys
+out_p, s1_p, s2_p = sys.argv[1], sys.argv[2], sys.argv[3]
+res = {"enabled": True, "stages": {}}
+for k, p in (("stage1", s1_p), ("stage2", s2_p)):
+    if os.path.isfile(p):
+        with open(p, "r", encoding="utf-8") as fh:
+            res["stages"][k] = json.load(fh)
+with open(out_p, "w", encoding="utf-8") as fh:
+    json.dump(res, fh, indent=2)
+    fh.write("\n")
+PY
 fi
 
 if (( RUN_SELFRM )); then
@@ -2628,6 +3352,10 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "mmult_floor=${MMULT_FLOOR}" \
     "mmult_alpha=${MMULT_ALPHA}" \
     "dmmask_rmax=${DMMASK_RMAX}" \
+    "dmmask_rmin=${DMMASK_RMIN}" \
+    "dmmask_cobs_slave=${DMMASK_COBS_SLAVE}" \
+    "wfsmask_dilate=${WFSMASK_DILATE}" \
+    "wfsmask_dilate2=${WFSMASK_DILATE2}" \
     "mgain_alpha=${MGAIN_ALPHA}" \
     "mgain_floor=${MGAIN_FLOOR}" \
     "mgain_tt=${MGAIN_TT}" \
@@ -2677,6 +3405,7 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "online_og1=${ONLINE_OG1}" \
     "live_2wfs1dm_sec=${LIVE_2WFS1DM_SEC}" \
     "windlayers1=${WINDLAYERS1}" \
+    "run_modalwhite=${RUN_MODALWHITE}" \
     "wind_var=${WIND_VAR}" \
     "wind_var_scale=${WIND_VAR_SCALE}" \
     "wind_burst=${WIND_BURST}" \
@@ -2697,7 +3426,23 @@ cp -f "${ACTIVE_BENCH}" "${OUT_DIR}/ao3k_scexao.bench"
     "petal_warmup=${PETAL_WARMUP}" \
     "petal_th_even=${PETAL_TH_EVEN}" \
     "petal_th_sign=${PETAL_TH_SIGN}" \
-    "petal_enable_at=${PETAL_ENABLE_AT}" <<'PY'
+    "petal_enable_at=${PETAL_ENABLE_AT}" \
+    "petal_test_inject=${PETAL_TEST_INJECT}" \
+    "zenith_deg=${ZENITH_DEG}" \
+    "disp_pa_deg=${DISP_PA_DEG}" \
+    "imr_mode=${IMR_MODE}" \
+    "parallactic_rate_dps=${PARALLACTIC_RATE_DPS}" \
+    "adc_preset=${ADC_PRESET}" \
+    "adc_mode=${ADC_MODE}" \
+    "adc_opt_band=${ADC_OPT_BAND}" \
+    "adc_angles=${ADC_ANGLES}" \
+    "adc_lut_err=${ADC_LUT_ERR}" \
+    "adc_mech=${ADC_MECH}" \
+    "chrom_turb=${CHROM_TURB}" \
+    "chrom_lambdas=${CHROM_LAMBDAS}" \
+    "atmturb_fresnel=${ATMTURB_FRESNEL}" \
+    "vis_ttm_mode=${VIS_TTM_MODE}" \
+    "vis_ttm_gain=${VIS_TTM_GAIN}" <<'PY'
 from datetime import datetime, timezone
 import json, pathlib, sys
 
